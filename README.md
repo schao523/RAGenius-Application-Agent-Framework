@@ -11,6 +11,18 @@ pip install -U pip
 pip install -e .
 ```
 
+The repository ships a `pyproject.toml`, so it can be installed directly from the source tree or a Git URL:
+
+```bash
+pip install "git+https://example.com/rag-subsystem/repo.git"
+```
+
+For PostgreSQL-backed vector storage, install the optional dependency group:
+
+```bash
+pip install -e .[pgvector]
+```
+
 Running tests:
 
 ```bash
