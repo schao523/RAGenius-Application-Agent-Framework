@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <div>
+    <p class="text-sm text-gray-600">App ID: {{ app.id }}</p>
+    <h1 class="text-2xl font-semibold text-gray-900">{{ app.name }}</h1>
+    <p class="text-sm text-gray-600">{{ app.description }}</p>
+  </div>
+  <div class="flex gap-2">
+    <a href="{{ url_for('app_config', app_id=app.id) }}" class="px-3 py-2 text-sm bg-white border border-gray-200 rounded hover:border-blue-500">Configure</a>
+    <a href="{{ url_for('upload', app_id=app.id) }}" class="px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700">Upload</a>
+  </div>
+</div>
+<section class="grid md:grid-cols-2 gap-4">
+  <article class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+    <h2 class="text-lg font-semibold text-gray-900 mb-2">Starter Questions</h2>
+    <ul class="list-disc list-inside text-gray-700 space-y-1">
+      {% for q in app.starter_questions %}
+        <li>{{ q }}</li>
+      {% endfor %}
+    </ul>
+  </article>
+  <article class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+    <h2 class="text-lg font-semibold text-gray-900 mb-2">Documents</h2>
+    <p class="text-sm text-gray-600 mb-2">{{ docs|length }} documents uploaded.</p>
+    <ul class="divide-y divide-gray-200">
+      {% for doc in docs %}
+        <li class="py-2 flex items-center justify-between">
+          <div>
+            <p class="font-semibold text-gray-900">{{ doc.filename }}</p>
+            <p class="text-sm text-gray-600">{{ doc.status }} • {{ doc.mime_type }}</p>
+          </div>
+          <a href="{{ url_for('document_detail', app_id=app.id, doc_id=doc.id) }}" class="text-blue-700">View</a>
+        </li>
+      {% else %}
+        <li class="py-2 text-gray-600">No documents yet.</li>
+      {% endfor %}
+    </ul>
+  </article>
+</section>
+{% endblock %}

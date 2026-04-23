@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <div>
+    <p class="text-sm text-gray-600">Documents for {{ app.name }}</p>
+    <h1 class="text-2xl font-semibold text-gray-900">Documents</h1>
+  </div>
+  <a href="{{ url_for('upload', app_id=app.id) }}" class="text-blue-700">Upload</a>
+</div>
+<div class="bg-white border border-gray-200 rounded-lg shadow-sm">
+  <ul class="divide-y divide-gray-200">
+    {% for doc in docs %}
+      <li class="px-4 py-3 flex items-center justify-between">
+        <div>
+          <p class="font-semibold text-gray-900">{{ doc.filename }}</p>
+          <p class="text-sm text-gray-600">{{ doc.status }} • {{ doc.mime_type }} • {{ doc.size_bytes }} bytes</p>
+        </div>
+        <div class="flex items-center gap-3 text-sm">
+          <a class="text-blue-700" href="{{ url_for('document_detail', app_id=app.id, doc_id=doc.id) }}">View</a>
+        </div>
+      </li>
+    {% else %}
+      <li class="px-4 py-3 text-gray-600">No documents available.</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endblock %}

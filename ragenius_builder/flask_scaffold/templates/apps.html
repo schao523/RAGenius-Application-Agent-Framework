@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-semibold text-gray-900">Applications</h1>
+    <p class="text-sm text-gray-600">Manage RAG applications across ingestion and search.</p>
+  </div>
+  <a href="{{ url_for('new_app') }}" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">New Application</a>
+</div>
+<div class="grid gap-4 sm:grid-cols-2">
+  {% for app in apps %}
+    <article class="bg-white border border-gray-200 rounded-lg shadow-sm p-4 flex flex-col gap-3">
+      <header class="flex items-start justify-between">
+        <div>
+          <h2 class="text-lg font-semibold text-gray-900">{{ app.name }}</h2>
+          <p class="text-sm text-gray-600">{{ app.description or 'No description yet' }}</p>
+        </div>
+        <span class="text-xs text-gray-500">Updated {{ app.updated_at }}</span>
+      </header>
+      <div class="flex flex-wrap gap-2 text-sm text-gray-700">
+        {% for q in app.starter_questions %}
+          <span class="px-2 py-1 bg-blue-50 text-blue-700 rounded">{{ q }}</span>
+        {% endfor %}
+      </div>
+      <div class="flex items-center gap-3 text-sm">
+        <a href="{{ url_for('view_app', app_id=app.id) }}" class="text-blue-700 font-semibold">Open</a>
+        <a href="{{ url_for('app_config', app_id=app.id) }}" class="text-gray-700 hover:text-blue-700">Configure</a>
+        <a href="{{ url_for('upload', app_id=app.id) }}" class="text-gray-700 hover:text-blue-700">Upload</a>
+      </div>
+    </article>
+  {% else %}
+    <p class="col-span-full text-gray-600">No applications yet.</p>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Search Application</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen py-8">
+  <div class="container mx-auto px-4">
+    <h1 class="text-2xl font-bold mb-6">Search</h1>
+    <div class="mb-4">
+      <input type="text" id="queryInput" class="w-full border rounded px-3 py-2" placeholder="Enter your query...">
+    </div>
+    <div class="mb-4 flex items-center">
+      <label for="topK" class="mr-2 text-gray-700">Top K:</label>
+      <input type="number" id="topK" value="5" min="1" max="20" class="border rounded px-3 py-2 w-20">
+      <button onclick="performSearch()" class="ml-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Search</button>
+    </div>
+    <div id="starterQuestions" class="mb-4"></div>
+    <div id="results" class="space-y-4"></div>
+  </div>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const appId = params.get('app_id');
+    if (!appId) {
+      alert('Missing app_id');
+    }
+    // Load starter questions
+    async function loadStarters() {
+      const resp = await fetch(`/api/apps/${appId}`);
+      if (!resp.ok) return;
+      const app = await resp.json();
+      const container = document.getElementById('starterQuestions');
+      container.innerHTML = '<h3 class="text-lg font-semibold mb-2">Starter Questions</h3>';
+      app.starter_questions.forEach(q => {
+        const btn = document.createElement('button');
+        btn.className = 'mr-2 mb-2 px-3 py-1 rounded bg-gray-200 hover:bg-gray-300';
+        btn.textContent = q;
+        btn.onclick = () => {
+          document.getElementById('queryInput').value = q;
+          performSearch();
+        };
+        container.appendChild(btn);
+      });
+    }
+    // Perform search
+    async function performSearch() {
+      const query = document.getElementById('queryInput').value.trim();
+      if (!query) {
+        alert('Enter a query');
+        return;
+      }
+      const topK = parseInt(document.getElementById('topK').value || '5', 10);
+      const resp = await fetch(`/api/apps/${appId}/search`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({query, top_k: topK})
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert(err.detail || 'Search failed');
+        return;
+      }
+      const results = await resp.json();
+      const container = document.getElementById('results');
+      container.innerHTML = '';
+      if (!results.length) {
+        container.innerHTML = '<p>No results found</p>';
+        return;
+      }
+      results.forEach(res => {
+        const div = document.createElement('div');
+        div.className = 'bg-white rounded shadow p-4';
+        const cites = res.citations.map(c => `<li><strong>${c.doc_id}</strong>: ${c.snippet}</li>`).join('');
+        const debugDetails = JSON.stringify(res.debug, null, 2);
+        div.innerHTML = `
+          <h4 class="font-semibold mb-2">Answer ${res.rank}</h4>
+          <p class="mb-2">${res.text}</p>
+          <details class="mb-2">
+            <summary class="cursor-pointer text-blue-600">Citations</summary>
+            <ul class="list-disc ml-6 text-sm">${cites}</ul>
+          </details>
+          <details>
+            <summary class="cursor-pointer text-blue-600">Debug Trace</summary>
+            <pre class="bg-gray-100 p-2 rounded text-xs overflow-auto">${debugDetails}</pre>
+          </details>
+        `;
+        container.appendChild(div);
+      });
+    }
+    loadStarters();
+  </script>
+</body>
+</html>

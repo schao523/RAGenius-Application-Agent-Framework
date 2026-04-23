@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <div>
+    <p class="text-sm text-gray-600">Upload documents</p>
+    <h1 class="text-2xl font-semibold text-gray-900">{{ app.name }}</h1>
+  </div>
+  <a href="{{ url_for('view_app', app_id=app.id) }}" class="text-blue-700">Back</a>
+</div>
+<div class="grid md:grid-cols-3 gap-4">
+  <form method="post" class="md:col-span-1 bg-white border border-gray-200 rounded-lg p-4 shadow-sm space-y-3">
+    <div>
+      <label for="filename" class="block text-sm font-medium text-gray-800">Filename</label>
+      <input id="filename" name="filename" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600" aria-describedby="filename-error" required>
+      {% for err in errors if err['path'] == 'filename' %}
+        <p id="filename-error" class="text-sm text-red-700">{{ err['msg'] }}</p>
+      {% endfor %}
+    </div>
+    <div>
+      <label for="mime_type" class="block text-sm font-medium text-gray-800">MIME Type</label>
+      <input id="mime_type" name="mime_type" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+    </div>
+    <div>
+      <label for="size_bytes" class="block text-sm font-medium text-gray-800">Size (bytes)</label>
+      <input id="size_bytes" name="size_bytes" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+      {% for err in errors if err['path'] == 'size_bytes' %}
+        <p class="text-sm text-red-700">{{ err['msg'] }}</p>
+      {% endfor %}
+    </div>
+    <div>
+      <label for="language" class="block text-sm font-medium text-gray-800">Language</label>
+      <input id="language" name="language" value="en" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+    </div>
+    <div>
+      <label for="tags" class="block text-sm font-medium text-gray-800">Tags (comma separated)</label>
+      <input id="tags" name="tags" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+    </div>
+    <button type="submit" class="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Queue Upload</button>
+  </form>
+  <section class="md:col-span-2 bg-white border border-gray-200 rounded-lg shadow-sm p-4">
+    <h2 class="text-lg font-semibold text-gray-900 mb-3">Upload Queue</h2>
+    <ul class="divide-y divide-gray-200">
+      {% for doc in queue %}
+        <li class="py-3 flex items-center justify-between">
+          <div>
+            <p class="font-semibold text-gray-900">{{ doc.filename }}</p>
+            <p class="text-sm text-gray-600">{{ doc.status }} • {{ doc.mime_type }}</p>
+            {% if doc.error_message %}
+              <p class="text-sm text-red-700">{{ doc.error_message }}</p>
+            {% endif %}
+          </div>
+          <span class="px-2 py-1 rounded text-xs {{ 'bg-green-50 text-green-700' if doc.status == 'ready' else 'bg-yellow-50 text-yellow-700' }}">{{ doc.status }}</span>
+        </li>
+      {% else %}
+        <li class="py-3 text-gray-600">No uploads yet.</li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,72 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <div>
+    <p class="text-sm text-gray-600">Configure {{ app.name }}</p>
+    <h1 class="text-2xl font-semibold text-gray-900">Configuration</h1>
+  </div>
+  <a href="{{ url_for('view_app', app_id=app.id) }}" class="text-blue-700">Back</a>
+</div>
+<div class="bg-white border border-gray-200 rounded-lg shadow-sm">
+  <div class="flex border-b border-gray-200" role="tablist">
+    <a href="{{ url_for('app_config', app_id=app.id, tab='instructions') }}" class="px-4 py-3 text-sm font-semibold {{ 'border-b-2 border-blue-600 text-blue-700' if tab=='instructions' else 'text-gray-700' }}" role="tab" aria-selected="{{ tab=='instructions' }}">Instructions</a>
+    <a href="{{ url_for('app_config', app_id=app.id, tab='settings') }}" class="px-4 py-3 text-sm font-semibold {{ 'border-b-2 border-blue-600 text-blue-700' if tab=='settings' else 'text-gray-700' }}" role="tab" aria-selected="{{ tab=='settings' }}">Settings</a>
+  </div>
+  <div class="p-6" aria-live="polite">
+    {% if saved %}
+      <div class="mb-4 rounded bg-green-50 text-green-800 px-3 py-2">Saved.</div>
+    {% endif %}
+    {% if tab == 'instructions' %}
+      <form method="post" class="grid md:grid-cols-2 gap-4" aria-describedby="instructions-help">
+        <div class="space-y-3">
+          <div>
+            <label for="version" class="block text-sm font-medium text-gray-800">Version</label>
+            <input id="version" name="version" value="{{ instructions.version }}" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600" aria-describedby="version-error">
+            {% for err in errors if err['path'] == 'version' %}
+              <p id="version-error" class="text-sm text-red-700">{{ err['msg'] }}</p>
+            {% endfor %}
+          </div>
+          <div>
+            <label for="uri" class="block text-sm font-medium text-gray-800">Instructions URI</label>
+            <input id="uri" name="uri" value="{{ instructions.uri }}" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600" aria-describedby="uri-error">
+            {% for err in errors if err['path'] == 'uri' %}
+              <p id="uri-error" class="text-sm text-red-700">{{ err['msg'] }}</p>
+            {% endfor %}
+          </div>
+          <div>
+            <label for="content" class="block text-sm font-medium text-gray-800">Markdown Content</label>
+            <textarea id="content" name="content" rows="14" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600" aria-describedby="instructions-help">{{ instructions.content }}</textarea>
+            <p id="instructions-help" class="text-sm text-gray-600">Split view preview updates live.</p>
+          </div>
+          <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Save Instructions</button>
+        </div>
+        <div>
+          <p class="text-sm font-semibold text-gray-800 mb-2">Preview</p>
+          <div class="prose max-w-none bg-gray-50 border border-gray-200 rounded p-3" id="markdown-preview">Loading preview...</div>
+        </div>
+      </form>
+    {% else %}
+      <form method="post" class="grid md:grid-cols-2 gap-4" aria-describedby="settings-help">
+        <div class="space-y-3">
+          <label for="config_settings" class="block text-sm font-medium text-gray-800">Config Settings (JSON)</label>
+          <textarea id="config_settings" name="config_settings" rows="10" class="w-full rounded border-gray-300 focus:border-blue-600" aria-describedby="config-settings-error settings-help">{{ settings.config_settings }}</textarea>
+          {% for err in errors if err['path'] == 'config_settings' %}
+            <p id="config-settings-error" class="text-sm text-red-700">{{ err['msg'] }}</p>
+          {% endfor %}
+          <label for="config_schema" class="block text-sm font-medium text-gray-800">Config Schema (JSON)</label>
+          <textarea id="config_schema" name="config_schema" rows="10" class="w-full rounded border-gray-300 focus:border-blue-600" aria-describedby="config-schema-error settings-help">{{ settings.config_schema }}</textarea>
+          {% for err in errors if err['path'] == 'config_schema' %}
+            <p id="config-schema-error" class="text-sm text-red-700">{{ err['msg'] }}</p>
+          {% endfor %}
+          <button type="submit" class="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Save Settings</button>
+          <p id="settings-help" class="text-sm text-gray-600">Inline JSON validation shows errors before submit.</p>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-gray-800 mb-2">Schema Preview</h3>
+          <pre class="bg-gray-50 border border-gray-200 rounded p-3 text-sm overflow-auto h-full">{{ settings.config_schema }}</pre>
+        </div>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
