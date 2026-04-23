@@ -7,6 +7,7 @@ from .embedding_router import route
 from .embedding import embed_text
 from .metadata_extract import extract_metadata
 from .schemas import RetrievalResult, RetrievalCandidate, ValidationError
+from .utils.logging import logger
 from .utils.metrics import timer
 
 
@@ -90,10 +91,15 @@ def retrieve_data(
         for rank, (chunk, score) in enumerate(meta_results):
             metadata_candidates.append((RetrievalCandidate(chunk=chunk, score=score, source="metadata"), rank))
     with timer(debug["timing"], "semantic_search"):
-        if store:
-            sem_results = store.semantic_search(query_embedding, route_info.namespace, config.candidate_k)
-        else:
+        try:
+            if store:
+                sem_results = store.semantic_search(query_embedding, route_info.namespace, config.candidate_k)
+            else:
+                sem_results = []
+        except Exception as exc:
             sem_results = []
+            debug["semantic_search_error"] = str(exc)
+            logger.warning("Semantic search failed, using metadata-only candidates: %s", exc)
         for rank, (chunk, score) in enumerate(sem_results):
             semantic_candidates.append((RetrievalCandidate(chunk=chunk, score=score, source="semantic"), rank))
 

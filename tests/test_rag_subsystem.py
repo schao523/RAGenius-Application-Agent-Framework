@@ -105,3 +105,33 @@ def test_compare_semver():
 def test_pgvector_schema_contains_on_conflict():
     assert "ON CONFLICT" in SQL_SCHEMA
     assert "CREATE TABLE IF NOT EXISTS rag_chunks" in SQL_SCHEMA
+
+
+def test_retrieval_falls_back_when_semantic_search_fails():
+    class FailingSemanticStore(InMemoryVectorStore):
+        def semantic_search(self, query_embedding, namespace, top_k):
+            raise RuntimeError("semantic backend unavailable")
+
+    store = FailingSemanticStore()
+    documents = [
+        {
+            "doc_id": "doc4",
+            "blocks": [
+                {
+                    "type": "text",
+                    "text": "fallback test content with enough tokens for ingestion and metadata retrieval path to work",
+                    "metadata": {"tag": "fallback", "version": "1.0.0", "updated_at": "2024-02-01"},
+                }
+            ],
+        }
+    ]
+    process_files(documents, ProcessConfig(min_chunk_length=1), store=store)
+    result = retrieve_data(
+        "tag:fallback retrieval",
+        top_k=3,
+        filters={},
+        config=RetrievalConfig(candidate_k=5, fusion_k=60, top_k=3),
+        store=store,
+    )
+    assert len(result.results) >= 1
+    assert "semantic_search_error" in result.debug
