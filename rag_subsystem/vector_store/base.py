@@ -8,11 +8,15 @@ class VectorStore:
     def upsert(self, chunks: Sequence[Chunk]) -> None:
         raise NotImplementedError
 
-    def semantic_search(self, query_embedding: List[float], namespace: str, top_k: int) -> List[Tuple[Chunk, float]]:
+    def semantic_search(
+        self, query_embedding: List[float], namespace: str, top_k: int, app_id: str | None = None
+    ) -> List[Tuple[Chunk, float]]:
         raise NotImplementedError
 
-    def metadata_search(self, filters: Dict[str, Any], namespace: str, top_k: int) -> List[Tuple[Chunk, float]]:
+    def metadata_search(
+        self, filters: Dict[str, Any], namespace: str, top_k: int, app_id: str | None = None
+    ) -> List[Tuple[Chunk, float]]:
         raise NotImplementedError
 
-    def delete_by_doc_id(self, doc_id: str) -> None:
+    def delete_by_doc_id(self, doc_id: str, app_id: str | None = None) -> None:
         raise NotImplementedError

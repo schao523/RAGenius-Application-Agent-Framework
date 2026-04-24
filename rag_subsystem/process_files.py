@@ -10,11 +10,25 @@ from .embedding_router import route
 from .language_detect import detect_language
 from .schemas import Chunk, IngestResult
 from .utils.logging import logger
+from .vector_store.factory import get_default_vector_store
+
+
+def _require_app_id(metadata: dict) -> str:
+    app_id = str((metadata or {}).get("app_id", "")).strip()
+    if not app_id:
+        raise ValueError("metadata.app_id is required for ingestion")
+    return app_id
 
 
 def process_files(documents: Iterable[dict], config: ProcessConfig = DEFAULT_PROCESS_CONFIG, store=None) -> List[IngestResult]:
+    if store is None:
+        store = get_default_vector_store()
     results: List[IngestResult] = []
     blocks = normalize_documents(documents)
+    app_doc_pairs = {(block.doc_id, _require_app_id(block.metadata)) for block in blocks}
+    for doc_id, app_id in app_doc_pairs:
+        store.delete_by_doc_id(doc_id, app_id=app_id)
+
     chunks_raw = chunk_blocks(blocks, config.chunk_size, config.chunk_overlap, config.section_token_threshold)
     filtered_chunks, skip_counts = filter_chunks(chunks_raw, config)
 
@@ -23,6 +37,7 @@ def process_files(documents: Iterable[dict], config: ProcessConfig = DEFAULT_PRO
         try:
             language = detect_language(chunk_data["text"])
             route_info = route(language)
+            app_id = _require_app_id(chunk_data.get("metadata", {}))
             embedding = embed_text(chunk_data["text"], route_info.model)
             chunk = Chunk(
                 doc_id=chunk_data["doc_id"],
@@ -32,7 +47,7 @@ def process_files(documents: Iterable[dict], config: ProcessConfig = DEFAULT_PRO
                 order=chunk_data.get("order", idx),
                 language=route_info.language,
                 embedding_model=route_info.model,
-                namespace=route_info.namespace,
+                namespace=f"{app_id}:{route_info.namespace}",
                 embedding=embedding,
                 metadata=chunk_data.get("metadata", {}),
                 hash=chunk_data["hash"],

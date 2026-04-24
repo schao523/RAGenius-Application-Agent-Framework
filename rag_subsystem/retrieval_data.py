@@ -9,11 +9,19 @@ from .metadata_extract import extract_metadata
 from .schemas import RetrievalResult, RetrievalCandidate, ValidationError
 from .utils.logging import logger
 from .utils.metrics import timer
+from .vector_store.factory import get_default_vector_store
 
 
 def _validate_query(query_text: str) -> None:
     if not query_text or not query_text.strip():
         raise ValidationError(path="query", msg="Query text is required")
+
+
+def _require_app_id(filters: Dict[str, str]) -> str:
+    app_id = str((filters or {}).get("app_id", "")).strip()
+    if not app_id:
+        raise ValidationError(path="filters.app_id", msg="app_id is required for retrieval isolation")
+    return app_id
 
 
 def _rrf(rank: int, k: int) -> float:
@@ -66,6 +74,8 @@ def retrieve_data(
     config: RetrievalConfig = DEFAULT_RETRIEVAL_CONFIG,
     store=None,
 ) -> RetrievalResult:
+    if store is None:
+        store = get_default_vector_store()
     filters = filters or {}
     debug: Dict[str, any] = {"timing": {}}
     with timer(debug["timing"], "validate"):
@@ -73,10 +83,13 @@ def retrieve_data(
     with timer(debug["timing"], "metadata_extract"):
         extracted_filters, meta_info = extract_metadata(query_text)
     merged_filters = {**extracted_filters, **filters}
+    app_id = _require_app_id(merged_filters)
+    merged_filters["app_id"] = app_id
     with timer(debug["timing"], "language_detect"):
         language = detect_language(query_text)
     with timer(debug["timing"], "routing"):
         route_info = route(language)
+    scoped_namespace = f"{app_id}:{route_info.namespace}"
     with timer(debug["timing"], "embed"):
         query_embedding = embed_text(query_text, route_info.model)
 
@@ -85,7 +98,7 @@ def retrieve_data(
 
     with timer(debug["timing"], "metadata_search"):
         if store:
-            meta_results = store.metadata_search(merged_filters, route_info.namespace, config.candidate_k)
+            meta_results = store.metadata_search(merged_filters, scoped_namespace, config.candidate_k, app_id=app_id)
         else:
             meta_results = []
         for rank, (chunk, score) in enumerate(meta_results):
@@ -93,7 +106,7 @@ def retrieve_data(
     with timer(debug["timing"], "semantic_search"):
         try:
             if store:
-                sem_results = store.semantic_search(query_embedding, route_info.namespace, config.candidate_k)
+                sem_results = store.semantic_search(query_embedding, scoped_namespace, config.candidate_k, app_id=app_id)
             else:
                 sem_results = []
         except Exception as exc:
@@ -119,7 +132,7 @@ def retrieve_data(
             "metadata_candidates": [(c.chunk.chunk_id, s) for c, s in metadata_candidates],
             "fusion_scores": rank_lookup,
             "language": language,
-            "route": route_info.__dict__,
+            "route": {**route_info.__dict__, "namespace": scoped_namespace},
             "filters": merged_filters,
         }
     )
