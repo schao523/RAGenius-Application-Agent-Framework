@@ -39,22 +39,29 @@ def _fusion(
     return scores
 
 
+def _source_map(
+    semantic: List[Tuple[RetrievalCandidate, int]], metadata: List[Tuple[RetrievalCandidate, int]]
+) -> Dict[str, str]:
+    source_map: Dict[str, str] = {}
+    semantic_ids = {cand.chunk.chunk_id for cand, _ in semantic}
+    metadata_ids = {cand.chunk.chunk_id for cand, _ in metadata}
+    all_ids = semantic_ids | metadata_ids
+    for chunk_id in all_ids:
+        in_sem = chunk_id in semantic_ids
+        in_meta = chunk_id in metadata_ids
+        if in_sem and in_meta:
+            source_map[chunk_id] = "hybrid"
+        elif in_sem:
+            source_map[chunk_id] = "semantic"
+        else:
+            source_map[chunk_id] = "metadata"
+    return source_map
+
+
 def _select_best_versions(candidates: List[RetrievalCandidate]) -> List[RetrievalCandidate]:
-    grouped: Dict[str, RetrievalCandidate] = {}
-    for cand in candidates:
-        doc_key = cand.chunk.doc_id
-        existing = grouped.get(doc_key)
-        if existing is None:
-            grouped[doc_key] = cand
-            continue
-        new_version = cand.chunk.metadata.get("version", "0.0.0")
-        old_version = existing.chunk.metadata.get("version", "0.0.0")
-        if _compare_semver(new_version, old_version) > 0:
-            grouped[doc_key] = cand
-        elif _compare_semver(new_version, old_version) == 0:
-            if cand.chunk.metadata.get("updated_at", "") > existing.chunk.metadata.get("updated_at", ""):
-                grouped[doc_key] = cand
-    return list(grouped.values())
+    # Keep chunk-level ranking; do not collapse all chunks into a single hit per doc_id.
+    # App/version isolation is enforced elsewhere, and callers usually want top chunks.
+    return candidates
 
 
 def _compare_semver(a: str, b: str) -> int:
@@ -117,12 +124,18 @@ def retrieve_data(
             semantic_candidates.append((RetrievalCandidate(chunk=chunk, score=score, source="semantic"), rank))
 
     fusion_scores = _fusion(semantic_candidates, metadata_candidates, config.fusion_k)
+    sources = _source_map(semantic_candidates, metadata_candidates)
     ranked_ids = sorted(fusion_scores.items(), key=lambda x: x[1], reverse=True)
     ranked_candidates: List[RetrievalCandidate] = []
     rank_lookup = {cid: score for cid, score in ranked_ids}
-    all_candidates = {cand.chunk.chunk_id: cand for cand, _ in semantic_candidates + metadata_candidates}
+    all_candidates: Dict[str, RetrievalCandidate] = {}
+    for cand, _ in semantic_candidates + metadata_candidates:
+        existing = all_candidates.get(cand.chunk.chunk_id)
+        if existing is None or existing.source != "semantic":
+            all_candidates[cand.chunk.chunk_id] = cand
     for chunk_id, _ in ranked_ids:
-        ranked_candidates.append(all_candidates[chunk_id])
+        chosen = all_candidates[chunk_id]
+        ranked_candidates.append(RetrievalCandidate(chunk=chosen.chunk, score=chosen.score, source=sources[chunk_id]))
     ranked_candidates = _select_best_versions(ranked_candidates)
     final_results = ranked_candidates[:top_k]
 

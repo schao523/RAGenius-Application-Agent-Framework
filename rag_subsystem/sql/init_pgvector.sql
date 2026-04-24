@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
     text TEXT NOT NULL,
     section_path TEXT,
     ordering INTEGER,
-    embedding vector(8),
+    embedding vector(1024),
     metadata JSONB,
     hash TEXT,
     language TEXT,
@@ -15,7 +15,24 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS app_id TEXT;
-UPDATE rag_chunks SET app_id = COALESCE(NULLIF(metadata->>'app_id', ''), app_id, '') WHERE app_id IS NULL OR app_id = '';
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname='public'
+          AND c.relname='rag_chunks'
+          AND a.attname='embedding'
+          AND a.atttypid = 'vector'::regtype
+          AND a.atttypmod <> 1024
+    ) THEN
+        ALTER TABLE rag_chunks DROP COLUMN embedding;
+        ALTER TABLE rag_chunks ADD COLUMN embedding vector(1024);
+    END IF;
+END $$;
+UPDATE rag_chunks SET app_id = COALESCE(NULLIF(metadata->>'app_id', ''), 'unknown') WHERE app_id IS NULL OR app_id = '';
 ALTER TABLE rag_chunks ALTER COLUMN app_id SET DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_rag_chunks_namespace ON rag_chunks(namespace);
 CREATE INDEX IF NOT EXISTS idx_rag_chunks_app ON rag_chunks(app_id);

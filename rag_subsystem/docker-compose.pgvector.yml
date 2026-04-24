@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: ragenius-pgvector
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ragenius
+      POSTGRES_PASSWORD: ragenius
+      POSTGRES_DB: ragenius
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ragenius -d ragenius"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  pgvector_data:

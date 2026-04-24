@@ -5,6 +5,7 @@ import pytest
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+os.environ.setdefault("RAG_EMBEDDING_BACKEND", "hash")
 
 from rag_subsystem.normalize import normalize_documents
 from rag_subsystem.chunking import chunk_blocks
@@ -25,6 +26,7 @@ from rag_subsystem.vector_store.factory import (
     clear_default_vector_store_cache,
 )
 from rag_subsystem.config import ProcessConfig, RetrievalConfig
+from rag_subsystem.embedding import embed_text
 
 
 def test_normalize_and_fallbacks():
@@ -54,6 +56,22 @@ def test_chunking_long_section_and_quality_filter():
     assert counts["skipped_too_short_count"] == 0
     assert counts["skipped_near_dup_count"] > 0
     assert len(filtered) == 1
+
+
+def test_chunking_cjk_splits_without_whitespace():
+    long_cjk = "耶穌" * 1500
+    documents = [{"doc_id": "doc-cjk", "blocks": [{"type": "text", "text": long_cjk}]}]
+    blocks = normalize_documents(documents)
+    chunks = chunk_blocks(blocks, chunk_size=400, overlap=60, section_token_threshold=1200)
+    assert len(chunks) > 1
+    assert all(" " not in c["text"] for c in chunks)
+
+
+def test_quality_filter_cjk_min_length_counts_char_tokens():
+    chunks = [{"doc_id": "doc-q-cjk", "text": "耶穌" * 40, "metadata": {}, "hash": "h1"}]
+    filtered, counts = filter_chunks(chunks, ProcessConfig(min_chunk_length=30))
+    assert len(filtered) == 1
+    assert counts["skipped_too_short_count"] == 0
 
 
 def test_embedding_router_language_detection():
@@ -208,6 +226,7 @@ def test_pgvector_schema_contains_on_conflict():
     assert "ON CONFLICT" in SQL_SCHEMA
     assert "CREATE TABLE IF NOT EXISTS rag_chunks" in SQL_SCHEMA
     assert "app_id TEXT NOT NULL" in SQL_SCHEMA
+    assert "embedding vector(1024)" in SQL_SCHEMA
 
 
 def test_retrieval_falls_back_when_semantic_search_fails():
@@ -238,6 +257,32 @@ def test_retrieval_falls_back_when_semantic_search_fails():
     )
     assert len(result.results) >= 1
     assert "semantic_search_error" in result.debug
+
+
+def test_retrieval_source_hybrid_when_semantic_and_metadata_both_match():
+    documents = [
+        {
+            "doc_id": "doc-hybrid",
+            "blocks": [
+                {
+                    "type": "text",
+                    "text": "hybrid source test content with enough tokens for both semantic and metadata matching",
+                    "metadata": {"app_id": "app-hybrid", "tag": "hybrid", "version": "1.0.0", "updated_at": "2024-02-01"},
+                }
+            ],
+        }
+    ]
+    store = InMemoryVectorStore()
+    process_files(documents, ProcessConfig(min_chunk_length=1), store=store)
+    result = retrieve_data(
+        "hybrid source test",
+        top_k=3,
+        filters={"app_id": "app-hybrid", "tag": "hybrid"},
+        config=RetrievalConfig(candidate_k=5, fusion_k=60, top_k=3),
+        store=store,
+    )
+    assert len(result.results) >= 1
+    assert result.results[0].source == "hybrid"
 
 
 def test_factory_resolves_pgvector_from_env(monkeypatch):
@@ -366,3 +411,8 @@ def test_reingest_deletes_stale_chunks_for_same_doc_and_app():
     )
     assert len(result.results) == 1
     assert "gamma new chunk" in result.results[0].chunk.text
+
+
+def test_hash_embedding_backend_outputs_1024():
+    vec = embed_text("sample embedding text", "e5-large")
+    assert len(vec) == 1024
