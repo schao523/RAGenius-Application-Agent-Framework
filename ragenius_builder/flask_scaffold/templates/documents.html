@@ -17,6 +17,10 @@
         </div>
         <div class="flex items-center gap-3 text-sm">
           <a class="text-blue-700" href="{{ url_for('document_detail', app_id=app.id, doc_id=doc.id) }}">View</a>
+          <form method="post" action="{{ url_for('api_doc_delete', app_id=app.id, doc_id=doc.id) }}" onsubmit="return confirm('Delete this file?')">
+            <input type="hidden" name="_method" value="delete">
+            <button class="text-red-700">Delete</button>
+          </form>
         </div>
       </li>
     {% else %}

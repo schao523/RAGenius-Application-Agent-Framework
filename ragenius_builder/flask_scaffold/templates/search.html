@@ -23,13 +23,23 @@
     {% elif results %}
       {% for item in results %}
         <article class="border border-gray-200 rounded p-3">
-          <p class="text-sm text-gray-500">Score {{ item.score }}</p>
-          <p class="font-semibold text-gray-900">{{ item.text }}</p>
-          <p class="text-xs text-gray-500">Source: {{ item.source }}</p>
+          <p class="text-sm text-gray-500">Score {{ item.score }} â€¢ {{ item.source }}</p>
+          <p class="font-semibold text-gray-900 whitespace-pre-wrap">{{ item.text }}</p>
+          <p class="text-xs text-gray-500 mt-1">Doc ID: {{ item.doc_id }} â€¢ Chunk: {{ item.chunk_id }}</p>
+          {% if item.filename %}
+            <p class="text-xs text-gray-500">File: {{ item.filename }}</p>
+          {% endif %}
         </article>
       {% endfor %}
     {% else %}
       <p class="text-gray-600">Enter a query to see results.</p>
+    {% endif %}
+
+    {% if debug %}
+      <details class="border border-gray-200 rounded p-3">
+        <summary class="cursor-pointer text-sm font-medium text-gray-800">Debug info</summary>
+        <pre class="mt-2 text-xs text-gray-700 whitespace-pre-wrap">{{ debug }}</pre>
+      </details>
     {% endif %}
   </div>
 </section>

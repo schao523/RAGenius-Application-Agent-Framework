@@ -26,6 +26,10 @@
         <a href="{{ url_for('view_app', app_id=app.id) }}" class="text-blue-700 font-semibold">Open</a>
         <a href="{{ url_for('app_config', app_id=app.id) }}" class="text-gray-700 hover:text-blue-700">Configure</a>
         <a href="{{ url_for('upload', app_id=app.id) }}" class="text-gray-700 hover:text-blue-700">Upload</a>
+        <a href="{{ url_for('search', app_id=app.id) }}" class="text-gray-700 hover:text-blue-700">Search</a>
+        <form method="post" action="{{ url_for('delete_app', app_id=app.id) }}" onsubmit="return confirm('Delete application &quot;{{ app.name }}&quot;? This removes its documents, instructions, and indexed chunks.');">
+          <button type="submit" class="text-red-700 hover:text-red-900">Delete</button>
+        </form>
       </div>
     </article>
   {% else %}

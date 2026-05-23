@@ -19,6 +19,31 @@
     {% if tab == 'instructions' %}
       <form method="post" class="grid md:grid-cols-2 gap-4" aria-describedby="instructions-help">
         <div class="space-y-3">
+          {% if instruction_resource_validation.referenced_files %}
+            <div class="rounded border {{ 'border-green-200 bg-green-50' if instruction_resource_validation.ok else 'border-amber-200 bg-amber-50' }} p-3">
+              <p class="text-sm font-semibold {{ 'text-green-800' if instruction_resource_validation.ok else 'text-amber-800' }}">
+                Instruction resource validation
+              </p>
+              <p class="text-sm {{ 'text-green-700' if instruction_resource_validation.ok else 'text-amber-700' }}">
+                {% if instruction_resource_validation.ok %}
+                  All referenced `.md` resource files exist as builder-managed documents for this application.
+                {% else %}
+                  Some referenced `.md` resource files are not present in this application's documents. Runtime module-targeted retrieval will miss those files until they are uploaded and ingested.
+                {% endif %}
+              </p>
+              <div class="mt-2 text-sm text-gray-700">
+                <p class="font-medium">Referenced files</p>
+                <ul class="list-disc list-inside">
+                  {% for item in instruction_resource_validation.matched_documents %}
+                    <li>{{ item.reference }} -> {{ item.status }}</li>
+                  {% endfor %}
+                  {% for item in instruction_resource_validation.missing_files %}
+                    <li class="text-amber-800">{{ item }} -> missing</li>
+                  {% endfor %}
+                </ul>
+              </div>
+            </div>
+          {% endif %}
           <div>
             <label for="version" class="block text-sm font-medium text-gray-800">Version</label>
             <input id="version" name="version" value="{{ instructions.version }}" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600" aria-describedby="version-error">
@@ -46,10 +71,119 @@
         </div>
       </form>
     {% else %}
-      <form method="post" class="grid md:grid-cols-2 gap-4" aria-describedby="settings-help">
+      <form method="post" class="space-y-4" aria-describedby="settings-help">
         <div class="space-y-3">
-          <label for="config_settings" class="block text-sm font-medium text-gray-800">Config Settings (JSON)</label>
-          <textarea id="config_settings" name="config_settings" rows="10" class="w-full rounded border-gray-300 focus:border-blue-600" aria-describedby="config-settings-error settings-help">{{ settings.config_settings }}</textarea>
+          {% if errors %}
+            <div class="rounded border border-red-200 bg-red-50 p-3">
+              <p class="text-sm font-semibold text-red-800 mb-1">Validation errors</p>
+              <ul class="text-sm text-red-700 space-y-1">
+                {% for err in errors %}
+                  <li><code>{{ err['path'] }}</code>: {{ err['msg'] }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+          <div class="rounded border border-gray-200 bg-gray-50 p-4">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <h3 class="text-sm font-semibold text-gray-800">LLM Settings</h3>
+                <p class="text-sm text-gray-600">Edit the per-application LLM provider, task models, and temperatures.</p>
+              </div>
+              <div class="text-xs text-gray-500">
+                Persisted in <code>settings.config_settings.llm</code>
+              </div>
+            </div>
+            <div class="mt-4 grid gap-4">
+              <div class="grid md:grid-cols-[220px_1fr_1fr] gap-3 items-start">
+                <div>
+                  <label for="llm-provider" class="block text-sm font-medium text-gray-800">Provider</label>
+                  <p class="text-xs text-gray-500">Default: {{ llm_editor.provider.default or '-' }}</p>
+                </div>
+                <div class="md:col-span-2">
+                  <input
+                    id="llm-provider"
+                    type="text"
+                    value="{{ llm_editor.provider.current }}"
+                    data-llm-path="llm.provider"
+                    data-default-value="{{ llm_editor.provider.default }}"
+                    class="w-full rounded border-gray-300 focus:border-blue-600"
+                  >
+                </div>
+              </div>
+              <div class="overflow-auto border border-gray-200 rounded bg-white">
+                <table class="min-w-full table-fixed text-sm">
+                  <thead class="bg-white text-gray-700">
+                    <tr>
+                      <th class="text-left px-3 py-2 w-[30%]">Task</th>
+                      <th class="text-left px-3 py-2 w-[35%]">Model</th>
+                      <th class="text-left px-3 py-2 w-[35%]">Temperature</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in llm_editor.tasks %}
+                      <tr class="border-t border-gray-100">
+                        <td class="px-3 py-2 font-medium text-gray-900 break-all">
+                          <div>{{ row.task }}</div>
+                          <div class="text-xs text-gray-500 mt-1">
+                            model default: {{ row.model_default or '-' }}<br>
+                            temperature default: {{ row.temperature_default if row.temperature_default != '' else '-' }}
+                          </div>
+                        </td>
+                        <td class="px-3 py-2">
+                          <textarea
+                            rows="{% if (row.model_current|string|length) > 36 %}2{% else %}1{% endif %}"
+                            data-llm-path="llm.models.{{ row.task }}"
+                            data-default-value="{{ row.model_default }}"
+                            class="w-full rounded border-gray-300 focus:border-blue-600 whitespace-pre-wrap break-all resize-y"
+                          >{{ row.model_current }}</textarea>
+                        </td>
+                        <td class="px-3 py-2">
+                          <input
+                            type="number"
+                            step="any"
+                            value="{{ row.temperature_current }}"
+                            data-llm-path="llm.temperature.{{ row.task }}"
+                            data-default-value="{{ row.temperature_default }}"
+                            class="w-full rounded border-gray-300 focus:border-blue-600"
+                          >
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <h3 class="text-sm font-semibold text-gray-800">Other Settings</h3>
+          <p class="text-sm text-gray-600">Edit non-LLM settings as a list. Defaults come from the schema and are shown for reference.</p>
+          <div class="overflow-auto border border-gray-200 rounded">
+            <table class="min-w-full table-fixed text-sm">
+              <thead class="bg-gray-50 text-gray-700">
+                <tr>
+                  <th class="text-left px-3 py-2 w-[34%]">Setting</th>
+                  <th class="text-left px-3 py-2 w-[10%]">Type</th>
+                  <th class="text-left px-3 py-2 w-[22%]">Default</th>
+                  <th class="text-left px-3 py-2 w-[34%]">Current Value</th>
+                </tr>
+              </thead>
+              <tbody id="settings-list-body">
+                {% for row in settings_rows %}
+                  <tr class="border-t border-gray-100">
+                    <td class="px-3 py-2 font-medium text-gray-900 break-all">{{ row.key_path }}</td>
+                    <td class="px-3 py-2 text-gray-700">{{ row.type }}</td>
+                    <td class="px-3 py-2 text-gray-600">
+                      <div class="whitespace-pre-wrap break-all">{{ row.default_display }}</div>
+                    </td>
+                    <td class="px-3 py-2">
+                      <textarea rows="{% if (row.current_display|length) > 120 %}4{% elif (row.current_display|length) > 48 %}2{% else %}1{% endif %}" class="w-full rounded border-gray-300 bg-gray-50 text-gray-900 whitespace-pre-wrap break-all resize-y" readonly>{{ row.current_display }}</textarea>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <p id="settings-list-empty" class="text-sm text-amber-700 {{ 'hidden' if settings_rows else '' }}">No non-LLM schema properties found. Add settings in Config Schema JSON below.</p>
+          <textarea id="config_settings" name="config_settings" rows="1" class="hidden" aria-describedby="config-settings-error settings-help">{{ settings.config_settings }}</textarea>
           {% for err in errors if err['path'] == 'config_settings' %}
             <p id="config-settings-error" class="text-sm text-red-700">{{ err['msg'] }}</p>
           {% endfor %}
@@ -58,12 +192,16 @@
           {% for err in errors if err['path'] == 'config_schema' %}
             <p id="config-schema-error" class="text-sm text-red-700">{{ err['msg'] }}</p>
           {% endfor %}
+          <details>
+            <summary class="cursor-pointer text-sm font-medium text-gray-800">Advanced: Raw Config Settings JSON</summary>
+            <textarea id="config_settings_raw" rows="8" class="mt-2 w-full rounded border-gray-300 focus:border-blue-600">{{ settings.config_settings }}</textarea>
+          </details>
           <button type="submit" class="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Save Settings</button>
           <p id="settings-help" class="text-sm text-gray-600">Inline JSON validation shows errors before submit.</p>
         </div>
-        <div>
+        <div class="pt-2 border-t border-gray-200">
           <h3 class="text-sm font-semibold text-gray-800 mb-2">Schema Preview</h3>
-          <pre class="bg-gray-50 border border-gray-200 rounded p-3 text-sm overflow-auto h-full">{{ settings.config_schema }}</pre>
+          <pre class="bg-gray-50 border border-gray-200 rounded p-3 text-sm overflow-auto max-h-80">{{ settings.config_schema }}</pre>
         </div>
       </form>
     {% endif %}
