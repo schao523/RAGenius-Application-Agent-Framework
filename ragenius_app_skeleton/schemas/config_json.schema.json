@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/config_json.schema.json",
+  "title": "Config JSON (Domain-Agnostic) Schema v1.1c",
+  "type": "object",
+  "required": [
+    "meta",
+    "role",
+    "goals",
+    "mode_detection",
+    "coverage_rules",
+    "retrieval_rules",
+    "style_rules",
+    "safety_rules",
+    "step_skeletons",
+    "modules",
+    "controls_commands"
+  ],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "title": { "type": "string" },
+        "domain_hint": { "type": ["string", "null"] },
+        "version_hint": { "type": ["string", "null"] },
+        "author": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "role": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "name": { "type": "string" },
+        "mission": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "goals": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "mode_detection": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["mode", "triggers"],
+        "properties": {
+          "mode": { "type": "string" },
+          "triggers": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "priority": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "coverage_rules": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "retrieval_rules": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "style_rules": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "safety_rules": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "step_skeletons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["intent_or_mode", "steps"],
+        "properties": {
+          "intent_or_mode": { "type": "string" },
+          "steps": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "triggers"],
+        "properties": {
+          "name": { "type": "string" },
+          "triggers": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "behavior": { "type": ["string", "null"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "controls_commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command", "effect"],
+        "properties": {
+          "command": { "type": "string" },
+          "effect": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
+

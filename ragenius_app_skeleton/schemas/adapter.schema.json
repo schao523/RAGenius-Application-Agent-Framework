@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/adapter.schema.json",
+  "title": "Domain Adapter Schema v1.1c",
+  "type": "object",
+  "required": [
+    "domain",
+    "version",
+    "intent_overrides",
+    "step_skeleton_mapping",
+    "info_type_to_tags",
+    "retrieval_defaults",
+    "llm_guardrails_append"
+  ],
+  "properties": {
+    "domain": { "type": "string", "minLength": 1 },
+    "version": { "type": "integer", "minimum": 1 },
+
+    "intent_overrides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["alias_intent", "triggers_from_config", "maps_to_base_intent"],
+        "properties": {
+          "alias_intent": { "type": "string" },
+          "triggers_from_config": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "maps_to_base_intent": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+
+    "step_skeleton_mapping": {
+      "type": "object",
+      "required": [
+        "use_config_step_skeletons",
+        "default_mode",
+        "step_waiting_policy"
+      ],
+      "properties": {
+        "use_config_step_skeletons": { "type": "boolean" },
+        "default_mode": { "type": "string" },
+        "step_waiting_policy": {
+          "type": "object",
+          "required": ["wait_for_user_each_step", "max_questions_per_turn"],
+          "properties": {
+            "wait_for_user_each_step": { "type": "boolean" },
+            "max_questions_per_turn": { "type": "integer", "minimum": 1, "maximum": 5 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "info_type_to_tags": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    },
+
+    "retrieval_defaults": {
+      "type": "object",
+      "required": ["top_k_range", "language"],
+      "properties": {
+        "top_k_range": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1, "maximum": 50 },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "language": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "plugin_activation_rules_file": {
+      "type": ["string", "null"]
+    },
+
+    "llm_guardrails_append": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}
+

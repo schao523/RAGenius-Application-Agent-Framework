@@ -1,0 +1,188 @@
+# ============================================================
+# Application Global Configuration
+# System Specifications v1.1c
+# ============================================================
+
+app:
+  name: "Agentic RAG Web Application"
+  environment: "development"   # development | staging | production
+  default_language: "zh"
+  timezone: "Asia/Taipei"
+
+# ============================================================
+# Server / Runtime
+# ============================================================
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 1
+  reload: true                  # dev only
+  log_level: "INFO"
+
+# ============================================================
+# API & Security
+# ============================================================
+
+security:
+  enable_auth: false            # v1.1c: auth is optional / external
+  admin_roles:
+    - "admin"
+    - "super_admin"
+  allowed_file_types:
+    - "pdf"
+    - "md"
+    - "txt"
+    - "json"
+  max_upload_size_mb: 50
+
+# ============================================================
+# Database (PostgreSQL + pgvector)
+# ============================================================
+
+database:
+  type: "postgresql"
+  host: "localhost"
+  port: 5432
+  name: "agentic_rag"
+  user: "postgres"
+  password: "postgres"
+  enable_pgvector: true
+  pool_size: 10
+  pool_timeout: 30
+
+# ============================================================
+# RAG Subsystem (Black-Box)
+# ============================================================
+
+rag_subsystem:
+  enabled: true
+
+  # IMPORTANT:
+  # The application MUST NOT modify rag_subsystem logic.
+  # These configs are only passed through to the subsystem.
+  ingestion_config:
+    chunk_strategy: "internal_default"
+    language_detection: true
+    quality_filter: true
+
+  retrieval_config:
+    hybrid_search: true
+    rrf_fusion: true
+    version_preference: true
+
+# ============================================================
+# Embeddings (OpenAI)
+# ============================================================
+
+embeddings:
+  provider: "openai"
+  default_model: "text-embedding-3-large"
+  timeout_seconds: 30
+
+  routing:
+    zh:
+      model: "bge-large-zh"
+    en:
+      model: "e5-large"
+
+# ============================================================
+# LLM Configuration
+# ============================================================
+
+llm:
+  provider: "openai"
+  default_model: "gpt-4.1"
+  temperature: 0.2
+  max_tokens: 4096
+  timeout_seconds: 60
+
+  # Models per task (optional overrides)
+  models:
+    planner: "gpt-4.1"
+    adapter_generation: "gpt-4.1"
+    answer_generation: "gpt-4.1"
+    evidence_analysis: "gpt-4.1"
+
+# ============================================================
+# LangGraph / Agent Runtime
+# ============================================================
+
+langgraph:
+  enable_debug_trace: true
+  max_retries_per_node: 2
+  retry_on_schema_error: true
+
+  state_persistence:
+    enabled: true
+    backend: "database"         # database | memory
+    expire_days: 30
+
+# ============================================================
+# Domain & Template Registry
+# ============================================================
+
+domains:
+  default_domain: "general"
+
+  base_path: "upload_pack_v1.1c/07_config_files/domains"
+
+  fallback_domain: "general"
+
+  template_versions:
+    default: 1
+
+# ============================================================
+# Hybrid Adapter Strategy
+# ============================================================
+
+adapter:
+  strategy: "hybrid"            # hybrid | manual | disabled
+
+  draft:
+    auto_generate: true
+    max_retry: 2
+
+  approval:
+    required: true
+    auto_activate_after_approval: true
+
+# ============================================================
+# Prompt Registry
+# ============================================================
+
+prompts:
+  base_path: "upload_pack_v1.1c/03_llm_prompts"
+
+  files:
+    config_pdf_extraction: "config_pdf_extraction_prompt_v1.1c.txt"
+    adapter_generation: "adapter_generation_prompt_v1.1c.txt"
+
+    planner:
+      intent: "planner_intent_prompt_v1.1c.txt"
+      steps: "planner_steps_prompt_v1.1c.txt"
+      retrieval_plan: "planner_retrievalplan_prompt_v1.1c.txt"
+      fallback: "planner_fallback_prompt_v1.1c.txt"
+
+    evidence_analysis: "evidence_analysis_prompt_v1.1c.txt"
+
+    answer:
+      system: "answer_generation_system_prompt_v1.1c.txt"
+      safe: "safe_answer_prompt_v1.1c.txt"
+
+# ============================================================
+# JSON Schemas
+# ============================================================
+
+schemas:
+  base_path: "upload_pack_v1.1c/05_json_schemas"
+
+  files:
+    config_json: "config_json.schema.json"
+    adapter: "adapter.schema.json"
+    planner_output: "planner_output.schema.json"
+    evidence: "evidence.schema.json"
+    final_answer: "final_answer.schema.json"
+
+# ============================================================
+# Function Call

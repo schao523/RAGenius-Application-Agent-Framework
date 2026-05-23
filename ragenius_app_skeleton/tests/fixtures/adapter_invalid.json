@@ -1,0 +1,21 @@
+{
+  "domain": "general",
+  "version": 1,
+  "intent_overrides": [],
+  "step_skeleton_mapping": {
+    "use_config_step_skeletons": true,
+    "default_mode": "default",
+    "step_waiting_policy": {
+      "wait_for_user_each_step": false,
+      "max_questions_per_turn": 99
+    }
+  },
+  "info_type_to_tags": {},
+  "retrieval_defaults": {
+    "top_k_range": [1, 5],
+    "language": "en"
+  },
+  "plugin_activation_rules_file": null,
+  "llm_guardrails_append": []
+}
+
