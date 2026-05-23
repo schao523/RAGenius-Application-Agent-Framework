@@ -20,6 +20,10 @@ dependencies = []
 
 [project.optional-dependencies]
 pgvector = ["psycopg2-binary>=2.9"]
+local-embeddings = [
+  "sentence-transformers>=2.7",
+  "torch>=2.2",
+]
 dev = ["pytest>=7.0"]
 
 [project.urls]
@@ -29,6 +33,9 @@ Repository = "https://example.com/rag-subsystem/repo"
 [tool.setuptools]
 packages = ["rag_subsystem", "rag_subsystem.vector_store", "rag_subsystem.utils"]
 include-package-data = true
+
+[tool.setuptools.package-dir]
+rag_subsystem = "."
 
 [tool.setuptools.package-data]
 rag_subsystem = []

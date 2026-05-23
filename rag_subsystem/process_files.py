@@ -20,6 +20,33 @@ def _require_app_id(metadata: dict) -> str:
     return app_id
 
 
+def _basename_from_path(path_value: str) -> str:
+    value = str(path_value or "").strip()
+    if not value:
+        return ""
+    # Handle Windows and POSIX separators regardless of current OS.
+    return value.replace("\\", "/").rsplit("/", 1)[-1].strip()
+
+
+def _normalize_filename_for_filter(filename: str) -> str:
+    value = " ".join(str(filename or "").strip().split())
+    return value.lower()
+
+
+def _ensure_filename_metadata(metadata: dict) -> dict:
+    out = dict(metadata or {})
+    filename = str(out.get("filename", "")).strip()
+    if not filename:
+        filename = _basename_from_path(out.get("source_path", ""))
+    if not filename:
+        # Last fallback keeps per-doc filterability when filename/source_path is absent.
+        filename = _basename_from_path(out.get("doc_id", ""))
+    if filename:
+        out["filename"] = filename
+        out["filename_norm"] = _normalize_filename_for_filter(filename)
+    return out
+
+
 def process_files(documents: Iterable[dict], config: ProcessConfig = DEFAULT_PROCESS_CONFIG, store=None) -> List[IngestResult]:
     if store is None:
         store = get_default_vector_store()
@@ -35,9 +62,10 @@ def process_files(documents: Iterable[dict], config: ProcessConfig = DEFAULT_PRO
     prepared_chunks: List[Chunk] = []
     for idx, chunk_data in enumerate(filtered_chunks):
         try:
+            metadata = _ensure_filename_metadata(chunk_data.get("metadata", {}))
             language = detect_language(chunk_data["text"])
             route_info = route(language)
-            app_id = _require_app_id(chunk_data.get("metadata", {}))
+            app_id = _require_app_id(metadata)
             embedding = embed_text(chunk_data["text"], route_info.model)
             chunk = Chunk(
                 doc_id=chunk_data["doc_id"],
@@ -49,7 +77,7 @@ def process_files(documents: Iterable[dict], config: ProcessConfig = DEFAULT_PRO
                 embedding_model=route_info.model,
                 namespace=f"{app_id}:{route_info.namespace}",
                 embedding=embedding,
-                metadata=chunk_data.get("metadata", {}),
+                metadata=metadata,
                 hash=chunk_data["hash"],
             )
             prepared_chunks.append(chunk)

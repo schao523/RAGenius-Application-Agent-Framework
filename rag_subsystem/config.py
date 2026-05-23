@@ -29,6 +29,11 @@ class RetrievalConfig:
     candidate_k: int = 50
     fusion_k: int = 60
     top_k: int = 10
+    semantic_weight: float = 1.0
+    metadata_weight: float = 1.0
+    lexical_weight: float = 1.5
+    lexical_candidate_k: int = 50
+    max_chunks_per_doc: int = 3
 
 
 DEFAULT_PROCESS_CONFIG = ProcessConfig()

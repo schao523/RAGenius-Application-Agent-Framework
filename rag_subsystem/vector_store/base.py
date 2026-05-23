@@ -9,12 +9,32 @@ class VectorStore:
         raise NotImplementedError
 
     def semantic_search(
-        self, query_embedding: List[float], namespace: str, top_k: int, app_id: str | None = None
+        self,
+        query_embedding: List[float],
+        namespace: str,
+        top_k: int,
+        app_id: str | None = None,
+        doc_filter: Dict[str, Any] | None = None,
     ) -> List[Tuple[Chunk, float]]:
         raise NotImplementedError
 
     def metadata_search(
-        self, filters: Dict[str, Any], namespace: str, top_k: int, app_id: str | None = None
+        self,
+        filters: Dict[str, Any],
+        namespace: str,
+        top_k: int,
+        app_id: str | None = None,
+        doc_filter: Dict[str, Any] | None = None,
+    ) -> List[Tuple[Chunk, float]]:
+        raise NotImplementedError
+
+    def lexical_search(
+        self,
+        query_text: str,
+        namespace: str,
+        top_k: int,
+        app_id: str | None = None,
+        doc_filter: Dict[str, Any] | None = None,
     ) -> List[Tuple[Chunk, float]]:
         raise NotImplementedError
 

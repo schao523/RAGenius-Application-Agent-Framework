@@ -26,7 +26,7 @@ from rag_subsystem.vector_store.factory import (
     clear_default_vector_store_cache,
 )
 from rag_subsystem.config import ProcessConfig, RetrievalConfig
-from rag_subsystem.embedding import embed_text
+from rag_subsystem.embedding import embed_text, _default_model_dir
 
 
 def test_normalize_and_fallbacks():
@@ -80,6 +80,17 @@ def test_embedding_router_language_detection():
     assert zh_route.model == "bge-large-zh"
     en_route = route("en")
     assert en_route.namespace.startswith("en:")
+
+
+def test_default_model_dir_is_repo_relative_not_cwd_relative():
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(os.path.join(ROOT, "ragenius_app_skeleton"))
+        model_dir = _default_model_dir("bge-large-zh")
+        assert model_dir.exists()
+        assert model_dir.samefile(os.path.join(ROOT, "rag_subsystem", "models", "bge-large-zh"))
+    finally:
+        os.chdir(original_cwd)
 
 
 def test_in_memory_store_and_upsert():
@@ -216,6 +227,30 @@ def test_process_and_retrieval_pipeline():
     assert "fusion_scores" in result.debug
 
 
+def test_process_files_populates_filename_metadata_from_source_path():
+    documents = [
+        {
+            "doc_id": "doc-filemeta",
+            "blocks": [
+                {
+                    "type": "text",
+                    "text": "filename metadata enrichment test text with enough tokens for ingestion.",
+                    "metadata": {
+                        "app_id": "app-filemeta",
+                        "source_path": r"C:\\tmp\\Bible 新約聖經和合本.PDF",
+                    },
+                }
+            ],
+        }
+    ]
+    store = InMemoryVectorStore()
+    process_files(documents, ProcessConfig(min_chunk_length=1), store=store)
+    assert len(store._items) >= 1
+    meta = store._items[0].metadata
+    assert meta.get("filename") == "Bible 新約聖經和合本.PDF"
+    assert meta.get("filename_norm") == "bible 新約聖經和合本.pdf"
+
+
 def test_compare_semver():
     assert _compare_semver("1.0.0", "1.0.0") == 0
     assert _compare_semver("2.0.0", "1.9.9") > 0
@@ -231,7 +266,7 @@ def test_pgvector_schema_contains_on_conflict():
 
 def test_retrieval_falls_back_when_semantic_search_fails():
     class FailingSemanticStore(InMemoryVectorStore):
-        def semantic_search(self, query_embedding, namespace, top_k, app_id=None):
+        def semantic_search(self, query_embedding, namespace, top_k, app_id=None, doc_filter=None):
             raise RuntimeError("semantic backend unavailable")
 
     store = FailingSemanticStore()
@@ -283,6 +318,447 @@ def test_retrieval_source_hybrid_when_semantic_and_metadata_both_match():
     )
     assert len(result.results) >= 1
     assert result.results[0].source == "hybrid"
+
+
+def test_retrieval_filters_by_filename_case_insensitive():
+    documents = [
+        {
+            "doc_id": "doc-file-a",
+            "blocks": [
+                {
+                    "type": "text",
+                    "text": "shared retrieval query token alpha",
+                    "metadata": {"app_id": "app-file-filter", "filename": "Book One.PDF", "version": "1.0.0"},
+                }
+            ],
+        },
+        {
+            "doc_id": "doc-file-b",
+            "blocks": [
+                {
+                    "type": "text",
+                    "text": "shared retrieval query token alpha",
+                    "metadata": {"app_id": "app-file-filter", "filename": "Book Two.pdf", "version": "1.0.0"},
+                }
+            ],
+        },
+    ]
+    store = InMemoryVectorStore()
+    process_files(documents, ProcessConfig(min_chunk_length=1), store=store)
+    result = retrieve_data(
+        "shared retrieval query",
+        top_k=10,
+        filters={"app_id": "app-file-filter", "filename": "book one.pdf"},
+        config=RetrievalConfig(candidate_k=20, fusion_k=60, top_k=10),
+        store=store,
+    )
+    assert len(result.results) >= 1
+    assert all(r.chunk.doc_id == "doc-file-a" for r in result.results)
+
+
+def test_retrieval_filters_by_doc_id():
+    documents = [
+        {
+            "doc_id": "doc-filter-id-a",
+            "blocks": [
+                {
+                    "type": "text",
+                    "text": "queryable text for doc id a",
+                    "metadata": {"app_id": "app-doc-filter", "filename": "a.pdf"},
+                }
+            ],
+        },
+        {
+            "doc_id": "doc-filter-id-b",
+            "blocks": [
+                {
+                    "type": "text",
+                    "text": "queryable text for doc id b",
+                    "metadata": {"app_id": "app-doc-filter", "filename": "b.pdf"},
+                }
+            ],
+        },
+    ]
+    store = InMemoryVectorStore()
+    process_files(documents, ProcessConfig(min_chunk_length=1), store=store)
+    result = retrieve_data(
+        "queryable text",
+        top_k=10,
+        filters={"app_id": "app-doc-filter", "doc_id": "doc-filter-id-b"},
+        config=RetrievalConfig(candidate_k=20, fusion_k=60, top_k=10),
+        store=store,
+    )
+    assert len(result.results) >= 1
+    assert all(r.chunk.doc_id == "doc-filter-id-b" for r in result.results)
+
+
+def test_retrieval_filters_by_filename_in():
+    documents = [
+        {
+            "doc_id": "doc-in-a",
+            "blocks": [
+                {
+                    "type": "text",
+                    "text": "multi file include alpha",
+                    "metadata": {"app_id": "app-file-in", "filename": "A.md"},
+                }
+            ],
+        },
+        {
+            "doc_id": "doc-in-b",
+            "blocks": [
+                {
+                    "type": "text",
+                    "text": "multi file include alpha",
+                    "metadata": {"app_id": "app-file-in", "filename": "B.md"},
+                }
+            ],
+        },
+        {
+            "doc_id": "doc-in-c",
+            "blocks": [
+                {
+                    "type": "text",
+                    "text": "multi file include alpha",
+                    "metadata": {"app_id": "app-file-in", "filename": "C.md"},
+                }
+            ],
+        },
+    ]
+    store = InMemoryVectorStore()
+    process_files(documents, ProcessConfig(min_chunk_length=1), store=store)
+    result = retrieve_data(
+        "multi file include",
+        top_k=10,
+        filters={"app_id": "app-file-in", "filename_in": ["a.md", "c.md"]},
+        config=RetrievalConfig(candidate_k=20, fusion_k=60, top_k=10),
+        store=store,
+    )
+    assert len(result.results) >= 1
+    allowed = {"doc-in-a", "doc-in-c"}
+    assert all(r.chunk.doc_id in allowed for r in result.results)
+    assert "doc-in-b" not in {r.chunk.doc_id for r in result.results}
+
+
+def test_semantic_filename_in_pre_scoping_keeps_relevant_not_globally_top_ranked(monkeypatch):
+    class ScopedStore(InMemoryVectorStore):
+        pass
+
+    store = ScopedStore()
+    # Build manually to control ranking with a 2D embedding space.
+    from rag_subsystem.schemas import Chunk
+
+    chunks = [
+        Chunk(
+            doc_id="doc-noise",
+            chunk_id="doc-noise::0",
+            text="noise",
+            section_path=None,
+            order=0,
+            language="en",
+            embedding_model="e5-large",
+            namespace="app-pre:en:e5-large",
+            embedding=[1.0, 0.0],
+            metadata={"app_id": "app-pre", "filename": "noise.md", "filename_norm": "noise.md"},
+            hash="h-noise",
+        ),
+        Chunk(
+            doc_id="doc-target",
+            chunk_id="doc-target::0",
+            text="target",
+            section_path=None,
+            order=0,
+            language="en",
+            embedding_model="e5-large",
+            namespace="app-pre:en:e5-large",
+            embedding=[0.6, 0.0],
+            metadata={"app_id": "app-pre", "filename": "target.md", "filename_norm": "target.md"},
+            hash="h-target",
+        ),
+    ]
+    store.upsert(chunks)
+
+    class RouteObj:
+        language = "en"
+        model = "e5-large"
+        namespace = "en:e5-large"
+
+    import rag_subsystem.retrieval_data as rd
+
+    monkeypatch.setattr(rd, "detect_language", lambda _: "en")
+    monkeypatch.setattr(rd, "route", lambda _: RouteObj())
+    monkeypatch.setattr(rd, "embed_text", lambda *_args, **_kwargs: [1.0, 0.0])
+
+    result = retrieve_data(
+        "q",
+        top_k=1,
+        filters={"app_id": "app-pre", "filename_in": ["target.md"]},
+        config=RetrievalConfig(candidate_k=1, fusion_k=60, top_k=1),
+        store=store,
+    )
+    assert len(result.results) == 1
+    assert result.results[0].chunk.doc_id == "doc-target"
+    assert result.debug.get("semantic_pre_scoped") is True
+
+
+def test_semantic_doc_id_pre_scoping_under_namespace_competition(monkeypatch):
+    from rag_subsystem.schemas import Chunk
+    import rag_subsystem.retrieval_data as rd
+
+    store = InMemoryVectorStore()
+    store.upsert(
+        [
+            Chunk(
+                doc_id="doc-a",
+                chunk_id="doc-a::0",
+                text="a",
+                section_path=None,
+                order=0,
+                language="en",
+                embedding_model="e5-large",
+                namespace="app-docscope:en:e5-large",
+                embedding=[1.0, 0.0],
+                metadata={"app_id": "app-docscope", "filename": "a.md", "filename_norm": "a.md"},
+                hash="h-a",
+            ),
+            Chunk(
+                doc_id="doc-b",
+                chunk_id="doc-b::0",
+                text="b",
+                section_path=None,
+                order=0,
+                language="en",
+                embedding_model="e5-large",
+                namespace="app-docscope:en:e5-large",
+                embedding=[0.8, 0.0],
+                metadata={"app_id": "app-docscope", "filename": "b.md", "filename_norm": "b.md"},
+                hash="h-b",
+            ),
+        ]
+    )
+
+    class RouteObj:
+        language = "en"
+        model = "e5-large"
+        namespace = "en:e5-large"
+
+    monkeypatch.setattr(rd, "detect_language", lambda _: "en")
+    monkeypatch.setattr(rd, "route", lambda _: RouteObj())
+    monkeypatch.setattr(rd, "embed_text", lambda *_args, **_kwargs: [1.0, 0.0])
+
+    result = retrieve_data(
+        "q",
+        top_k=1,
+        filters={"app_id": "app-docscope", "doc_id": "doc-b"},
+        config=RetrievalConfig(candidate_k=1, fusion_k=60, top_k=1),
+        store=store,
+    )
+    assert len(result.results) == 1
+    assert result.results[0].chunk.doc_id == "doc-b"
+
+
+def test_metadata_and_semantic_paths_consistent_with_filename_scope():
+    documents = [
+        {
+            "doc_id": "doc-cons-a",
+            "blocks": [
+                {"type": "text", "text": "consistent path alpha", "metadata": {"app_id": "app-cons", "filename": "A.md", "tag": "t"}}
+            ],
+        },
+        {
+            "doc_id": "doc-cons-b",
+            "blocks": [
+                {"type": "text", "text": "consistent path alpha", "metadata": {"app_id": "app-cons", "filename": "B.md", "tag": "t"}}
+            ],
+        },
+    ]
+    store = InMemoryVectorStore()
+    process_files(documents, ProcessConfig(min_chunk_length=1), store=store)
+    result = retrieve_data(
+        "consistent path alpha",
+        top_k=10,
+        filters={"app_id": "app-cons", "filename_in": ["A.md"], "tag": "t"},
+        config=RetrievalConfig(candidate_k=10, fusion_k=60, top_k=10),
+        store=store,
+    )
+    assert len(result.results) >= 1
+    assert all(r.chunk.doc_id == "doc-cons-a" for r in result.results)
+
+
+def test_filename_filter_respects_app_isolation_with_same_filename():
+    documents = [
+        {
+            "doc_id": "doc-same-name-a",
+            "blocks": [
+                {
+                    "type": "text",
+                    "text": "shared filename content for app A",
+                    "metadata": {"app_id": "app-file-iso-a", "filename": "shared.pdf", "version": "1.0.0"},
+                }
+            ],
+        },
+        {
+            "doc_id": "doc-same-name-b",
+            "blocks": [
+                {
+                    "type": "text",
+                    "text": "shared filename content for app B",
+                    "metadata": {"app_id": "app-file-iso-b", "filename": "shared.pdf", "version": "1.0.0"},
+                }
+            ],
+        },
+    ]
+    store = InMemoryVectorStore()
+    process_files(documents, ProcessConfig(min_chunk_length=1), store=store)
+
+    result_a = retrieve_data(
+        "shared filename content",
+        top_k=10,
+        filters={"app_id": "app-file-iso-a", "filename": "shared.pdf"},
+        config=RetrievalConfig(candidate_k=20, fusion_k=60, top_k=10),
+        store=store,
+    )
+    assert len(result_a.results) >= 1
+    assert all(r.chunk.metadata.get("app_id") == "app-file-iso-a" for r in result_a.results)
+    assert all(r.chunk.doc_id == "doc-same-name-a" for r in result_a.results)
+
+    result_b = retrieve_data(
+        "shared filename content",
+        top_k=10,
+        filters={"app_id": "app-file-iso-b", "filename": "shared.pdf"},
+        config=RetrievalConfig(candidate_k=20, fusion_k=60, top_k=10),
+        store=store,
+    )
+    assert len(result_b.results) >= 1
+    assert all(r.chunk.metadata.get("app_id") == "app-file-iso-b" for r in result_b.results)
+    assert all(r.chunk.doc_id == "doc-same-name-b" for r in result_b.results)
+
+
+def test_retrieval_respects_max_chunks_per_doc_diversity_cap():
+    store = InMemoryVectorStore()
+    documents = [
+        {
+            "doc_id": "doc-many",
+            "blocks": [
+                {"type": "text", "text": "alpha token one", "metadata": {"app_id": "app-diversity"}},
+                {"type": "text", "text": "alpha token two", "metadata": {"app_id": "app-diversity"}},
+                {"type": "text", "text": "alpha token three", "metadata": {"app_id": "app-diversity"}},
+            ],
+        },
+        {
+            "doc_id": "doc-other",
+            "blocks": [
+                {"type": "text", "text": "alpha token other", "metadata": {"app_id": "app-diversity"}},
+            ],
+        },
+    ]
+    process_files(documents, ProcessConfig(min_chunk_length=1), store=store)
+    result = retrieve_data(
+        "alpha token",
+        top_k=10,
+        filters={"app_id": "app-diversity"},
+        config=RetrievalConfig(candidate_k=20, fusion_k=60, top_k=10, max_chunks_per_doc=1),
+        store=store,
+    )
+    counts = {}
+    for r in result.results:
+        counts[r.chunk.doc_id] = counts.get(r.chunk.doc_id, 0) + 1
+    assert counts.get("doc-many", 0) <= 1
+    assert counts.get("doc-other", 0) <= 1
+
+
+def test_retrieval_weighting_can_prioritize_metadata_rank():
+    store = InMemoryVectorStore()
+    documents = [
+        {
+            "doc_id": "doc-w-1",
+            "blocks": [
+                {"type": "text", "text": "weighted retrieval content one", "metadata": {"app_id": "app-weight", "tag": "t"}},
+            ],
+        },
+        {
+            "doc_id": "doc-w-2",
+            "blocks": [
+                {"type": "text", "text": "weighted retrieval content two", "metadata": {"app_id": "app-weight", "tag": "t"}},
+            ],
+        },
+    ]
+    process_files(documents, ProcessConfig(min_chunk_length=1), store=store)
+    result = retrieve_data(
+        "weighted retrieval content",
+        top_k=5,
+        filters={"app_id": "app-weight", "tag": "t"},
+        config=RetrievalConfig(candidate_k=10, fusion_k=60, top_k=5, semantic_weight=0.1, metadata_weight=2.0),
+        store=store,
+    )
+    assert len(result.results) >= 1
+    assert result.debug.get("weights") == {"semantic": 0.1, "metadata": 2.0, "lexical": 1.5}
+
+
+def test_chinese_query_lexical_fallback_recovers_when_semantic_misses(monkeypatch):
+    from rag_subsystem.schemas import Chunk
+    import rag_subsystem.retrieval_data as rd
+
+    store = InMemoryVectorStore()
+    store.upsert(
+        [
+            Chunk(
+                doc_id="doc-noise",
+                chunk_id="doc-noise::0",
+                text="無關內容",
+                section_path=None,
+                order=0,
+                language="zh",
+                embedding_model="bge-large-zh",
+                namespace="app-zh:zh:bge-large-zh",
+                embedding=[1.0, 0.0],
+                metadata={"app_id": "app-zh", "filename": "noise.md", "filename_norm": "noise.md"},
+                hash="h-noise",
+            ),
+            Chunk(
+                doc_id="doc-observation",
+                chunk_id="doc-observation::0",
+                text="細察事實觀察的項目 包含在這份 observation_guide.md",
+                section_path=None,
+                order=0,
+                language="zh",
+                embedding_model="bge-large-zh",
+                namespace="app-zh:zh:bge-large-zh",
+                embedding=[0.0, 1.0],
+                metadata={"app_id": "app-zh", "filename": "observation_guide.md", "filename_norm": "observation_guide.md"},
+                hash="h-obs",
+            ),
+        ]
+    )
+
+    class RouteObj:
+        language = "zh"
+        model = "bge-large-zh"
+        namespace = "zh:bge-large-zh"
+
+    # Force semantic query vector to favor doc-noise; lexical should recover doc-observation.
+    monkeypatch.setattr(rd, "detect_language", lambda _: "zh")
+    monkeypatch.setattr(rd, "route", lambda _: RouteObj())
+    monkeypatch.setattr(rd, "embed_text", lambda *_args, **_kwargs: [1.0, 0.0])
+
+    result = retrieve_data(
+        "細察事實觀察的項目",
+        top_k=1,
+        filters={"app_id": "app-zh"},
+        config=RetrievalConfig(
+            candidate_k=1,
+            fusion_k=60,
+            top_k=1,
+            semantic_weight=0.1,
+            metadata_weight=0.0,
+            lexical_weight=3.0,
+            lexical_candidate_k=10,
+        ),
+        store=store,
+    )
+    assert len(result.results) == 1
+    assert result.results[0].chunk.doc_id == "doc-observation"
+    assert len(result.debug.get("lexical_candidates", [])) >= 1
 
 
 def test_factory_resolves_pgvector_from_env(monkeypatch):

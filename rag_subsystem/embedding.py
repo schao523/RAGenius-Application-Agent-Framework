@@ -5,10 +5,10 @@ import hashlib
 from pathlib import Path
 from typing import List
 
-try:  # pragma: no cover - optional heavy runtime dependency
-    from sentence_transformers import SentenceTransformer
+try:  # pragma: no cover - optional runtime dependency
+    import torch
 except Exception:  # pragma: no cover
-    SentenceTransformer = None
+    torch = None
 
 
 MODEL_SPECS = {
@@ -17,6 +17,8 @@ MODEL_SPECS = {
 }
 
 _MODEL_CACHE: dict[str, object] = {}
+_MODULE_DIR = Path(__file__).resolve().parent
+_SENTENCE_TRANSFORMER_CLS = None
 
 
 def _embedding_backend() -> str:
@@ -73,7 +75,7 @@ def _model_local_override(model: str) -> str | None:
 
 
 def _default_model_dir(model: str) -> Path:
-    return Path("rag_subsystem") / "models" / model
+    return _MODULE_DIR / "models" / model
 
 
 def _resolve_local_model_source(model: str) -> str | None:
@@ -112,12 +114,58 @@ def _configure_hf_runtime_env() -> None:
         os.environ.setdefault("HF_TOKEN", token)
 
 
+def _local_thread_limit() -> int:
+    raw = (os.getenv("RAG_EMBEDDING_THREADS", "1") or "1").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 1
+
+
+def _configure_local_runtime_threads() -> int:
+    threads = _local_thread_limit()
+    value = str(threads)
+    os.environ["OMP_NUM_THREADS"] = value
+    os.environ["MKL_NUM_THREADS"] = value
+    os.environ["NUMEXPR_NUM_THREADS"] = value
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    torch_module = globals().get("torch")
+    if torch_module is not None:
+        try:
+            torch_module.set_num_threads(threads)
+        except Exception:
+            pass
+        try:
+            torch_module.set_num_interop_threads(threads)
+        except Exception:
+            pass
+    return threads
+
+
+def _sentence_transformer_cls():  # pragma: no cover - runtime-heavy path
+    global _SENTENCE_TRANSFORMER_CLS
+    if _SENTENCE_TRANSFORMER_CLS is not None:
+        return _SENTENCE_TRANSFORMER_CLS
+    try:
+        from sentence_transformers import SentenceTransformer as _SentenceTransformer
+    except Exception:
+        _SENTENCE_TRANSFORMER_CLS = None
+        return None
+    _SENTENCE_TRANSFORMER_CLS = _SentenceTransformer
+    return _SENTENCE_TRANSFORMER_CLS
+
+
 def _load_st_model(source: str, hf_id_for_cache: str):  # pragma: no cover - runtime-heavy path
     device = (os.getenv("RAG_EMBEDDING_DEVICE", "cpu") or "cpu").strip().lower()
     cache_key = f"{source}::{device}"
     cached = _MODEL_CACHE.get(cache_key)
     if cached is not None:
         return cached
+    sentence_transformer_cls = _sentence_transformer_cls()
+    if sentence_transformer_cls is None:
+        raise RuntimeError(
+            "sentence-transformers is not installed. Install with: python -m pip install -e .[local-embeddings]"
+        )
     kwargs = {}
     token = _hf_auth_token()
     if token:
@@ -128,7 +176,7 @@ def _load_st_model(source: str, hf_id_for_cache: str):  # pragma: no cover - run
     local_files_only = _truthy(os.getenv("RAG_EMBEDDING_LOCAL_ONLY"), default=False)
     if local_files_only:
         kwargs["local_files_only"] = True
-    model_obj = SentenceTransformer(source, device=device, **kwargs)
+    model_obj = sentence_transformer_cls(source, device=device, **kwargs)
     _MODEL_CACHE[cache_key] = model_obj
     # Keep backward key compatibility for repeated lookups by HF id.
     _MODEL_CACHE.setdefault(f"{hf_id_for_cache}::{device}", model_obj)
@@ -162,10 +210,7 @@ def clear_model_cache() -> None:
 
 
 def _load_local_model(model: str):  # pragma: no cover - runtime-heavy path
-    if SentenceTransformer is None:
-        raise RuntimeError(
-            "sentence-transformers is not installed. Install with: python -m pip install -e .[local-embeddings]"
-        )
+    _configure_local_runtime_threads()
     _configure_hf_runtime_env()
     spec = MODEL_SPECS.get(model, {})
     hf_id = spec.get("hf_id", model)

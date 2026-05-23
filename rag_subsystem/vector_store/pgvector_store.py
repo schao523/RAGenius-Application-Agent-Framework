@@ -8,6 +8,7 @@ except ImportError:  # pragma: no cover - optional dependency
     psycopg2 = None
     Json = None
 from .base import VectorStore
+from .doc_filter import normalize_doc_filter
 from ..schemas import Chunk
 
 
@@ -70,6 +71,35 @@ class PgVectorStore(VectorStore):
     @staticmethod
     def _to_vector_literal(values: List[float]) -> str:
         return "[" + ",".join(str(float(v)) for v in values) + "]"
+
+    @staticmethod
+    def _filename_norm_sql_expr() -> str:
+        return (
+            "lower(regexp_replace("
+            "coalesce(nullif(metadata->>'filename_norm',''), "
+            "nullif(metadata->>'filename',''), "
+            "regexp_replace(replace(coalesce(metadata->>'source_path',''), chr(92), '/'), '^.*/', '')), "
+            "'\\s+', ' ', 'g'))"
+        )
+
+    def _append_doc_filter_sql(
+        self, where_clauses: List[str], params: List[Any], doc_filter: Dict[str, Any] | None
+    ) -> None:
+        normalized = normalize_doc_filter(doc_filter)
+        if not normalized:
+            return
+        doc_id = normalized.get("doc_id")
+        if doc_id:
+            where_clauses.append("doc_id=%s")
+            params.append(doc_id)
+        filename_norm = normalized.get("filename_norm")
+        if filename_norm:
+            where_clauses.append(f"{self._filename_norm_sql_expr()} = %s")
+            params.append(filename_norm)
+        filename_in_norm = normalized.get("filename_in_norm") or []
+        if filename_in_norm:
+            where_clauses.append(f"{self._filename_norm_sql_expr()} = ANY(%s)")
+            params.append(filename_in_norm)
 
     def _schema_is_ready(self) -> bool:
         with self._conn() as conn, conn.cursor() as cur:
@@ -151,21 +181,25 @@ class PgVectorStore(VectorStore):
             conn.commit()
 
     def semantic_search(
-        self, query_embedding: List[float], namespace: str, top_k: int, app_id: str | None = None
+        self,
+        query_embedding: List[float],
+        namespace: str,
+        top_k: int,
+        app_id: str | None = None,
+        doc_filter: Dict[str, Any] | None = None,
     ) -> List[Tuple[Chunk, float]]:  # pragma: no cover
         if not app_id:
             raise ValueError("app_id is required for semantic_search")
+        where_clauses = ["app_id=%s", "namespace=%s"]
+        params: List[Any] = [app_id, namespace]
+        self._append_doc_filter_sql(where_clauses, params, doc_filter)
+        where_sql = " AND ".join(where_clauses)
+        vector_literal = self._to_vector_literal(query_embedding)
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
-                """SELECT doc_id, chunk_id, text, section_path, ordering, embedding, metadata, hash, language, embedding_model,
-                1 - (embedding <=> %s::vector) as score FROM rag_chunks WHERE app_id=%s AND namespace=%s ORDER BY embedding <=> %s::vector LIMIT %s""",
-                (
-                    self._to_vector_literal(query_embedding),
-                    app_id,
-                    namespace,
-                    self._to_vector_literal(query_embedding),
-                    top_k,
-                ),
+                f"""SELECT doc_id, chunk_id, text, section_path, ordering, embedding, metadata, hash, language, embedding_model,
+                1 - (embedding <=> %s::vector) as score FROM rag_chunks WHERE {where_sql} ORDER BY embedding <=> %s::vector LIMIT %s""",
+                [vector_literal, *params, vector_literal, top_k],
             )
             rows = cur.fetchall()
             return [
@@ -189,12 +223,18 @@ class PgVectorStore(VectorStore):
             ]
 
     def metadata_search(
-        self, filters: Dict[str, Any], namespace: str, top_k: int, app_id: str | None = None
+        self,
+        filters: Dict[str, Any],
+        namespace: str,
+        top_k: int,
+        app_id: str | None = None,
+        doc_filter: Dict[str, Any] | None = None,
     ) -> List[Tuple[Chunk, float]]:  # pragma: no cover
         if not app_id:
             raise ValueError("app_id is required for metadata_search")
         where_clauses = ["app_id=%s", "namespace=%s"]
         params = [app_id, namespace]
+        self._append_doc_filter_sql(where_clauses, params, doc_filter)
         for key, value in filters.items():
             where_clauses.append(f"metadata->>%s = %s")
             params.extend([key, value])
@@ -220,6 +260,54 @@ class PgVectorStore(VectorStore):
                         namespace=namespace,
                     ),
                     1.0,
+                )
+                for row in rows
+            ]
+
+    def lexical_search(
+        self,
+        query_text: str,
+        namespace: str,
+        top_k: int,
+        app_id: str | None = None,
+        doc_filter: Dict[str, Any] | None = None,
+    ) -> List[Tuple[Chunk, float]]:  # pragma: no cover
+        if not app_id:
+            raise ValueError("app_id is required for lexical_search")
+        where_clauses = ["app_id=%s", "namespace=%s", "text ILIKE %s"]
+        params: List[Any] = [app_id, namespace, f"%{query_text}%"]
+        self._append_doc_filter_sql(where_clauses, params, doc_filter)
+        where_sql = " AND ".join(where_clauses)
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT doc_id, chunk_id, text, section_path, ordering, embedding, metadata, hash, language, embedding_model,
+                       (CASE WHEN strpos(lower(text), lower(%s)) > 0 THEN 10 ELSE 0 END)
+                       + char_length(%s) * 1.0 / GREATEST(1, char_length(text)) AS score
+                FROM rag_chunks
+                WHERE {where_sql}
+                ORDER BY score DESC
+                LIMIT %s
+                """,
+                [query_text, query_text, *params, top_k],
+            )
+            rows = cur.fetchall()
+            return [
+                (
+                    Chunk(
+                        doc_id=row[0],
+                        chunk_id=row[1],
+                        text=row[2],
+                        section_path=row[3],
+                        order=row[4],
+                        embedding=row[5],
+                        metadata=row[6] or {},
+                        hash=row[7],
+                        language=row[8],
+                        embedding_model=row[9],
+                        namespace=namespace,
+                    ),
+                    float(row[10]),
                 )
                 for row in rows
             ]
