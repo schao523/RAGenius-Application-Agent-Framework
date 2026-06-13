@@ -172,6 +172,49 @@ class BuilderStore:
             "uploaded_at": row["uploaded_at"],
         }
 
+    def list_app_skill_bindings(self, app_id: str) -> list[Dict[str, Any]]:
+        if not self.db_path.exists():
+            return []
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, app_id, skill_id, skill_version, enabled, permission_mode, execution_policy,
+                       created_at, updated_at
+                FROM app_skill_bindings
+                WHERE app_id = ?
+                ORDER BY created_at DESC
+                """,
+                (app_id,),
+            ).fetchall()
+        bindings: list[Dict[str, Any]] = []
+        for row in rows:
+            bindings.append(
+                {
+                    "id": row["id"],
+                    "app_id": row["app_id"],
+                    "skill_id": row["skill_id"],
+                    "skill_version": row["skill_version"],
+                    "enabled": bool(row["enabled"]),
+                    "permission_mode": row["permission_mode"],
+                    "execution_policy": json.loads(row["execution_policy"] or "{}"),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+            )
+        return bindings
+
+    def get_published_skill_definition(
+        self, *, skill_id: str, version: str | None = None
+    ) -> Optional[Dict[str, Any]]:
+        if not self.db_path.exists():
+            return None
+        try:
+            from ragenius_builder.flask_scaffold.storage import store
+
+            return store.get_published_skill_definition(skill_id=skill_id, version=version)
+        except Exception:
+            return None
+
 
 def get_builder_store() -> BuilderStore:
     return BuilderStore()

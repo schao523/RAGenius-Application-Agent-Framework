@@ -3,6 +3,7 @@ import threading
 import json
 import os
 import re
+import uuid
 from pathlib import Path
 from dataclasses import asdict
 from collections import defaultdict, deque
@@ -18,6 +19,9 @@ from storage import (
     DEFAULT_APP_CONFIG_SETTINGS,
     DEFAULT_APP_CONFIG_SCHEMA,
 )
+from execution_client import ExecutionSubsystemClient
+from policy import get_template_family_policy
+from skill_normalization import AUTHOR_TOOL_ALIAS_MAP, EXPLICIT_REQUIRED_TOOL_TEMPLATE_MAP
 from rag_stub import (
     process_files,
     retrieve_data,
@@ -39,6 +43,7 @@ _ingest_running_apps: set[str] = set()
 _ingest_cancel_lock = threading.Lock()
 _ingest_cancel_doc_ids: set[str] = set()
 _INGEST_STALE_SECONDS = 15 * 60
+_SKILL_IMPORT_UPLOAD_ROOT = Path(__file__).resolve().parent / "storage" / "_skill_import_uploads"
 
 
 def validation_error(path: str, msg: str, code: str):
@@ -87,6 +92,153 @@ def _global_subsystem_settings_view():
         "process_config": asdict(_current_process_config()),
         "retrieval_config": asdict(_current_retrieval_config()),
         "environment": env_values,
+    }
+
+
+def _tool_family(tool_id: str) -> str:
+    value = str(tool_id or "")
+    if value.startswith("mcp."):
+        return "mcp"
+    if value.startswith("adapter."):
+        return "adapter"
+    if value in {"read_file", "list_files", "write_file", "patch_file", "save_artifact", "load_artifact"}:
+        return "local"
+    if value in {"retrieve_documents", "search_metadata", "rag_retrieval_tool"}:
+        return "rag_adapter"
+    return "api"
+
+
+def _alias_support_matrix() -> list[dict]:
+    family_by_tool = {
+        tuple(tools)[0]: family
+        for tools, family in EXPLICIT_REQUIRED_TOOL_TEMPLATE_MAP.items()
+        if len(tools) == 1
+    }
+    rows = []
+    for alias, tool_id in sorted(AUTHOR_TOOL_ALIAS_MAP.items()):
+        template_family = family_by_tool.get(tool_id)
+        policy = get_template_family_policy(template_family) if template_family else {}
+        support_level = (
+            "default family inference supported"
+            if template_family
+            else "explicit schema recommended"
+        )
+        notes = []
+        if tool_id.startswith("adapter.notebooklm."):
+            notes.append("supports notebookId or notebookTitle when notebook-scoped")
+        if tool_id.startswith("mcp."):
+            notes.append("runtime provider discovery/configuration required")
+        rows.append(
+            {
+                "alias": alias,
+                "tool_id": tool_id,
+                "family": _tool_family(tool_id),
+                "template_family": template_family or "",
+                "support_level": support_level,
+                "policy_class": policy.get("policy_class", ""),
+                "notes": notes,
+            }
+        )
+    return rows
+
+
+def _runtime_inventory_view():
+    readyz = _execution_client().get_runtime_readyz()
+    provider_status = _execution_client().get_mcp_provider_status()
+    integrations = _execution_client().get_runtime_integrations()
+    tool_inventory = _execution_client().get_tool_inventory()
+    recent_execution_diagnostics = _execution_client().get_recent_execution_diagnostics(
+        limit=10,
+        used_fallback=True,
+    )
+    readyz_body = readyz.get("body", {}) if isinstance(readyz, dict) else {}
+    checks = readyz_body.get("checks", {}) if isinstance(readyz_body, dict) else {}
+    runtime_config = checks.get("runtime_config", {}) if isinstance(checks, dict) else {}
+    mcp_runtime = runtime_config.get("mcp", {}) if isinstance(runtime_config, dict) else {}
+    discovery = checks.get("mcp_discovery", {}) if isinstance(checks, dict) else {}
+    provider_body = provider_status.get("body", {}) if isinstance(provider_status, dict) else {}
+    providers = provider_body.get("providers", {}) if isinstance(provider_body, dict) else {}
+    integrations_body = integrations.get("body", {}) if isinstance(integrations, dict) else {}
+    integration_items = integrations_body.get("items", []) if isinstance(integrations_body, dict) else []
+    if not isinstance(integration_items, list):
+        integration_items = []
+    integration_summary = integrations_body.get("summary", {}) if isinstance(integrations_body, dict) else {}
+    if not isinstance(integration_summary, dict):
+        integration_summary = {}
+    tool_inventory_body = tool_inventory.get("body", {}) if isinstance(tool_inventory, dict) else {}
+    tool_inventory_items = tool_inventory_body.get("items", []) if isinstance(tool_inventory_body, dict) else []
+    if not isinstance(tool_inventory_items, list):
+        tool_inventory_items = []
+    diagnostics_body = (
+        recent_execution_diagnostics.get("body", {})
+        if isinstance(recent_execution_diagnostics, dict)
+        else {}
+    )
+    diagnostics_items = diagnostics_body.get("items", []) if isinstance(diagnostics_body, dict) else []
+    if not isinstance(diagnostics_items, list):
+        diagnostics_items = []
+    diagnostics_summary = diagnostics_body.get("summary", {}) if isinstance(diagnostics_body, dict) else {}
+    if not isinstance(diagnostics_summary, dict):
+        diagnostics_summary = {}
+
+    provider_rows = []
+    for provider_id, provider in sorted(providers.items()):
+        provider_obj = provider if isinstance(provider, dict) else {}
+        discovery_obj = (
+            discovery.get("providers", {}).get(provider_id, {})
+            if isinstance(discovery.get("providers", {}), dict)
+            else {}
+        )
+        tool_ids = provider_obj.get("tool_ids", [])
+        if not isinstance(tool_ids, list):
+            tool_ids = []
+        provider_rows.append(
+            {
+                "id": provider_id,
+                "status": str(provider_obj.get("status") or discovery_obj.get("status") or "unknown"),
+                "tool_count": int(
+                    provider_obj.get("toolCount")
+                    or provider_obj.get("tool_count")
+                    or discovery_obj.get("toolCount")
+                    or len(tool_ids)
+                ),
+                "tool_ids": tool_ids,
+                "auth_configured": bool(
+                    provider_obj.get("authConfigured")
+                    if "authConfigured" in provider_obj
+                    else discovery_obj.get("authConfigured", False)
+                ),
+                "last_discovered_at": provider_obj.get("last_discovered_at")
+                or discovery_obj.get("lastDiscoveredAt"),
+                "last_error": provider_obj.get("last_error") or discovery_obj.get("lastError"),
+            }
+        )
+
+    return {
+        "transport_ok": bool(
+            readyz.get("ok", False)
+            and provider_status.get("ok", False)
+            and integrations.get("ok", False)
+            and tool_inventory.get("ok", False)
+            and recent_execution_diagnostics.get("ok", False)
+        ),
+        "readyz_status_code": readyz.get("status_code"),
+        "provider_status_code": provider_status.get("status_code"),
+        "integration_status_code": integrations.get("status_code"),
+        "tool_inventory_status_code": tool_inventory.get("status_code"),
+        "execution_diagnostics_status_code": recent_execution_diagnostics.get("status_code"),
+        "runtime_error": None if readyz.get("ok", False) else readyz_body.get("error"),
+        "startup_auto_discovery": bool(mcp_runtime.get("startupDiscoveryEnabled", False)),
+        "configured_servers": int(mcp_runtime.get("configuredServers", 0) or 0),
+        "enabled_servers": int(mcp_runtime.get("enabledServers", 0) or 0),
+        "startup_completed": bool(provider_body.get("startup_completed", discovery.get("startupCompleted", False))),
+        "mcp_providers": provider_rows,
+        "integrations": integration_items,
+        "integration_summary": integration_summary,
+        "tool_inventory": tool_inventory_items,
+        "recent_execution_summary": diagnostics_summary,
+        "recent_execution_diagnostics": diagnostics_items,
+        "authoring_coverage": _alias_support_matrix(),
     }
 
 
@@ -292,6 +444,487 @@ def parse_app(app_id: str):
     if not app_obj:
         abort(404)
     return app_obj
+
+
+def parse_skill(skill_id: str):
+    skill_obj = store.get_skill(skill_id)
+    if not skill_obj:
+        abort(404)
+    return skill_obj
+
+
+def _execution_client() -> ExecutionSubsystemClient:
+    base_url = os.environ.get("RAGENIUS_EXECUTION_BASE_URL", "http://127.0.0.1:3000")
+    return ExecutionSubsystemClient(base_url)
+
+
+def _sample_value_from_schema(prop_name: str, schema_obj):
+    if not isinstance(schema_obj, dict):
+        return None
+    if "default" in schema_obj:
+        return schema_obj.get("default")
+    enum_values = schema_obj.get("enum")
+    if isinstance(enum_values, list) and enum_values:
+        return enum_values[0]
+    value_type = schema_obj.get("type")
+    if prop_name == "topic":
+        return "DeepSeek Mixture of Exports Technology"
+    if value_type == "string":
+        return "example"
+    if value_type == "integer":
+        return 1
+    if value_type == "number":
+        return 1
+    if value_type == "boolean":
+        return False
+    if value_type == "array":
+        return []
+    if value_type == "object":
+        return {}
+    return None
+
+
+def _should_prefill_optional_field(schema_obj) -> bool:
+    if not isinstance(schema_obj, dict):
+        return False
+    return "default" in schema_obj or (
+        isinstance(schema_obj.get("enum"), list) and len(schema_obj.get("enum", [])) > 0
+    )
+
+
+def _preferred_conditional_properties(schema_obj: dict) -> list[str]:
+    if not isinstance(schema_obj, dict):
+        return []
+    properties = schema_obj.get("properties", {})
+    if not isinstance(properties, dict):
+        return []
+    preferred = []
+    conditional_groups = schema_obj.get("anyOf")
+    if not isinstance(conditional_groups, list):
+        return preferred
+    for group in conditional_groups:
+        if not isinstance(group, dict):
+            continue
+        required_props = group.get("required")
+        if not isinstance(required_props, list):
+            continue
+        for prop_name in required_props:
+            if prop_name in properties and prop_name not in preferred:
+                preferred.append(str(prop_name))
+    if "notebookTitle" in preferred:
+        return ["notebookTitle"]
+    return preferred[:1]
+
+
+def _extract_markdown_section(markdown: str, title: str) -> str | None:
+    text = str(markdown or "").replace("\r\n", "\n").replace("\r", "\n")
+    parts = text.split("\n---\n", 1)
+    body = parts[1] if len(parts) == 2 else text
+    pattern = (
+        rf"(?ms)^(?:##\s*{re.escape(title)}\s*$|{re.escape(title)}\s*$\n[-=]+\s*$)"
+        rf"(.*?)(?=^(?:##\s+[^\n]+$|[^\n]+\n[-=]+\s*$)|\Z)"
+    )
+    match = re.search(pattern, body)
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def _has_json_code_block(section_text: str | None) -> bool:
+    if not section_text:
+        return False
+    return bool(re.search(r"```json\s*(\{.*?\})\s*```", section_text, re.DOTALL))
+
+
+def _read_skill_markdown(version_row: dict) -> str:
+    inline_text = str(version_row.get("manifest_text") or "").strip()
+    if inline_text:
+        return inline_text
+    rel_path = str(version_row.get("skill_md_rel_path") or "").strip()
+    if not rel_path:
+        return ""
+    path = (store.base_dir / rel_path).resolve()
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _sample_input_payload_and_reasons(skill_id: str, schema_obj: dict) -> tuple[dict, list[dict]]:
+    properties = schema_obj.get("properties", {}) if isinstance(schema_obj, dict) else {}
+    required = schema_obj.get("required", []) if isinstance(schema_obj, dict) else []
+    payload = {}
+    reasons = []
+
+    for prop_name in required:
+        if prop_name not in properties:
+            continue
+        value = _sample_value_from_schema(str(prop_name), properties.get(prop_name))
+        if value is not None:
+            payload[str(prop_name)] = value
+            reasons.append(
+                {
+                    "field": str(prop_name),
+                    "reason": "Included because the normalized input schema marks it as required.",
+                }
+            )
+
+    for prop_name in _preferred_conditional_properties(schema_obj):
+        if prop_name in payload:
+            continue
+        value = _sample_value_from_schema(str(prop_name), properties.get(prop_name))
+        if value is not None:
+            payload[str(prop_name)] = value
+            conditional_reason = "Included to satisfy a conditional notebook selector requirement."
+            if prop_name == "notebookTitle":
+                conditional_reason = (
+                    "Included to satisfy the conditional notebook selector requirement; "
+                    "Builder prefers notebookTitle over notebookId for authoring and testing."
+                )
+            reasons.append({"field": str(prop_name), "reason": conditional_reason})
+
+    for prop_name, prop_schema in properties.items():
+        if prop_name in payload:
+            continue
+        if not _should_prefill_optional_field(prop_schema):
+            continue
+        value = _sample_value_from_schema(str(prop_name), prop_schema)
+        if value is not None:
+            payload[str(prop_name)] = value
+            if "default" in prop_schema:
+                reason = f"Included with its schema default ({json.dumps(prop_schema.get('default'), ensure_ascii=False)})."
+            else:
+                reason = "Included because the schema advertises an enum or default-backed optional value."
+            reasons.append({"field": str(prop_name), "reason": reason})
+
+    if skill_id == "research_paper_finder":
+        payload.setdefault("topic", "DeepSeek Mixture of Exports Technology")
+        payload.setdefault("limit", 5)
+        payload.setdefault("source", "auto")
+        existing_fields = {item["field"] for item in reasons}
+        if "topic" not in existing_fields:
+            reasons.append(
+                {
+                    "field": "topic",
+                    "reason": "Included from the Builder research-paper sample prompt override.",
+                }
+            )
+        if "limit" not in existing_fields:
+            reasons.append(
+                {
+                    "field": "limit",
+                    "reason": "Included from the Builder research-paper sample limit override.",
+                }
+            )
+        if "source" not in existing_fields:
+            reasons.append(
+                {
+                    "field": "source",
+                    "reason": "Included from the Builder research-paper sample source override.",
+                }
+            )
+
+    return payload, reasons
+
+
+def _default_skill_test_input(skill_id: str) -> str:
+    published = store.get_published_skill_definition(skill_id=skill_id)
+    if not published:
+        return "{}"
+    schema_obj = published.get("input_schema", {}) or {}
+    payload, _ = _sample_input_payload_and_reasons(skill_id, schema_obj)
+
+    return json.dumps(payload or {}, ensure_ascii=False, indent=2)
+
+
+def _pretty_json(value) -> str:
+    if value in (None, "", [], {}):
+        return "{}"
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def _build_skill_review_view(version_row: dict) -> dict:
+    metadata = version_row.get("metadata") or {}
+    policy_class = str(metadata.get("policy_class") or "unsupported")
+    template_family = str(metadata.get("template_family") or "unsupported")
+    family_policy = get_template_family_policy(template_family)
+    required_tools = metadata.get("required_tools", []) or []
+    required_permissions = metadata.get("required_permissions", []) or []
+    input_schema = metadata.get("input_schema", {}) or {}
+    output_schema = metadata.get("output_schema", {}) or {}
+    workflow_definition = metadata.get("workflow_definition", {}) or {}
+    has_contract = bool(required_tools or required_permissions or input_schema or output_schema or workflow_definition)
+
+    risk_label = {
+        "safe_read": "Safe Read",
+        "review_required": "Review Required",
+        "unsupported": "Unsupported",
+    }.get(policy_class, policy_class.replace("_", " ").title())
+
+    if not has_contract or policy_class == "unsupported":
+        review_note = "No normalized executable contract available."
+    elif policy_class == "review_required":
+        review_note = (
+            "This version publishes an executable contract. Review tools, permissions, "
+            "schemas, and workflow carefully before publish. Runtime confirmation may still "
+            "be required for write-capable execution paths."
+        )
+    else:
+        review_note = (
+            "This version normalized into a low-risk read-oriented contract suitable for "
+            "safe Builder-managed execution."
+        )
+
+    markdown = _read_skill_markdown(version_row)
+    explicit_input_schema = _has_json_code_block(_extract_markdown_section(markdown, "Input Schema"))
+    explicit_output_schema = _has_json_code_block(_extract_markdown_section(markdown, "Expected Output"))
+    contract_source = "unsupported"
+    contract_source_note = "No executable runtime contract was derived for this version."
+    if has_contract and policy_class != "unsupported":
+        if explicit_input_schema or explicit_output_schema:
+            contract_source = "explicit skill markdown sections"
+            contract_source_note = (
+                "Builder used explicit structured sections from SKILL.md for schema extraction "
+                "and filled the remaining contract from the recognized workflow family."
+            )
+        else:
+            contract_source = "default family inference"
+            contract_source_note = (
+                "Builder inferred the runtime contract from the recognized tool family and "
+                "published policy defaults because explicit schema sections were not provided."
+            )
+
+    if not has_contract or policy_class == "unsupported":
+        normalization_confidence = "unsupported composition"
+        normalization_confidence_note = (
+            "Builder does not have a safe first-class normalization path for this skill shape yet. "
+            "Add explicit schema sections or simplify the tool composition."
+        )
+    elif template_family in EXPLICIT_REQUIRED_TOOL_TEMPLATE_MAP.values():
+        if explicit_input_schema or explicit_output_schema:
+            normalization_confidence = "high confidence first-class family"
+            normalization_confidence_note = (
+                "This skill matches a first-class Builder family and also provides explicit structured "
+                "sections, so the inferred contract should be predictable."
+            )
+        else:
+            normalization_confidence = "default family inference supported"
+            normalization_confidence_note = (
+                "This skill matches a first-class Builder family. Builder can infer a solid default "
+                "contract, but explicit sections are still better when you want tighter control."
+            )
+    else:
+        normalization_confidence = "explicit schema recommended"
+        normalization_confidence_note = (
+            "Builder derived a contract, but this shape is not one of the strongest first-class families. "
+            "Explicit input/output sections are recommended for predictable authoring results."
+        )
+
+    contract_explanation = [
+        f"Template family: {template_family}.",
+        f"Policy class: {policy_class}.",
+        f"Contract source: {contract_source}.",
+        f"Normalization confidence: {normalization_confidence}.",
+    ]
+    if family_policy.get("policy_expectations"):
+        contract_explanation.append(
+            "Policy expectations: " + "; ".join(family_policy.get("policy_expectations", []))
+        )
+
+    return {
+        "policy_class": policy_class,
+        "risk_label": risk_label,
+        "auto_finalize": bool(metadata.get("auto_finalize", False)),
+        "template_family": template_family,
+        "required_tools": required_tools,
+        "required_permissions": required_permissions,
+        "input_schema_pretty": _pretty_json(input_schema),
+        "output_schema_pretty": _pretty_json(output_schema),
+        "workflow_pretty": _pretty_json(workflow_definition),
+        "has_contract": has_contract and policy_class != "unsupported",
+        "review_note": review_note,
+        "fallback_capable_tools": family_policy.get("fallback_capable_tools", []),
+        "policy_expectations": family_policy.get("policy_expectations", []),
+        "contract_source": contract_source,
+        "contract_source_note": contract_source_note,
+        "normalization_confidence": normalization_confidence,
+        "normalization_confidence_note": normalization_confidence_note,
+        "explicit_input_schema": explicit_input_schema,
+        "explicit_output_schema": explicit_output_schema,
+        "contract_explanation": contract_explanation,
+    }
+
+
+def _selected_skill_version(skill_id: str, selected_version: str) -> dict | None:
+    if selected_version:
+        version_row = store.get_skill_version_by_number(skill_id, selected_version)
+        if version_row:
+            return version_row
+    version_rows = store.list_skill_versions(skill_id)
+    published_version = next((row for row in version_rows if row.get("state") == "published"), None)
+    return published_version or (version_rows[0] if version_rows else None)
+
+
+def _build_skill_test_context(skill_id: str, selected_version: str) -> dict:
+    version_row = _selected_skill_version(skill_id, selected_version)
+    if not version_row:
+        return {
+            "contract_source": "unsupported",
+            "contract_source_note": "No version is available for testing.",
+            "template_family": "unsupported",
+            "policy_class": "unsupported",
+            "sample_input_pretty": "{}",
+            "sample_input_reasons": [],
+            "test_input_note": "Builder could not derive a sample input because no published contract is available.",
+        }
+    review_view = _build_skill_review_view(version_row)
+    metadata = version_row.get("metadata") or {}
+    schema_obj = metadata.get("input_schema", {}) or {}
+    sample_payload, sample_reasons = _sample_input_payload_and_reasons(skill_id, schema_obj)
+    return {
+        **review_view,
+        "sample_input_pretty": json.dumps(sample_payload or {}, ensure_ascii=False, indent=2),
+        "sample_input_reasons": sample_reasons,
+        "test_input_note": (
+            "Builder generates this starter payload from the normalized input schema by combining "
+            "required fields, one preferred conditional selector, and optional defaults."
+        ),
+    }
+
+
+def _build_skill_preview_context(preview_payload: dict) -> dict:
+    skill = preview_payload.get("skill", {}) or {}
+    version_row = dict(preview_payload.get("version", {}) or {})
+    review_view = _build_skill_review_view(version_row)
+    metadata = version_row.get("metadata") or {}
+    schema_obj = metadata.get("input_schema", {}) or {}
+    sample_payload, sample_reasons = _sample_input_payload_and_reasons(
+        str(skill.get("id") or ""),
+        schema_obj,
+    )
+    return {
+        "skill": skill,
+        "version": {
+            **version_row,
+            **review_view,
+        },
+        "sample_input_pretty": json.dumps(sample_payload or {}, ensure_ascii=False, indent=2),
+        "sample_input_reasons": sample_reasons,
+        "test_input_note": (
+            "If you import this skill, Builder will use this normalized contract to generate "
+            "test input from required fields, one preferred conditional selector, and optional defaults."
+        ),
+    }
+
+
+def _preferred_skill_summary_version(skill_row: dict) -> dict | None:
+    active_id = skill_row.get("current_active_version_id")
+    if active_id:
+        version_row = store.get_skill_version(str(active_id))
+        if version_row:
+            return version_row
+    published_id = skill_row.get("current_published_version_id")
+    if published_id:
+        version_row = store.get_skill_version(str(published_id))
+        if version_row:
+            return version_row
+    versions = store.list_skill_versions(skill_row["id"])
+    return versions[0] if versions else None
+
+
+def _build_skill_list_view() -> list[dict]:
+    items = []
+    for skill_row in store.list_skills():
+        skill_view = dict(skill_row)
+        summary_version = _preferred_skill_summary_version(skill_row)
+        if summary_version:
+            review_view = _build_skill_review_view(summary_version)
+            skill_view.update(
+                {
+                    "summary_version": summary_version.get("version"),
+                    "summary_state": summary_version.get("state"),
+                    "template_family": review_view.get("template_family"),
+                    "policy_class": review_view.get("policy_class"),
+                    "risk_label": review_view.get("risk_label"),
+                    "normalization_confidence": review_view.get("normalization_confidence"),
+                    "normalization_confidence_note": review_view.get("normalization_confidence_note"),
+                    "contract_source": review_view.get("contract_source"),
+                    "has_contract": review_view.get("has_contract"),
+                }
+            )
+        else:
+            skill_view.update(
+                {
+                    "summary_version": None,
+                    "summary_state": None,
+                    "template_family": "unsupported",
+                    "policy_class": "unsupported",
+                    "risk_label": "Unsupported",
+                    "normalization_confidence": "unsupported composition",
+                    "normalization_confidence_note": "No skill version has been imported yet.",
+                    "contract_source": "unsupported",
+                    "has_contract": False,
+                }
+            )
+        items.append(skill_view)
+    return items
+
+
+_NORMALIZATION_CONFIDENCE_ORDER = {
+    "unsupported composition": 0,
+    "explicit schema recommended": 1,
+    "default family inference supported": 2,
+    "high confidence first-class family": 3,
+}
+
+
+def _filter_and_sort_skill_list(
+    items: list[dict],
+    *,
+    confidence: str,
+    policy_class: str,
+    sort_key: str,
+) -> list[dict]:
+    filtered = list(items)
+    confidence_value = str(confidence or "").strip()
+    policy_value = str(policy_class or "").strip()
+    sort_value = str(sort_key or "confidence_desc").strip()
+
+    if confidence_value:
+        filtered = [
+            item for item in filtered if str(item.get("normalization_confidence") or "") == confidence_value
+        ]
+    if policy_value:
+        filtered = [
+            item for item in filtered if str(item.get("policy_class") or "") == policy_value
+        ]
+
+    if sort_value == "name_asc":
+        filtered.sort(key=lambda item: (str(item.get("name") or "").lower(), str(item.get("id") or "").lower()))
+    elif sort_value == "name_desc":
+        filtered.sort(key=lambda item: (str(item.get("name") or "").lower(), str(item.get("id") or "").lower()), reverse=True)
+    else:
+        filtered.sort(
+            key=lambda item: (
+                -_NORMALIZATION_CONFIDENCE_ORDER.get(str(item.get("normalization_confidence") or ""), -1),
+                str(item.get("name") or "").lower(),
+            )
+        )
+    return filtered
+
+
+def _save_uploaded_skill_archive(uploaded_file) -> Path:
+    _SKILL_IMPORT_UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+    target = _SKILL_IMPORT_UPLOAD_ROOT / f"{uuid.uuid4()}_{_safe_filename(uploaded_file.filename)}"
+    uploaded_file.save(target)
+    return target
+
+
+def _cleanup_uploaded_skill_archive(archive_path: Path) -> None:
+    try:
+        archive_path.unlink(missing_ok=True)
+    except PermissionError:
+        pass
 
 
 def _uploaded_file_size(file_obj):
@@ -538,6 +1171,7 @@ def _serialize_retrieval_result(retrieval_result):
 def inject_globals():
     return {
         "nav_apps": store.list_applications(),
+        "nav_skills": store.list_skills(),
         "now": datetime.datetime.utcnow(),
     }
 
@@ -552,9 +1186,199 @@ def apps():
     return render_template("apps.html", apps=store.list_applications())
 
 
+@app.route("/skills")
+def skills():
+    filters = {
+        "confidence": (request.args.get("confidence") or "").strip(),
+        "policy_class": (request.args.get("policy_class") or "").strip(),
+        "sort": (request.args.get("sort") or "confidence_desc").strip(),
+    }
+    skills_view = _filter_and_sort_skill_list(
+        _build_skill_list_view(),
+        confidence=filters["confidence"],
+        policy_class=filters["policy_class"],
+        sort_key=filters["sort"],
+    )
+    return render_template("skills_list.html", skills=skills_view, filters=filters)
+
+
+@app.route("/skills/import", methods=["GET", "POST"])
+def import_skill():
+    errors = []
+    preview = None
+    if request.method == "POST":
+        archive = request.files.get("archive")
+        scope = (request.form.get("scope") or "managed").strip().lower()
+        action = (request.form.get("action") or "import").strip().lower()
+        if not archive or not archive.filename:
+            errors.append(validation_error("archive", "Skill archive is required", "required"))
+        else:
+            archive_path = _save_uploaded_skill_archive(archive)
+            try:
+                if action == "preview":
+                    preview = _build_skill_preview_context(
+                        store.preview_skill_package(
+                            archive_path=archive_path,
+                            scope=scope,
+                        )
+                    )
+                else:
+                    imported = store.import_skill_package(
+                        archive_path=archive_path,
+                        scope=scope,
+                        import_source="upload",
+                    )
+                    return redirect(url_for("skill_detail", skill_id=imported["skill"]["id"]))
+            except ValueError as exc:
+                errors.append(validation_error("archive", str(exc), "invalid"))
+            finally:
+                _cleanup_uploaded_skill_archive(archive_path)
+    return render_template("skills_import.html", errors=errors, preview=preview)
+
+
+@app.route("/skills/<skill_id>")
+def skill_detail(skill_id):
+    skill = parse_skill(skill_id)
+    versions = []
+    for version in store.list_skill_versions(skill_id):
+        version_view = dict(version)
+        version_view.update(_build_skill_review_view(version_view))
+        versions.append(version_view)
+    all_bindings = []
+    for app_obj in store.list_applications():
+        for binding in store.list_app_skill_bindings(app_obj["id"]):
+            if binding["skill_id"] == skill_id:
+                binding_view = dict(binding)
+                binding_view["app_name"] = app_obj["name"]
+                all_bindings.append(binding_view)
+    all_bindings.sort(
+        key=lambda binding: binding.get("updated_at") or binding.get("created_at") or "",
+        reverse=True,
+    )
+    return render_template(
+        "skill_detail.html",
+        skill=skill,
+        versions=versions,
+        bindings=all_bindings,
+        apps=store.list_applications(),
+    )
+
+
+@app.route("/skills/<skill_id>/versions/<version_id>/publish", methods=["POST"])
+def publish_skill_version(skill_id, version_id):
+    parse_skill(skill_id)
+    try:
+        store.publish_skill_version(version_id)
+    except ValueError as exc:
+        return jsonify({"errors": [validation_error("version", str(exc), "invalid")]}), 422
+    return redirect(url_for("skill_detail", skill_id=skill_id))
+
+
+@app.route("/skills/<skill_id>/delete", methods=["POST"])
+def delete_skill(skill_id):
+    parse_skill(skill_id)
+    deleted = store.delete_skill(skill_id)
+    if not deleted:
+        abort(404)
+    return redirect(url_for("skills"))
+
+
+@app.route("/skills/<skill_id>/bind", methods=["POST"])
+def bind_skill(skill_id):
+    parse_skill(skill_id)
+    app_id = (request.form.get("app_id") or "").strip()
+    skill_version = (request.form.get("skill_version") or "").strip()
+    permission_mode = (request.form.get("permission_mode") or "blocked").strip()
+    execution_policy = {
+        "allowAsync": bool(request.form.get("allow_async")),
+        "allowRetries": bool(request.form.get("allow_retries")),
+        "requireApproval": bool(request.form.get("require_approval")),
+    }
+    try:
+        store.create_app_skill_binding(
+            app_id=app_id,
+            skill_id=skill_id,
+            skill_version=skill_version,
+            permission_mode=permission_mode,
+            execution_policy=execution_policy,
+        )
+    except ValueError as exc:
+        return jsonify({"errors": [validation_error("binding", str(exc), "invalid")]}), 422
+    return redirect(url_for("skill_detail", skill_id=skill_id))
+
+
+@app.route("/skills/<skill_id>/test", methods=["GET", "POST"])
+def test_skill(skill_id):
+    skill = parse_skill(skill_id)
+    versions = store.list_skill_versions(skill_id)
+    selected_version = (request.values.get("skill_version") or "").strip()
+    app_id = (request.values.get("app_id") or "").strip()
+    test_context = _build_skill_test_context(skill_id, selected_version)
+    result = None
+    input_json = request.values.get("input_json")
+    if input_json is None or str(input_json).strip() == "{}":
+        input_json = test_context["sample_input_pretty"]
+    request_payload = {
+        "session_id": request.values.get("session_id", f"builder-test-{uuid.uuid4().hex[:8]}"),
+        "input_json": input_json,
+        "dry_run": bool(request.values.get("dry_run")),
+        "require_confirmation": bool(request.values.get("require_confirmation")),
+    }
+    errors = []
+
+    if request.method == "POST":
+        bindings = [b for b in store.list_app_skill_bindings(app_id) if b["skill_id"] == skill_id and b["enabled"]]
+        if not bindings:
+            errors.append(validation_error("app_id", "Selected app is not bound to this skill", "binding_missing"))
+        else:
+            try:
+                input_payload = json.loads(request_payload["input_json"])
+                exec_payload = {
+                    "request_type": "execute_skill",
+                    "app_id": app_id,
+                    "session_id": request_payload["session_id"],
+                    "skill_id": skill_id,
+                    "input": input_payload,
+                    "execution_options": {
+                        "dry_run": request_payload["dry_run"],
+                        "require_confirmation": request_payload["require_confirmation"],
+                    },
+                }
+                result = _execution_client().execute_skill(exec_payload)
+            except json.JSONDecodeError:
+                errors.append(validation_error("input_json", "Input must be valid JSON", "json"))
+
+    return render_template(
+        "skill_test.html",
+        skill=skill,
+        versions=versions,
+        selected_version=selected_version,
+        selected_app_id=app_id,
+        request_payload=request_payload,
+        result=result,
+        errors=errors,
+        apps=store.list_applications(),
+        test_context=test_context,
+    )
+
+
 @app.route("/admin/subsystem")
 def subsystem_settings():
-    return render_template("subsystem_settings.html", subsystem=_global_subsystem_settings_view())
+    return render_template(
+        "subsystem_settings.html",
+        subsystem=_global_subsystem_settings_view(),
+        runtime_inventory=_runtime_inventory_view(),
+    )
+
+
+@app.route("/admin/subsystem/mcp/providers/<provider_id>/refresh", methods=["POST"])
+def refresh_mcp_provider(provider_id):
+    response = _execution_client().refresh_mcp_provider(provider_id)
+    body = response.get("body", {}) if isinstance(response, dict) else {}
+    status_code = response.get("status_code", 200) if isinstance(response, dict) else 200
+    if (request.form.get("redirect_to") or "").strip() == "subsystem":
+        return redirect(url_for("subsystem_settings"))
+    return jsonify(body), status_code
 
 
 @app.route("/apps/new", methods=["GET", "POST"])
@@ -777,6 +1601,99 @@ def search(app_id):
 @app.route("/api/apps")
 def api_list_apps():
     return jsonify(store.list_applications())
+
+
+@app.route("/api/skills")
+def api_list_skills():
+    return jsonify({"items": store.list_skills()})
+
+
+@app.route("/api/skills/<skill_id>")
+def api_skill_detail(skill_id):
+    skill = store.get_skill(skill_id)
+    if not skill:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(
+        {
+            "skill": skill,
+            "versions": store.list_skill_versions(skill_id),
+        }
+    )
+
+
+@app.route("/api/skills/import", methods=["POST"])
+def api_import_skill():
+    archive = request.files.get("archive")
+    scope = (request.form.get("scope") or "managed").strip().lower()
+    if not archive or not archive.filename:
+        return jsonify({"errors": [validation_error("archive", "Skill archive is required", "required")]}), 422
+    archive_path = _save_uploaded_skill_archive(archive)
+    try:
+        imported = store.import_skill_package(
+            archive_path=archive_path,
+            scope=scope,
+            import_source="upload",
+        )
+        return jsonify(imported), 201
+    except ValueError as exc:
+        return jsonify({"errors": [validation_error("archive", str(exc), "invalid")]}), 422
+    finally:
+        _cleanup_uploaded_skill_archive(archive_path)
+
+
+@app.route("/api/skills/<skill_id>/versions/<version_id>/publish", methods=["POST"])
+def api_publish_skill_version(skill_id, version_id):
+    if not store.get_skill(skill_id):
+        return jsonify({"error": "not found"}), 404
+    try:
+        published = store.publish_skill_version(version_id)
+    except ValueError as exc:
+        return jsonify({"errors": [validation_error("version", str(exc), "invalid")]}), 422
+    if not published:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(published)
+
+
+@app.route("/api/skills/published/<skill_id>")
+def api_published_skill_definition(skill_id):
+    version = request.args.get("version")
+    try:
+        payload = store.get_published_skill_definition(skill_id=skill_id, version=version)
+    except ValueError as exc:
+        return jsonify({"errors": [validation_error("version", str(exc), "invalid")]}), 422
+    if payload is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(payload)
+
+
+@app.route("/api/apps/<app_id>/skill-bindings")
+def api_list_app_skill_bindings(app_id):
+    if not store.get_application(app_id):
+        return jsonify({"error": "not found"}), 404
+    skill_id = (request.args.get("skill_id") or "").strip()
+    items = store.list_app_skill_bindings(app_id)
+    if skill_id:
+        items = [item for item in items if item["skill_id"] == skill_id]
+    return jsonify({"items": items})
+
+
+@app.route("/api/apps/<app_id>/skill-bindings", methods=["POST"])
+def api_create_app_skill_binding(app_id):
+    if not store.get_application(app_id):
+        return jsonify({"error": "not found"}), 404
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        binding = store.create_app_skill_binding(
+            app_id=app_id,
+            skill_id=str(data.get("skill_id", "")).strip(),
+            skill_version=str(data.get("skill_version", "")).strip(),
+            permission_mode=str(data.get("permission_mode", "blocked")).strip(),
+            execution_policy=data.get("execution_policy") if isinstance(data.get("execution_policy"), dict) else {},
+            enabled=bool(data.get("enabled", True)),
+        )
+    except ValueError as exc:
+        return jsonify({"errors": [validation_error("binding", str(exc), "invalid")]}), 422
+    return jsonify(binding), 201
 
 
 @app.route("/api/apps/by-name/<name>")

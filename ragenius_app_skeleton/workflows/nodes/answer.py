@@ -90,6 +90,17 @@ def _fallback_final_answer(context: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _provider_failure_final_answer(llm_error: str | None) -> Dict[str, Any] | None:
+    normalized = str(llm_error or "")
+    if "LLM HTTP error 402" not in normalized:
+        return None
+    return {
+        "content": "目前回答模型暫時不可用，請稍後再試。",
+        "citations": [],
+        "missing_infoTypes": [],
+    }
+
+
 def _direct_instruction_block_answer(context: Dict[str, Any]) -> Dict[str, Any] | None:
     turn_action_plan = context.get("turn_action_plan", {}) if isinstance(context.get("turn_action_plan"), dict) else {}
     response_style = turn_action_plan.get("response_style", {}) if isinstance(turn_action_plan.get("response_style"), dict) else {}
@@ -200,8 +211,9 @@ def run(
         except Exception as exc:
             llm_error = f"{type(exc).__name__}: {exc}"
             logger.exception("General out-of-scope LLM call failed; using fallback path.")
-            answer_source = "fallback_generic_general"
-            final_answer = _fallback_final_answer(context)
+            provider_failure = _provider_failure_final_answer(llm_error)
+            answer_source = "fallback_provider_error_general" if provider_failure is not None else "fallback_generic_general"
+            final_answer = provider_failure if provider_failure is not None else _fallback_final_answer(context)
         final_answer = _ensure_non_empty_content(final_answer)
         validate_final_answer(final_answer)
         state["final_answer"] = final_answer
@@ -236,8 +248,9 @@ def run(
             answer_source = "fallback_visible_outputs"
             final_answer = fallback_direct
         else:
-            answer_source = "fallback_generic"
-            final_answer = _fallback_final_answer(context)
+            provider_failure = _provider_failure_final_answer(llm_error)
+            answer_source = "fallback_provider_error" if provider_failure is not None else "fallback_generic"
+            final_answer = provider_failure if provider_failure is not None else _fallback_final_answer(context)
     final_answer = _ensure_non_empty_content(final_answer)
     validate_final_answer(final_answer)
 
@@ -256,8 +269,9 @@ def run(
         except Exception as exc:
             llm_error = f"{type(exc).__name__}: {exc}"
             logger.exception("Safe-answer LLM call failed; using generic fallback.")
-            answer_source = "fallback_generic_safe"
-            final_answer = _fallback_final_answer(context)
+            provider_failure = _provider_failure_final_answer(llm_error)
+            answer_source = "fallback_provider_error_safe" if provider_failure is not None else "fallback_generic_safe"
+            final_answer = provider_failure if provider_failure is not None else _fallback_final_answer(context)
         final_answer = _ensure_non_empty_content(final_answer)
         validate_final_answer(final_answer)
 

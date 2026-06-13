@@ -45,6 +45,10 @@ class GraphState(TypedDict, total=False):
     instruction_scope_candidates: List[Dict[str, Any]]
     instruction_runtime_model: Dict[str, Any]
     session_execution_state: Dict[str, Any]
+    session_lane_state: Dict[str, Any]
+    approved_content_snapshot: Dict[str, Any]
+    execution_intent_record: Dict[str, Any]
+    turn_routing_decision: Dict[str, Any]
     turn_action_plan: Dict[str, Any]
     turn_execution_plan: Dict[str, Any]
     workflow_progress: Dict[str, Any]
@@ -128,6 +132,10 @@ class GraphStateModel(BaseModel):
     instruction_scope_candidates: Optional[List[Dict[str, Any]]] = None
     instruction_runtime_model: Optional[Dict[str, Any]] = None
     session_execution_state: Optional[Dict[str, Any]] = None
+    session_lane_state: Optional[Dict[str, Any]] = None
+    approved_content_snapshot: Optional[Dict[str, Any]] = None
+    execution_intent_record: Optional[Dict[str, Any]] = None
+    turn_routing_decision: Optional[Dict[str, Any]] = None
     turn_action_plan: Optional[Dict[str, Any]] = None
     turn_execution_plan: Optional[Dict[str, Any]] = None
     workflow_progress: Optional[Dict[str, Any]] = None

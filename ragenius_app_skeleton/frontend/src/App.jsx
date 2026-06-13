@@ -1,9 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AdminPanels from "./components/AdminPanels";
+import ApprovedContentPanel from "./components/ApprovedContentPanel";
 import AppSidebar from "./components/AppSidebar";
 import ChatLanding from "./components/ChatLanding";
 import ChatMessageCard from "./components/ChatMessageCard";
 import DocumentsPanel from "./components/DocumentsPanel";
+import ExecutionInspector from "./components/ExecutionInspector";
+import ExecutionComposer from "./components/ExecutionComposer";
+import ArtifactLibrary from "./components/ArtifactLibrary";
 import InstructionsPanel from "./components/InstructionsPanel";
 import RuntimeInspector from "./components/RuntimeInspector";
 import RuntimePanel from "./components/RuntimePanel";
@@ -207,6 +211,12 @@ const styles = {
     padding: 18,
     boxShadow: "0 18px 40px rgba(15,23,42,0.08)",
   },
+  chatWorkspaceCard: {
+    display: "grid",
+    gridTemplateRows: "auto auto minmax(0, 1fr) auto auto",
+    maxHeight: "calc(100vh - 32px)",
+    overflow: "hidden",
+  },
   sectionTitle: {
     margin: "0 0 8px 0",
     fontSize: 22,
@@ -376,6 +386,103 @@ const styles = {
     fontWeight: 800,
     color: "#0f172a",
   },
+  approvedContentShell: {
+    display: "grid",
+    gap: 8,
+    padding: "10px 12px",
+    borderRadius: 16,
+    border: "1px solid #dbeafe",
+    background: "linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)",
+    marginBottom: 12,
+  },
+  approvedContentHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    flexWrap: "wrap",
+  },
+  approvedContentCard: {
+    padding: "9px 11px",
+    borderRadius: 12,
+    background: "#ffffff",
+    border: "1px solid #dbeafe",
+  },
+  approvedContentList: {
+    display: "grid",
+    gap: 10,
+  },
+  approvedContentListItem: (selected) => ({
+    display: "grid",
+    gap: 8,
+    padding: "10px 12px",
+    borderRadius: 14,
+    background: selected ? "#eff6ff" : "#ffffff",
+    border: `1px solid ${selected ? "#93c5fd" : "#dbeafe"}`,
+  }),
+  executionLaneShell: {
+    display: "grid",
+    gap: 10,
+    padding: "12px 14px",
+    borderRadius: 18,
+    border: "1px solid #e2e8f0",
+    background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
+    marginBottom: 14,
+  },
+  executionLaneHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    flexWrap: "wrap",
+  },
+  executionLaneGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 10,
+  },
+  executionLaneMetric: {
+    padding: "10px 12px",
+    borderRadius: 14,
+    background: "#ffffff",
+    border: "1px solid #e2e8f0",
+  },
+  executionLaneValue: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#0f172a",
+    lineHeight: 1.4,
+    wordBreak: "break-word",
+  },
+  executionDetailsShell: {
+    display: "grid",
+    gap: 10,
+    padding: "12px 14px",
+    borderRadius: 14,
+    background: "#ffffff",
+    border: "1px solid #dbeafe",
+  },
+  executionDetailsTitle: {
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#0f172a",
+  },
+  executionDetailsBlock: {
+    display: "grid",
+    gap: 6,
+  },
+  executionDetailsList: {
+    display: "grid",
+    gap: 8,
+  },
+  executionDetailsItem: {
+    display: "grid",
+    gap: 4,
+    padding: "10px 12px",
+    borderRadius: 12,
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+  },
   note: {
     padding: "12px 14px",
     borderRadius: 14,
@@ -460,8 +567,26 @@ const styles = {
   },
   sessionHeaderMeta: {
     color: "#475569",
-    lineHeight: 1.6,
+    lineHeight: 1.45,
   },
+  workflowStrip: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    marginBottom: 12,
+  },
+  workflowBadge: (kind) => ({
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "8px 12px",
+    borderRadius: 999,
+    border: kind === "current" ? "1px solid #93c5fd" : "1px solid #dbeafe",
+    background: kind === "current" ? "#eff6ff" : "#f8fafc",
+    color: kind === "current" ? "#1d4ed8" : "#475569",
+    fontWeight: 700,
+    fontSize: 13,
+    lineHeight: 1.3,
+  }),
   landingShell: {
     minHeight: 480,
     display: "grid",
@@ -547,6 +672,9 @@ const styles = {
     top: 18,
     display: "grid",
     gap: 12,
+    maxHeight: "calc(100vh - 36px)",
+    overflowY: "scroll",
+    paddingRight: 6,
   },
   inspectorHeader: {
     display: "flex",
@@ -612,11 +740,13 @@ const styles = {
   transcriptWrapper: {
     position: "relative",
     marginTop: 18,
+    minHeight: 0,
   },
   transcript: {
-    maxHeight: "60vh",
-    minHeight: 320,
-    overflowY: "auto",
+    height: "100%",
+    minHeight: 0,
+    overflowY: "scroll",
+    overflowX: "hidden",
     paddingRight: 8,
     borderRadius: 18,
     border: "1px solid #dbeafe",
@@ -645,6 +775,16 @@ const styles = {
     background: "linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.98) 28%, rgba(255,255,255,1) 100%)",
     zIndex: 2,
   },
+  executionComposerCard: {
+    maxHeight: "min(72vh, 760px)",
+    overflowY: "auto",
+    overflowX: "hidden",
+    overscrollBehavior: "contain",
+    scrollbarGutter: "stable",
+  },
+  executionComposerShelf: {
+    minWidth: 0,
+  },
   scrollLatestButton: {
     position: "absolute",
     right: 18,
@@ -669,11 +809,20 @@ const styles = {
     overflowY: "auto",
     maxHeight: 220,
   },
-  messageCard: (role) => ({
+  messageCard: (role, selectedForExport = false) => ({
     padding: 16,
+    minWidth: 0,
+    maxWidth: "100%",
     borderRadius: 18,
-    border: role === "user" ? "1px solid #bfdbfe" : "1px solid #d1fae5",
+    border: selectedForExport
+      ? "2px solid #2563eb"
+      : role === "user"
+        ? "1px solid #bfdbfe"
+        : "1px solid #d1fae5",
     background: role === "user" ? "#eff6ff" : "#f0fdf4",
+    boxShadow: selectedForExport ? "0 0 0 3px rgba(37, 99, 235, 0.12)" : "none",
+    cursor: selectedForExport ? "pointer" : "default",
+    transition: "border-color 120ms ease, box-shadow 120ms ease",
   }),
   code: {
     background: "#0f172a",
@@ -806,6 +955,8 @@ const styles = {
   },
   messageBodyText: {
     whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
     lineHeight: 1.75,
     color: "#0f172a",
     fontSize: 15,
@@ -913,11 +1064,145 @@ export function resolveInstructionUnderstandingState(appInfo) {
   };
 }
 
-function classifyAssistantTurn(message) {
+export function applyApprovedContentSelectionToExecQuery(rawQuery, approvedContentId) {
+  const normalizedQuery = String(rawQuery || "").trim();
+  const selectedId = String(approvedContentId || "").trim();
+  if (!normalizedQuery || !selectedId) {
+    return normalizedQuery;
+  }
+  if (!/^@exec\s+(?:async\s+|sync\s+)?(?:tool|skill)\b/i.test(normalizedQuery)) {
+    return normalizedQuery;
+  }
+  if (/(^|\s)(approvedContentId|approved_content_id)=/i.test(normalizedQuery)) {
+    return normalizedQuery;
+  }
+  return `${normalizedQuery} approvedContentId="${selectedId}"`;
+}
+
+function stringifyExecArgValue(value) {
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  if (typeof value === "number") {
+    return String(value);
+  }
+  if (Array.isArray(value) || (value && typeof value === "object")) {
+    return `'${JSON.stringify(value)}'`;
+  }
+  return `"${String(value).replace(/"/g, '\\"')}"`;
+}
+
+export function buildExecCommand({ commandKind, targetId, args = {}, executionMode = "sync", approvedContentId = "" }) {
+  if (commandKind === "agent") {
+    const requestText = String(args.request || "").trim();
+    const skillHint = String(args.skillHint || "").trim();
+    const execPrefix = executionMode === "async" ? "@exec async" : "@exec";
+    if (skillHint) {
+      return `${execPrefix} codex use ${skillHint} "${requestText.replace(/"/g, '\\"')}"`.trim();
+    }
+    return `${execPrefix} codex "${requestText.replace(/"/g, '\\"')}"`.trim();
+  }
+  const normalizedKind = commandKind === "skill" ? "skill" : "tool";
+  const normalizedTargetId = String(targetId || "").trim();
+  const nextArgs = { ...args };
+  if (approvedContentId && !nextArgs.approvedContentId) {
+    nextArgs.approvedContentId = approvedContentId;
+  }
+  const serializedArgs = Object.entries(nextArgs)
+    .filter(([, value]) => value !== "" && value !== null && value !== undefined)
+    .map(([key, value]) => `${key}=${stringifyExecArgValue(value)}`)
+    .join(" ");
+  const execPrefix = executionMode === "async" ? "@exec async" : "@exec";
+  return `${execPrefix} ${normalizedKind} ${normalizedTargetId}${serializedArgs ? ` ${serializedArgs}` : ""}`.trim();
+}
+
+function extractErrorDetail(error) {
+  const rawMessage = String(error?.message || error || "").trim();
+  if (!rawMessage) {
+    return "Execution request failed before submission.";
+  }
+  try {
+    const parsed = JSON.parse(rawMessage);
+    if (typeof parsed?.detail === "string" && parsed.detail.trim()) {
+      return parsed.detail.trim();
+    }
+    if (typeof parsed?.error?.message === "string" && parsed.error.message.trim()) {
+      return parsed.error.message.trim();
+    }
+  } catch (_error) {
+    // Non-JSON backend errors are already useful enough to show directly.
+  }
+  return rawMessage;
+}
+
+function parseExecQueryTarget(rawQuery) {
+  const normalized = String(rawQuery || "").trim();
+  const match = normalized.match(/^@exec\s+(?:async\s+|sync\s+)?(tool|skill|codex)\s+([^\s"]+)?/i);
+  if (!match) {
+    return { command: "", target_id: "", skill_id: "" };
+  }
+  const command = String(match[1] || "").trim().toLowerCase();
+  const target = String(match[2] || "").trim();
+  return {
+    command,
+    target_id: command === "tool" || command === "codex" ? target : "",
+    skill_id: command === "skill" ? target : "",
+  };
+}
+
+function suggestedActionForExecutionError(detail) {
+  const normalized = String(detail || "").toLowerCase();
+  if (normalized.includes("artifact") && normalized.includes("not found")) {
+    return "Select a current-session artifact from Artifact Library and retry the execution.";
+  }
+  if (normalized.includes("consumption mode")) {
+    return "Choose an artifact whose reuse mode matches the selected tool.";
+  }
+  if (normalized.includes("file") && normalized.includes("not")) {
+    return "Open the artifact details and verify the saved file still exists before retrying.";
+  }
+  return "Inspect the execution details, adjust the request, and retry.";
+}
+
+export function buildExecutionSubmitErrorTurn(rawQuery, error) {
+  const detail = extractErrorDetail(error);
+  const suggestedAction = suggestedActionForExecutionError(detail);
+  const target = parseExecQueryTarget(rawQuery);
+  return {
+    role: "assistant",
+    content: [
+      "Execution request failed before submission.",
+      detail,
+      suggestedAction,
+    ].filter(Boolean).join(" "),
+    retrievalSummary: {
+      execution_override: true,
+      command: target.command,
+      target_id: target.target_id,
+      skill_id: target.skill_id,
+      execution_submit_result: {
+        status: "failed",
+        error: {
+          code: "EXECUTION_SUBMIT_FAILED",
+          message: detail,
+          suggested_action: suggestedAction,
+        },
+      },
+    },
+  };
+}
+
+export function classifyAssistantTurn(message) {
   const citationCount = Array.isArray(message?.citations) ? message.citations.length : 0;
   const missingCount = Array.isArray(message?.missingInfoTypes) ? message.missingInfoTypes.length : 0;
   const answerSource = String(message?.retrievalSummary?.answer_source || "").toLowerCase();
   const visibleOutputCount = Number(message?.retrievalSummary?.visible_output_count ?? 0);
+  if (message?.retrievalSummary?.execution_override) {
+    return { label: "Execution", style: { ...styles.pill, ...styles.statusOk } };
+  }
+  if (message?.retrievalSummary?.approval_event) {
+    return { label: "Approval", style: { ...styles.pill, ...styles.statusWarn } };
+  }
   if (answerSource.startsWith("direct_")) {
     return { label: "Direct Guide", style: styles.pill };
   }
@@ -945,6 +1230,13 @@ function classifyAssistantTurn(message) {
   return { label: "Answer", style: styles.pill };
 }
 
+function normalizeSessionLaneState(value) {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  return value;
+}
+
 function normalizeBackendMessages(rows) {
   if (!Array.isArray(rows)) {
     return [];
@@ -955,6 +1247,7 @@ function normalizeBackendMessages(rows) {
         ? row.retrievalSummary
         : (row.retrieval_summary && typeof row.retrieval_summary === "object" ? row.retrieval_summary : {});
     return {
+      id: row.id || null,
       role: row.role,
       content: row.content || "",
       citations: Array.isArray(row.citations) ? row.citations : [],
@@ -985,6 +1278,10 @@ function normalizeBackendMessages(rows) {
   });
 }
 
+function isExecutionTurn(message) {
+  return Boolean(message?.retrievalSummary?.execution_override);
+}
+
 function formatWhen(value) {
   if (!value) {
     return "n/a";
@@ -1002,6 +1299,191 @@ function shortenPreview(value, maxLength = 96) {
     return "No messages yet.";
   }
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+}
+
+function joinPreviewTitles(values, limit = 3) {
+  const titles = values
+    .map((item) => {
+      if (typeof item === "string") {
+        return item;
+      }
+      if (item && typeof item === "object") {
+        return item.title || item.name || item.id || "";
+      }
+      return "";
+    })
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .slice(0, limit);
+  return titles.join(", ");
+}
+
+function executionPayloadFromMessage(message) {
+  const retrievalSummary =
+    message?.retrievalSummary && typeof message.retrievalSummary === "object"
+      ? message.retrievalSummary
+      : {};
+  const submitResult =
+    retrievalSummary.execution_submit_result && typeof retrievalSummary.execution_submit_result === "object"
+      ? retrievalSummary.execution_submit_result
+      : {};
+  if (Object.keys(submitResult).length > 0) {
+    return submitResult;
+  }
+  const statusResult =
+    retrievalSummary.execution_status_result && typeof retrievalSummary.execution_status_result === "object"
+      ? retrievalSummary.execution_status_result
+      : {};
+  return statusResult;
+}
+
+function executionIdFromMessage(message) {
+  const payload = executionPayloadFromMessage(message);
+  const retrievalSummary =
+    message?.retrievalSummary && typeof message.retrievalSummary === "object"
+      ? message.retrievalSummary
+      : {};
+  return String(payload.execution_id || retrievalSummary.execution_id || "").trim();
+}
+
+export function buildExecutionResultPreview(message) {
+  const retrievalSummary =
+    message?.retrievalSummary && typeof message.retrievalSummary === "object"
+      ? message.retrievalSummary
+      : {};
+  if (!retrievalSummary.execution_override) {
+    return "";
+  }
+  const submitResult = executionPayloadFromMessage(message);
+  const command = String(retrievalSummary.command || "").trim().toLowerCase();
+  if (command === "codex") {
+    const status = String(submitResult.status || "").trim().toLowerCase();
+    const result = submitResult.result && typeof submitResult.result === "object" ? submitResult.result : {};
+    const userSummary = result.user_summary && typeof result.user_summary === "object" ? result.user_summary : {};
+    const skills = Array.isArray(result.activated_skills)
+      ? result.activated_skills.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    const artifacts = Array.isArray(result.artifacts) ? result.artifacts : [];
+    const toolSummary = Array.isArray(result.tool_summary)
+      ? result.tool_summary.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    if (status === "pending_confirmation") {
+      const riskClass = String(result.risk_class || "").trim().replace(/^agent_/, "").replace(/_/g, " ");
+      return `Codex confirmation required${riskClass ? ` (${riskClass})` : ""}`;
+    }
+    if (submitResult.error) {
+      return "";
+    }
+    if (status !== "completed") {
+      return "";
+    }
+    const summaryTitle = String(userSummary.title || "").trim();
+    const summarySubtitle = String(userSummary.subtitle || "").trim();
+    const summaryPreview = String(userSummary.preview || "").trim();
+    if (summaryTitle) {
+      const heading = summarySubtitle ? `${summaryTitle} (${summarySubtitle})` : summaryTitle;
+      return summaryPreview ? `${heading}: ${shortenPreview(summaryPreview, 180)}` : heading;
+    }
+    const parts = [];
+    if (skills.length > 0) {
+      parts.push(`Activated skills: ${skills.join(", ")}`);
+    }
+    if (toolSummary.length > 0) {
+      parts.push(`Actions: ${toolSummary.slice(0, 2).join("; ")}`);
+    }
+    if (artifacts.length > 0) {
+      parts.push(`Artifacts: ${artifacts.length}`);
+    }
+    return parts.join(" | ");
+  }
+  if (command !== "tool") {
+    return "";
+  }
+  if (submitResult.error || String(submitResult.status || "").toLowerCase() !== "completed") {
+    return "";
+  }
+  const result = submitResult.result && typeof submitResult.result === "object" ? submitResult.result : {};
+  const targetId = String(retrievalSummary.target_id || "").trim().toLowerCase();
+  if (Array.isArray(result.notebooks)) {
+    return `NotebookLM notebooks (${result.notebooks.length}): ${joinPreviewTitles(result.notebooks)}`;
+  }
+  if (Array.isArray(result.sources)) {
+    return `Sources (${result.sources.length}): ${joinPreviewTitles(result.sources)}`;
+  }
+  if (typeof result.answer === "string" && result.answer.trim()) {
+    return `Answer: ${shortenPreview(result.answer, 180)}`;
+  }
+  if (Array.isArray(result.results)) {
+    if (targetId.includes("gmail")) {
+      return `Messages (${result.results.length}): ${joinPreviewTitles(result.results)}`;
+    }
+    if (targetId.includes("gdrive")) {
+      return `Files (${result.results.length}): ${joinPreviewTitles(result.results)}`;
+    }
+    if (targetId.includes("gdocs")) {
+      return `Documents (${result.results.length}): ${joinPreviewTitles(result.results)}`;
+    }
+    if (targetId.includes("cms")) {
+      return `Pages (${result.results.length}): ${joinPreviewTitles(result.results)}`;
+    }
+    return `Results (${result.results.length}): ${joinPreviewTitles(result.results)}`;
+  }
+  if (targetId.includes("create_draft_with_attachments")) {
+    if (result.id || result.threadId) {
+      return `Draft with attachments created: ${result.id || result.threadId}`;
+    }
+  }
+  if (targetId.includes("create_draft")) {
+    if (result.id || result.threadId) {
+      return `Draft created: ${result.id || result.threadId}`;
+    }
+  }
+  if (targetId.includes("send_draft")) {
+    if (result.id || result.threadId) {
+      return `Draft sent: ${result.id || result.threadId}`;
+    }
+  }
+  if (targetId.includes("send_message")) {
+    if (result.id || result.threadId) {
+      return `Message sent: ${result.id || result.threadId}`;
+    }
+  }
+  if (targetId.includes("create_page")) {
+    if (result.title || result.id) {
+      return `Page created: ${result.title || result.id}`;
+    }
+  }
+  if (targetId.includes("download_file") && (result.name || result.file_id)) {
+    return `Drive file exported: ${result.name || result.file_id}`;
+  }
+  if (targetId.includes("add_source_")) {
+    const sourceTitle =
+      (result.source && typeof result.source === "object" && (result.source.title || result.source.id)) ||
+      result.source_title ||
+      result.notebook_id;
+    if (sourceTitle) {
+      return `Source added: ${sourceTitle}`;
+    }
+  }
+  if (targetId.includes("generate_report") || targetId.includes("generate_slide_deck") || targetId.includes("generate_video")) {
+    const artifactKind = String(result.artifact_kind || "").trim();
+    const taskId = String(result.task_id || "").trim();
+    const status = String(result.status || "").trim().toLowerCase();
+    const kindLabel = artifactKind
+      ? humanizeActionType(artifactKind.replace(/_/g, " "))
+      : targetId.includes("generate_video")
+        ? "Video"
+        : targetId.includes("generate_slide_deck")
+          ? "Slide deck"
+          : "Report";
+    if (status === "completed") {
+      return `${kindLabel} completed${taskId ? `: ${taskId}` : ""}`;
+    }
+    if (taskId || status) {
+      return `${kindLabel} ${status || "submitted"}${taskId ? `: ${taskId}` : ""}`;
+    }
+  }
+  return "";
 }
 
 function workflowStatusLabel(workflowStatus) {
@@ -1207,21 +1689,49 @@ function getRetrievalBypassSummary(message) {
 }
 
 function ChatPanel({
+  baseUrl,
+  sessionId,
+  userId,
   appId,
   appName,
   starterQuestions,
   instructionUnderstandingState,
   messages,
+  approvedContent,
+  selectedApprovedContentId,
+  sessionLaneState,
   sessionUploads,
   workflowStatus,
   onSubmitQuery,
   onSubmitStarterQuestion,
   onAdvanceWorkflow,
   onUploadArtifact,
+  onApproveLatestAssistantMessage,
+  onSelectApprovedContent,
+  toolInventory,
+  skillInventory,
+  artifactInventory,
+  artifactInventoryLoading,
+  artifactInventoryError,
+  onRunExecutionComposer,
+  selectedExportMessageIds,
+  onToggleMessageExportSelection,
+  onExportSelectedMessages,
+  onConfirmExecution,
+  onDeleteArtifact,
 }) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [refreshingExecutionStatus, setRefreshingExecutionStatus] = useState(false);
+  const [confirmingExecution, setConfirmingExecution] = useState(false);
+  const [loggingInToNotebookLm, setLoggingInToNotebookLm] = useState(false);
+  const [exportingSelection, setExportingSelection] = useState(false);
+  const [showExecutionComposer, setShowExecutionComposer] = useState(false);
+  const [showArtifactLibrary, setShowArtifactLibrary] = useState(true);
+  const [artifactSuggestionForComposer, setArtifactSuggestionForComposer] = useState(null);
+  const [artifactPreferredTargetIdForComposer, setArtifactPreferredTargetIdForComposer] = useState("");
   const [error, setError] = useState("");
   const [showScrollLatest, setShowScrollLatest] = useState(false);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
@@ -1236,13 +1746,19 @@ function ChatPanel({
     .reverse()
     .find((entry) => entry.message.role === "assistant")?.index ?? -1;
   const latestAssistantMessage = latestAssistantIndex >= 0 ? messages[latestAssistantIndex] : null;
+  const selectedApprovedContent =
+    approvedContent.find((item) => item.approved_content_id === selectedApprovedContentId)
+    || approvedContent[approvedContent.length - 1]
+    || null;
   const inspectedMessage =
     inspectedMessageIndex >= 0 &&
     inspectedMessageIndex < messages.length &&
     messages[inspectedMessageIndex]?.role === "assistant"
       ? messages[inspectedMessageIndex]
       : latestAssistantMessage;
+  const inspectedMessageIsExecution = isExecutionTurn(inspectedMessage);
   const phaseLabel = getSessionPhaseLabel(workflowStatus, latestAssistantMessage);
+  const exportSelectionCount = Array.isArray(selectedExportMessageIds) ? selectedExportMessageIds.length : 0;
 
   useEffect(() => {
     if (!transcriptRef.current) {
@@ -1334,137 +1850,419 @@ function ChatPanel({
     }
   };
 
+  const approveLatestAssistantMessage = async () => {
+    if (!latestAssistantMessage || !onApproveLatestAssistantMessage) {
+      return;
+    }
+    setApproving(true);
+    setError("");
+    try {
+      await onApproveLatestAssistantMessage(latestAssistantMessage);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const approveMessage = async (messageIndex) => {
+    const message = messages[messageIndex];
+    if (!message || message.role !== "assistant" || !onApproveLatestAssistantMessage) {
+      return;
+    }
+    setApproving(true);
+    setError("");
+    try {
+      await onApproveLatestAssistantMessage(message);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const refreshExecutionStatus = async () => {
+    const executionId = sessionLaneState?.execution_lane?.latest_execution_id;
+    if (!executionId || !onSubmitQuery) {
+      return;
+    }
+    setRefreshingExecutionStatus(true);
+    setError("");
+    try {
+      await onSubmitQuery(`@exec status ${executionId}`);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setRefreshingExecutionStatus(false);
+    }
+  };
+
+  const retryLastExecution = async () => {
+    const lastExecQuery = sessionLaneState?.execution_lane?.latest_execution_request_query;
+    if (!lastExecQuery || !onSubmitQuery) {
+      return;
+    }
+    setError("");
+    try {
+      await onSubmitQuery(lastExecQuery);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const refreshExecutionStatusForMessage = async (message) => {
+    const executionId = executionIdFromMessage(message) || sessionLaneState?.execution_lane?.latest_execution_id;
+    if (!executionId || !onSubmitQuery) {
+      return;
+    }
+    setRefreshingExecutionStatus(true);
+    setError("");
+    try {
+      await onSubmitQuery(`@exec status ${executionId}`);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setRefreshingExecutionStatus(false);
+    }
+  };
+
+  const retryExecutionForMessage = async (_message) => {
+    await retryLastExecution();
+  };
+
+  const confirmExecutionForMessage = async (message) => {
+    const executionId = executionIdFromMessage(message);
+    if (!executionId || !onConfirmExecution) {
+      return;
+    }
+    setConfirmingExecution(true);
+    setError("");
+    try {
+      await onConfirmExecution(executionId);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setConfirmingExecution(false);
+    }
+  };
+
+  const launchNotebookLmLogin = async () => {
+    if (!appId || !sessionId || !userId) {
+      return;
+    }
+    setLoggingInToNotebookLm(true);
+    setError("");
+    try {
+      const data = await fetchJson(`${baseUrl}/sessions/${sessionId}/integrations/notebooklm/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          app_id: appId,
+          user_id: userId,
+        }),
+      });
+      if (data?.content) {
+        setThreadsBySession((prev) => ({
+          ...prev,
+          [activeThreadKey]: [
+            ...(prev[activeThreadKey] || []),
+            {
+              id: null,
+              role: "assistant",
+              content: data.content,
+              citations: [],
+              missingInfoTypes: [],
+              retrievalSummary: {
+                execution_override: true,
+                command: "login",
+                provider: "notebooklm",
+              },
+              workflowProgress: {},
+              turnExecutionPlan: {},
+              sessionExecutionState: {},
+            },
+          ],
+        }));
+      }
+      if (data?.session_lane_state) {
+        setSessionLaneStateBySession((prev) => ({
+          ...prev,
+          [activeThreadKey]: normalizeSessionLaneState(data.session_lane_state),
+        }));
+      }
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoggingInToNotebookLm(false);
+    }
+  };
+
+  const exportSelectedMessages = async () => {
+    if (!onExportSelectedMessages || exportSelectionCount === 0) {
+      return;
+    }
+    setExportingSelection(true);
+    setError("");
+    try {
+      await onExportSelectedMessages();
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setExportingSelection(false);
+    }
+  };
+
   return (
     <div style={styles.workspaceGrid(isInspectorOpen)}>
-      <section style={{ ...styles.card, marginBottom: 0 }}>
-        {isLandingState ? (
-          <ChatLanding
-            appName={appName}
-            starterQuestions={starterQuestions}
-            styles={styles}
-            loading={loading}
-            appId={appId}
-            compileRequiredMessage={instructionUnderstandingState.compileRequired ? instructionUnderstandingState.message : ""}
-            onSelectStarterQuestion={submitStarterQuestion}
-          />
-        ) : (
-          <>
-            <SessionHeader
+      <div style={styles.chatStage}>
+        <section
+          style={{
+            ...styles.card,
+            ...(isLandingState ? {} : styles.chatWorkspaceCard),
+            marginBottom: 0,
+          }}
+        >
+          {isLandingState ? (
+            <ChatLanding
               appName={appName}
-              phaseLabel={phaseLabel}
-              workflowStatus={workflowStatus}
+              starterQuestions={starterQuestions}
               styles={styles}
               loading={loading}
               appId={appId}
-              onAdvanceWorkflow={onAdvanceWorkflow}
-              onOpenInspector={() => openInspector("details")}
-              hasAssistantTurn={Boolean(latestAssistantMessage)}
+              compileRequiredMessage={instructionUnderstandingState.compileRequired ? instructionUnderstandingState.message : ""}
+              onSelectStarterQuestion={submitStarterQuestion}
             />
-            <div style={styles.transcriptWrapper}>
-              <div
-                ref={transcriptRef}
-                style={styles.transcript}
-                onScroll={updateScrollAffordance}
-              >
-                {messages.map((message, index) => {
-                  const retrievalSummary = message.retrievalSummary || {};
-                  return (
-                    <ChatMessageCard
-                      key={`${message.role}-${index}`}
-                      message={message}
-                      index={index}
-                      styles={styles}
-                      assistantType={message.role === "assistant" ? classifyAssistantTurn(message) : null}
-                      turnIntentLabel={message.role === "assistant" && retrievalSummary.turn_intent ? humanizeActionType(retrievalSummary.turn_intent) : ""}
-                      generationSummary={message.role === "assistant" ? getGenerationSummary(message) : ""}
-                      primaryScopeSummary={message.role === "assistant" ? summarizePrimaryScope(retrievalSummary) : ""}
-                      sourceSummary={message.role === "assistant" ? getSourceSummary(message) : ""}
-                      retrievalBypassSummary={message.role === "assistant" ? getRetrievalBypassSummary(message) : ""}
-                      evidenceNote={message.role === "assistant" ? buildAssistantEvidenceNote(message) : ""}
-                      onOpenInspector={(messageIndex) => openInspector("details", messageIndex)}
-                      onOpenSources={(messageIndex) => openInspector("sources", messageIndex)}
-                    />
-                  );
-                })}
-              </div>
-              {showScrollLatest && (
-                <button style={styles.scrollLatestButton} onClick={scrollToLatest}>
-                  Scroll to latest
-                </button>
-              )}
-            </div>
-          </>
-        )}
-
-        <div style={styles.details}>
-          <div style={styles.label}>Session Artifact Upload</div>
-          <div style={styles.row}>
-            <input
-              ref={uploadInputRef}
-              type="file"
-              onChange={uploadArtifact}
-              disabled={!appId || uploading}
-            />
-            <span style={styles.small}>
-              Upload an artifact for this chat session only. It is not ingested into app knowledge.
-            </span>
-          </div>
-          {Array.isArray(sessionUploads) && sessionUploads.length > 0 && (
+          ) : (
             <>
-              <div style={styles.uploadChipRow}>
-                {sessionUploads.map((upload) => (
-                  <span key={`chip-${upload.id}`} style={styles.uploadChip}>
-                    {upload.filename}
-                  </span>
-                ))}
-              </div>
-              <details style={{ ...styles.details, marginTop: 10 }}>
-                <summary style={styles.summary}>Session files</summary>
-                <div style={styles.uploadList}>
-                  {sessionUploads.map((upload) => (
-                    <div key={upload.id} style={styles.uploadItem}>
-                      <strong>{upload.filename}</strong>
-                      <div style={styles.small}>{upload.id}</div>
-                      <div style={styles.small}>
-                        {upload.mime_type || "application/octet-stream"} | {upload.size_bytes || 0} bytes
-                      </div>
-                    </div>
-                  ))}
+              <SessionHeader
+                appName={appName}
+                phaseLabel={phaseLabel}
+                workflowStatus={workflowStatus}
+                styles={styles}
+                loading={loading}
+                appId={appId}
+                onAdvanceWorkflow={onAdvanceWorkflow}
+                onOpenInspector={() => openInspector(isExecutionTurn(latestAssistantMessage) ? "summary" : "details")}
+                hasAssistantTurn={Boolean(latestAssistantMessage)}
+              />
+              <ApprovedContentPanel
+                approvedContent={approvedContent}
+                selectedApprovedContentId={selectedApprovedContentId}
+                onSelectApprovedContent={onSelectApprovedContent}
+                latestAssistantMessage={latestAssistantMessage}
+                onApproveLatest={approveLatestAssistantMessage}
+                approving={approving}
+                styles={styles}
+              />
+              <div style={styles.transcriptWrapper}>
+                <div
+                  ref={transcriptRef}
+                  style={styles.transcript}
+                  onScroll={updateScrollAffordance}
+                >
+                  {messages.map((message, index) => {
+                    const retrievalSummary = message.retrievalSummary || {};
+                    return (
+                      <ChatMessageCard
+                        key={`${message.role}-${index}`}
+                        message={message}
+                        index={index}
+                        styles={styles}
+                        assistantType={message.role === "assistant" ? classifyAssistantTurn(message) : null}
+                        turnIntentLabel={message.role === "assistant" && retrievalSummary.turn_intent ? humanizeActionType(retrievalSummary.turn_intent) : ""}
+                        generationSummary={message.role === "assistant" ? getGenerationSummary(message) : ""}
+                        primaryScopeSummary={message.role === "assistant" ? summarizePrimaryScope(retrievalSummary) : ""}
+                        sourceSummary={message.role === "assistant" ? getSourceSummary(message) : ""}
+                        retrievalBypassSummary={message.role === "assistant" ? getRetrievalBypassSummary(message) : ""}
+                        evidenceNote={message.role === "assistant" ? buildAssistantEvidenceNote(message) : ""}
+                        executionResultPreview={message.role === "assistant" ? buildExecutionResultPreview(message) : ""}
+                        // Mark Reviewed still writes legacy approved content until reviewed artifacts are implemented.
+                        onApproveMessage={message.role === "assistant" ? approveMessage : null}
+                        selectable={Boolean(message.id)}
+                        selectedForExport={Boolean(message.id && selectedExportMessageIds?.includes(message.id))}
+                        onToggleSelectedForExport={onToggleMessageExportSelection}
+                        onRefreshExecutionStatus={refreshExecutionStatusForMessage}
+                        onConfirmExecution={confirmExecutionForMessage}
+                        confirmingExecution={confirmingExecution}
+                        onRetryExecution={retryExecutionForMessage}
+                        onLoginNotebookLm={launchNotebookLmLogin}
+                        loggingInToNotebookLm={loggingInToNotebookLm}
+                        baseUrl={baseUrl}
+                        onUseArtifactInComposer={(artifact) => {
+                          setArtifactSuggestionForComposer(artifact);
+                          setArtifactPreferredTargetIdForComposer("");
+                          setShowArtifactLibrary(true);
+                          setShowExecutionComposer(true);
+                        }}
+                        onViewArtifactLibrary={() => setShowArtifactLibrary(true)}
+                        onOpenInspector={(messageIndex) => openInspector(isExecutionTurn(messages[messageIndex]) ? "summary" : "details", messageIndex)}
+                        onOpenSources={(messageIndex) => openInspector("sources", messageIndex)}
+                      />
+                    );
+                  })}
                 </div>
-              </details>
+                {showScrollLatest && (
+                  <button style={styles.scrollLatestButton} onClick={scrollToLatest}>
+                    Scroll to latest
+                  </button>
+                )}
+              </div>
             </>
           )}
-        </div>
 
-        <div style={styles.composerShell}>
-          <textarea
-            style={styles.textarea}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={isLandingState ? "Ask anything or use a starter prompt." : "Type your next message."}
-            disabled={!appId}
-          />
-          <div style={{ ...styles.row, marginTop: 12 }}>
-            <button style={styles.button} onClick={send} disabled={loading || !appId}>
-              {loading ? "Sending..." : "Ask"}
-            </button>
-            {uploading && <span style={styles.small}>Uploading artifact...</span>}
+          <div style={styles.details}>
+            <div style={styles.label}>Session Artifact Upload</div>
+            <div style={styles.row}>
+              <input
+                ref={uploadInputRef}
+                type="file"
+                onChange={uploadArtifact}
+                disabled={!appId || uploading}
+              />
+              <span style={styles.small}>
+                Upload an artifact for this chat session only. It is not ingested into app knowledge.
+              </span>
+            </div>
+            {Array.isArray(sessionUploads) && sessionUploads.length > 0 && (
+              <>
+                <div style={styles.uploadChipRow}>
+                  {sessionUploads.map((upload) => (
+                    <span key={`chip-${upload.id}`} style={styles.uploadChip}>
+                      {upload.filename}
+                    </span>
+                  ))}
+                </div>
+                <details style={{ ...styles.details, marginTop: 10 }}>
+                  <summary style={styles.summary}>Session files</summary>
+                  <div style={styles.uploadList}>
+                    {sessionUploads.map((upload) => (
+                      <div key={upload.id} style={styles.uploadItem}>
+                        <strong>{upload.filename}</strong>
+                        <div style={styles.small}>{upload.id}</div>
+                        <div style={styles.small}>
+                          {upload.mime_type || "application/octet-stream"} | {upload.size_bytes || 0} bytes
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              </>
+            )}
           </div>
-          {error && <div style={{ ...styles.error, marginTop: 12 }}>{error}</div>}
-        </div>
-      </section>
-      <RuntimeInspector
-        open={isInspectorOpen}
-        tab={inspectorTab}
-        onChangeTab={setInspectorTab}
-        onClose={() => setIsInspectorOpen(false)}
-        message={inspectedMessage}
-        workflowStatus={workflowStatus}
-        styles={styles}
-        humanizeActionType={humanizeActionType}
-        humanizePresentationMode={humanizePresentationMode}
-        summarizePrimaryScope={summarizePrimaryScope}
-      />
+
+          <div style={styles.composerShell}>
+            <textarea
+              style={styles.textarea}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={isLandingState ? "Ask anything or use a starter prompt." : "Type your next message."}
+              disabled={!appId}
+            />
+            <div style={{ ...styles.row, marginTop: 12 }}>
+              <button style={styles.button} onClick={send} disabled={loading || !appId}>
+                {loading ? "Sending..." : "Ask"}
+              </button>
+              <button
+                type="button"
+                style={styles.secondaryButton}
+                onClick={() => {
+                  setArtifactSuggestionForComposer(null);
+                  setArtifactPreferredTargetIdForComposer("");
+                  setShowExecutionComposer(true);
+                }}
+                disabled={!appId}
+              >
+                Run Tool or Skill
+              </button>
+              <button
+                type="button"
+                style={styles.secondaryButton}
+                onClick={() => setShowArtifactLibrary((value) => !value)}
+                disabled={!appId}
+              >
+                {showArtifactLibrary ? "Hide Artifact Library" : "Show Artifact Library"}
+              </button>
+              <button
+                type="button"
+                style={styles.secondaryButton}
+                onClick={exportSelectedMessages}
+                disabled={!appId || exportSelectionCount === 0 || exportingSelection}
+              >
+                {exportingSelection ? "Creating Reuse Artifact..." : `Create Reuse Artifact (${exportSelectionCount})`}
+              </button>
+              {uploading && <span style={styles.small}>Uploading artifact...</span>}
+            </div>
+            {error && <div style={{ ...styles.error, marginTop: 12 }}>{error}</div>}
+          </div>
+        </section>
+        {showExecutionComposer && (
+          <div style={styles.executionComposerShelf}>
+            <ExecutionComposer
+              toolInventory={toolInventory}
+              skillInventory={skillInventory}
+              artifactInventory={artifactInventory}
+              initialArtifactSuggestion={artifactSuggestionForComposer}
+              initialTargetId={artifactPreferredTargetIdForComposer}
+              selectedApprovedContent={
+                approvedContent.find((item) => item.approved_content_id === selectedApprovedContentId) || null
+              }
+              onSubmit={async (payload) => {
+                await onRunExecutionComposer?.(payload);
+                setArtifactSuggestionForComposer(null);
+                setArtifactPreferredTargetIdForComposer("");
+                setShowExecutionComposer(false);
+              }}
+              onClose={() => {
+                setArtifactSuggestionForComposer(null);
+                setArtifactPreferredTargetIdForComposer("");
+                setShowExecutionComposer(false);
+              }}
+              styles={styles}
+            />
+          </div>
+        )}
+        {showArtifactLibrary ? (
+          <ArtifactLibrary
+            artifacts={artifactInventory}
+            toolInventory={toolInventory}
+            loading={artifactInventoryLoading}
+            error={artifactInventoryError}
+            onDeleteArtifact={onDeleteArtifact}
+            baseUrl={baseUrl}
+            onUseInNextStep={(artifact, options = {}) => {
+              setArtifactSuggestionForComposer(artifact);
+              setArtifactPreferredTargetIdForComposer(String(options?.preferredTargetId || "").trim());
+              setShowExecutionComposer(true);
+            }}
+            onClose={() => setShowArtifactLibrary(false)}
+            styles={styles}
+          />
+        ) : null}
+      </div>
+      {inspectedMessageIsExecution ? (
+        <ExecutionInspector
+          open={isInspectorOpen}
+          tab={inspectorTab}
+          onChangeTab={setInspectorTab}
+          onClose={() => setIsInspectorOpen(false)}
+          message={inspectedMessage}
+          sessionLaneState={sessionLaneState}
+          styles={styles}
+        />
+      ) : (
+        <RuntimeInspector
+          open={isInspectorOpen}
+          tab={inspectorTab}
+          onChangeTab={setInspectorTab}
+          onClose={() => setIsInspectorOpen(false)}
+          message={inspectedMessage}
+          workflowStatus={workflowStatus}
+          styles={styles}
+          humanizeActionType={humanizeActionType}
+          humanizePresentationMode={humanizePresentationMode}
+          summarizePrimaryScope={summarizePrimaryScope}
+        />
+      )}
     </div>
   );
 }
@@ -1481,7 +2279,16 @@ export default function App() {
   const [appInfo, setAppInfo] = useState(null);
   const [appError, setAppError] = useState("");
   const [threadsBySession, setThreadsBySession] = useState({});
+  const [approvedContentBySession, setApprovedContentBySession] = useState({});
+  const [selectedApprovedContentIdBySession, setSelectedApprovedContentIdBySession] = useState({});
+  const [selectedExportMessageIdsBySession, setSelectedExportMessageIdsBySession] = useState({});
+  const [sessionLaneStateBySession, setSessionLaneStateBySession] = useState({});
   const [sessionUploadsBySession, setSessionUploadsBySession] = useState({});
+  const [execToolInventory, setExecToolInventory] = useState([]);
+  const [execSkillInventory, setExecSkillInventory] = useState([]);
+  const [execArtifactInventory, setExecArtifactInventory] = useState([]);
+  const [execArtifactInventoryLoading, setExecArtifactInventoryLoading] = useState(false);
+  const [execArtifactInventoryError, setExecArtifactInventoryError] = useState("");
   const [sessions, setSessions] = useState([]);
   const [sessionTitleDraft, setSessionTitleDraft] = useState("");
   const [savingSessionTitle, setSavingSessionTitle] = useState(false);
@@ -1503,7 +2310,14 @@ export default function App() {
   const instructionUnderstandingState = resolveInstructionUnderstandingState(appInfo);
   const activeThreadKey = buildThreadKey(selectedAppId, sessionId);
   const activeMessages = threadsBySession[activeThreadKey] || [];
+  const activeApprovedContent = approvedContentBySession[activeThreadKey] || [];
+  const activeSelectedApprovedContentId =
+    selectedApprovedContentIdBySession[activeThreadKey]
+    || activeApprovedContent[activeApprovedContent.length - 1]?.approved_content_id
+    || "";
+  const activeSessionLaneState = sessionLaneStateBySession[activeThreadKey] || {};
   const activeSessionUploads = sessionUploadsBySession[activeThreadKey] || [];
+  const activeSelectedExportMessageIds = selectedExportMessageIdsBySession[activeThreadKey] || [];
   const currentSession = sessions.find((session) => session.id === sessionId) || null;
   const filteredSessions = useMemo(() => {
     const needle = sessionSearch.trim().toLowerCase();
@@ -1534,6 +2348,53 @@ export default function App() {
       }
     } catch (e) {
       setAppError(String(e.message || e));
+    }
+  };
+
+  const loadExecInventories = async () => {
+    try {
+      const skillQuery = new URLSearchParams();
+      skillQuery.set("visibility", "user");
+      if (selectedAppId) {
+        skillQuery.set("app_id", selectedAppId);
+      }
+      const [toolData, skillData] = await Promise.all([
+        fetchJson(`${baseUrl}/exec/tools`),
+        fetchJson(`${baseUrl}/exec/skills?${skillQuery.toString()}`),
+      ]);
+      setExecToolInventory(Array.isArray(toolData?.items) ? toolData.items : []);
+      setExecSkillInventory(Array.isArray(skillData?.items) ? skillData.items : []);
+    } catch (e) {
+      setAppError(String(e.message || e));
+    }
+  };
+
+  const loadArtifactInventory = async (
+    appIdOverride = selectedAppId,
+    sessionIdOverride = sessionId,
+    userIdOverride = userId,
+  ) => {
+    if (!appIdOverride || !sessionIdOverride || !userIdOverride) {
+      setExecArtifactInventoryLoading(false);
+      setExecArtifactInventoryError("");
+      setExecArtifactInventory([]);
+      return;
+    }
+    setExecArtifactInventoryLoading(true);
+    setExecArtifactInventoryError("");
+    try {
+      const data = await fetchJson(
+        `${baseUrl}/sessions/${sessionIdOverride}/artifacts?app_id=${encodeURIComponent(appIdOverride)}&user_id=${encodeURIComponent(userIdOverride)}`
+      );
+      setExecArtifactInventory(Array.isArray(data?.items) ? data.items : []);
+      if (data?.warning) {
+        setExecArtifactInventoryError(String(data.warning));
+      }
+    } catch (error) {
+      setExecArtifactInventory([]);
+      setExecArtifactInventoryError(String(error?.message || error || "Unknown error."));
+    } finally {
+      setExecArtifactInventoryLoading(false);
     }
   };
 
@@ -1608,26 +2469,50 @@ export default function App() {
     }
   };
 
-  const appendAssistantMessage = (data) => ({
-    role: "assistant",
-    content: (data.content || "").trim() || "(No answer text returned by backend)",
-    citations: data.citations || [],
-    missingInfoTypes: data.missing_infoTypes || data.missingInfoTypes || [],
-    retrievalSummary: data.retrieval_summary || {},
-    workflowProgress: data.workflow_progress || {},
-    turnExecutionPlan: data.turn_execution_plan || data.retrieval_summary?.turn_execution_plan || {},
-    sessionExecutionState: data.session_execution_state || data.retrieval_summary?.session_execution_state || {},
-  });
+  const appendAssistantMessage = (data) => {
+    const baseSummary = data.retrieval_summary && typeof data.retrieval_summary === "object"
+      ? { ...data.retrieval_summary }
+      : {};
+    if (data.execution_override && typeof data.execution_override === "object") {
+      baseSummary.execution_override = true;
+      baseSummary.command = data.execution_override.command;
+      baseSummary.target_id = data.execution_override.target_id;
+      baseSummary.skill_id = data.execution_override.skill_id;
+      baseSummary.execution_id = data.execution_override.execution_id || "";
+      baseSummary.agent_query = data.execution_override.agent_query || "";
+      baseSummary.agent_skill_hint = data.execution_override.agent_skill_hint || "";
+      baseSummary.approved_content_id = data.execution_override.approved_content_id;
+      baseSummary.approved_revision_id = data.execution_override.approved_revision_id;
+      baseSummary.execution_intent = data.execution_override.execution_intent || {};
+      baseSummary.execution_submit_result = data.execution_override.submit_result || {};
+      baseSummary.execution_status_result = data.execution_override.status_result || {};
+      baseSummary.login_required = Boolean(data.execution_override.login_requirement?.auth_required);
+    }
+    return {
+      id: data.id || data.message_id || null,
+      role: "assistant",
+      content: (data.content || "").trim() || "(No answer text returned by backend)",
+      citations: data.citations || [],
+      missingInfoTypes: data.missing_infoTypes || data.missingInfoTypes || [],
+      retrievalSummary: baseSummary,
+      workflowProgress: data.workflow_progress || {},
+      turnExecutionPlan: data.turn_execution_plan || baseSummary.turn_execution_plan || {},
+      sessionExecutionState: data.session_execution_state || baseSummary.session_execution_state || {},
+    };
+  };
 
   const sendQueryToSession = async (targetSessionId, rawQuery) => {
-    const normalizedQuery = String(rawQuery || "").trim();
+    const targetThreadKey = buildThreadKey(selectedAppId, targetSessionId);
+    const normalizedQuery = applyApprovedContentSelectionToExecQuery(
+      rawQuery,
+      selectedApprovedContentIdBySession[targetThreadKey] || "",
+    );
     if (!selectedAppId || !normalizedQuery) {
       return;
     }
     if (instructionUnderstandingState.compileRequired) {
       throw new Error(instructionUnderstandingState.message);
     }
-    const targetThreadKey = buildThreadKey(selectedAppId, targetSessionId);
     const userMessage = { role: "user", content: normalizedQuery };
 
     setThreadsBySession((prev) => ({
@@ -1641,14 +2526,142 @@ export default function App() {
       user_query: normalizedQuery,
       template_version: 1,
     };
-    const data = await fetchJson(`${baseUrl}/sessions/${targetSessionId}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    let data;
+    try {
+      data = await fetchJson(`${baseUrl}/sessions/${targetSessionId}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch (queryError) {
+      if (/^@exec\b/i.test(normalizedQuery)) {
+        const errorTurn = buildExecutionSubmitErrorTurn(normalizedQuery, queryError);
+        setThreadsBySession((prev) => ({
+          ...prev,
+          [targetThreadKey]: [...(prev[targetThreadKey] || []), errorTurn],
+        }));
+        return;
+      }
+      throw queryError;
+    }
     setThreadsBySession((prev) => ({
       ...prev,
       [targetThreadKey]: [...(prev[targetThreadKey] || []), appendAssistantMessage(data)],
+    }));
+    setSessionLaneStateBySession((prev) => ({
+      ...prev,
+      [targetThreadKey]: normalizeSessionLaneState(data.session_lane_state),
+    }));
+    await loadSessions(selectedAppId, userId, includeArchivedSessions);
+  };
+
+  const runExecutionComposer = async ({ commandKind, targetId, args, executionMode }) => {
+    const rawQuery = buildExecCommand({
+      commandKind,
+      targetId,
+      args,
+      executionMode,
+      approvedContentId: activeSelectedApprovedContentId,
+    });
+    await sendQueryToSession(sessionId, rawQuery);
+  };
+
+  const toggleMessageExportSelection = (messageId) => {
+    const normalizedId = String(messageId || "").trim();
+    if (!normalizedId) {
+      return;
+    }
+    setSelectedExportMessageIdsBySession((prev) => {
+      const current = new Set(prev[activeThreadKey] || []);
+      if (current.has(normalizedId)) {
+        current.delete(normalizedId);
+      } else {
+        current.add(normalizedId);
+      }
+      return {
+        ...prev,
+        [activeThreadKey]: [...current],
+      };
+    });
+  };
+
+  const exportSelectedMessages = async () => {
+    if (!selectedAppId || !sessionId || !userId || activeSelectedExportMessageIds.length === 0) {
+      return;
+    }
+    const data = await fetchJson(`${baseUrl}/sessions/${sessionId}/exports`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        app_id: selectedAppId,
+        user_id: userId,
+        message_ids: activeSelectedExportMessageIds,
+        format: "md",
+      }),
+    });
+    if (data?.summary_text) {
+      const exportArtifact =
+        data?.export_artifact && typeof data.export_artifact === "object"
+          ? data.export_artifact
+          : {};
+      const exportResult =
+        data?.export_result?.result && typeof data.export_result.result === "object"
+          ? data.export_result.result
+          : {};
+      setThreadsBySession((prev) => ({
+        ...prev,
+        [activeThreadKey]: [
+          ...(prev[activeThreadKey] || []),
+          {
+            id: null,
+            role: "assistant",
+            content: data.summary_text,
+            citations: [],
+            missingInfoTypes: [],
+            retrievalSummary: {
+              execution_override: true,
+              command: "export",
+              artifact_export: true,
+              export_artifact: {
+                ...exportArtifact,
+                ...(exportResult.path ? { path: exportResult.path } : {}),
+                ...(exportResult.file_path ? { file_path: exportResult.file_path } : {}),
+              },
+              execution_submit_result: data.export_result || {},
+            },
+            workflowProgress: {},
+            turnExecutionPlan: {},
+            sessionExecutionState: {},
+          },
+        ],
+      }));
+    }
+    await loadArtifactInventory(selectedAppId, sessionId, userId);
+    setSelectedExportMessageIdsBySession((prev) => ({
+      ...prev,
+      [activeThreadKey]: [],
+    }));
+  };
+
+  const confirmExecutionForSession = async (executionId) => {
+    if (!selectedAppId || !sessionId || !userId || !executionId) {
+      return;
+    }
+    const data = await fetchJson(`${baseUrl}/sessions/${sessionId}/executions/${encodeURIComponent(executionId)}/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        app_id: selectedAppId,
+        user_id: userId,
+      }),
+    });
+    setThreadsBySession((prev) => ({
+      ...prev,
+      [activeThreadKey]: [...(prev[activeThreadKey] || []), appendAssistantMessage(data)],
+    }));
+    setSessionLaneStateBySession((prev) => ({
+      ...prev,
+      [activeThreadKey]: normalizeSessionLaneState(data.session_lane_state),
     }));
     await loadSessions(selectedAppId, userId, includeArchivedSessions);
   };
@@ -1661,7 +2674,23 @@ export default function App() {
         ...prev,
         [buildThreadKey(selectedAppId, nextSessionId)]: [],
       }));
+      setApprovedContentBySession((prev) => ({
+        ...prev,
+        [buildThreadKey(selectedAppId, nextSessionId)]: [],
+      }));
+      setSelectedApprovedContentIdBySession((prev) => ({
+        ...prev,
+        [buildThreadKey(selectedAppId, nextSessionId)]: "",
+      }));
+      setSessionLaneStateBySession((prev) => ({
+        ...prev,
+        [buildThreadKey(selectedAppId, nextSessionId)]: {},
+      }));
       setSessionUploadsBySession((prev) => ({
+        ...prev,
+        [buildThreadKey(selectedAppId, nextSessionId)]: [],
+      }));
+      setSelectedExportMessageIdsBySession((prev) => ({
         ...prev,
         [buildThreadKey(selectedAppId, nextSessionId)]: [],
       }));
@@ -1692,8 +2721,112 @@ export default function App() {
         ...prev,
         [activeThreadKey]: [...(prev[activeThreadKey] || []), appendAssistantMessage(data)],
       }));
+      setSessionLaneStateBySession((prev) => ({
+        ...prev,
+        [activeThreadKey]: normalizeSessionLaneState(data.session_lane_state),
+      }));
     }
     await loadSessions(selectedAppId, userId, includeArchivedSessions);
+  };
+
+  const approveLatestAssistantMessage = async (message) => {
+    if (!selectedAppId || !sessionId || !userId || !message?.content) {
+      return;
+    }
+    const data = await fetchJson(`${baseUrl}/sessions/${sessionId}/approved-content`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        app_id: selectedAppId,
+        user_id: userId,
+        message_id: message.id || null,
+        content_text: message.id ? null : message.content,
+      }),
+    });
+    const approvedContent = Array.isArray(data.approved_content)
+      ? data.approved_content
+      : data.approved_content
+        ? [data.approved_content]
+        : [];
+    setApprovedContentBySession((prev) => ({
+      ...prev,
+      [activeThreadKey]: approvedContent.length > 0
+        ? [...(prev[activeThreadKey] || []), ...approvedContent]
+        : prev[activeThreadKey] || [],
+    }));
+    const latestApprovedContentId =
+      approvedContent[approvedContent.length - 1]?.approved_content_id
+      || data.approved_content?.approved_content_id
+      || "";
+    if (latestApprovedContentId) {
+      setSelectedApprovedContentIdBySession((prev) => ({
+        ...prev,
+        [activeThreadKey]: latestApprovedContentId,
+      }));
+    }
+    if (data.summary_text) {
+      setThreadsBySession((prev) => ({
+        ...prev,
+        [activeThreadKey]: [
+          ...(prev[activeThreadKey] || []),
+          {
+            id: null,
+            role: "assistant",
+            content: data.summary_text,
+            citations: [],
+            missingInfoTypes: [],
+            retrievalSummary: {
+              approval_event: true,
+              action_type: "approved_content_created",
+              approved_content_id: latestApprovedContentId || null,
+              reviewed_artifact: data.reviewed_artifact || null,
+            },
+            workflowProgress: {},
+            turnExecutionPlan: {},
+            sessionExecutionState: {},
+          },
+        ],
+      }));
+    }
+    if (data.reviewed_artifact?.artifact_id) {
+      await loadArtifactInventory(selectedAppId, sessionId, userId);
+    }
+    await loadSessions(selectedAppId, userId, includeArchivedSessions);
+  };
+
+  const selectApprovedContentForSession = (approvedContentId) => {
+    if (!approvedContentId || approvedContentId === activeSelectedApprovedContentId) {
+      return;
+    }
+    setSelectedApprovedContentIdBySession((prev) => ({
+      ...prev,
+      [activeThreadKey]: approvedContentId,
+    }));
+    const selectedItem = activeApprovedContent.find((item) => item.approved_content_id === approvedContentId);
+    const summaryText = selectedItem?.revision_id
+      ? `Selected approved revision \`${selectedItem.revision_id}\` for @exec.`
+      : `Selected approved content \`${approvedContentId}\` for @exec.`;
+    setThreadsBySession((prev) => ({
+      ...prev,
+      [activeThreadKey]: [
+        ...(prev[activeThreadKey] || []),
+        {
+          id: null,
+          role: "assistant",
+          content: summaryText,
+          citations: [],
+          missingInfoTypes: [],
+          retrievalSummary: {
+            approval_event: true,
+            action_type: "approved_content_selected",
+            approved_content_id: approvedContentId,
+          },
+          workflowProgress: {},
+          turnExecutionPlan: {},
+          sessionExecutionState: {},
+        },
+      ],
+    }));
   };
 
   const togglePinnedSession = async (session) => {
@@ -1751,7 +2884,27 @@ export default function App() {
         delete next[buildThreadKey(selectedAppId, session.id)];
         return next;
       });
+      setApprovedContentBySession((prev) => {
+        const next = { ...prev };
+        delete next[buildThreadKey(selectedAppId, session.id)];
+        return next;
+      });
+      setSelectedApprovedContentIdBySession((prev) => {
+        const next = { ...prev };
+        delete next[buildThreadKey(selectedAppId, session.id)];
+        return next;
+      });
+      setSessionLaneStateBySession((prev) => {
+        const next = { ...prev };
+        delete next[buildThreadKey(selectedAppId, session.id)];
+        return next;
+      });
       setSessionUploadsBySession((prev) => {
+        const next = { ...prev };
+        delete next[buildThreadKey(selectedAppId, session.id)];
+        return next;
+      });
+      setSelectedExportMessageIdsBySession((prev) => {
         const next = { ...prev };
         delete next[buildThreadKey(selectedAppId, session.id)];
         return next;
@@ -1765,6 +2918,22 @@ export default function App() {
       setAppError(String(e.message || e));
     } finally {
       setActingSessionId("");
+    }
+  };
+
+  const deleteArtifactFromSession = async (artifact) => {
+    const artifactId = String(artifact?.artifact_id || "").trim();
+    if (!artifactId || !selectedAppId || !sessionId || !userId) {
+      return;
+    }
+    try {
+      await fetchJson(
+        `${baseUrl}/sessions/${sessionId}/artifacts/${encodeURIComponent(artifactId)}?app_id=${encodeURIComponent(selectedAppId)}&user_id=${encodeURIComponent(userId)}`,
+        { method: "DELETE" },
+      );
+      await loadArtifactInventory(selectedAppId, sessionId, userId);
+    } catch (e) {
+      setAppError(String(e.message || e));
     }
   };
 
@@ -1790,6 +2959,14 @@ export default function App() {
   useEffect(() => {
     loadApplications();
   }, [baseUrl]);
+
+  useEffect(() => {
+    loadExecInventories();
+  }, [baseUrl, selectedAppId]);
+
+  useEffect(() => {
+    loadArtifactInventory(selectedAppId, sessionId, userId);
+  }, [baseUrl, selectedAppId, sessionId, userId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1846,16 +3023,57 @@ export default function App() {
           ...prev,
           [activeThreadKey]: normalizeBackendMessages(data.messages || []),
         }));
+        setApprovedContentBySession((prev) => ({
+          ...prev,
+          [activeThreadKey]: Array.isArray(data.approved_content) ? data.approved_content : [],
+        }));
+        setSelectedApprovedContentIdBySession((prev) => {
+          const approvedContent = Array.isArray(data.approved_content) ? data.approved_content : [];
+          const currentSelection = prev[activeThreadKey] || "";
+          const hasCurrentSelection = approvedContent.some(
+            (item) => item.approved_content_id === currentSelection,
+          );
+          return {
+            ...prev,
+            [activeThreadKey]: hasCurrentSelection
+              ? currentSelection
+              : (approvedContent[approvedContent.length - 1]?.approved_content_id || ""),
+          };
+        });
+        setSessionLaneStateBySession((prev) => ({
+          ...prev,
+          [activeThreadKey]: normalizeSessionLaneState(data.session_lane_state),
+        }));
         setSessionUploadsBySession((prev) => ({
           ...prev,
           [activeThreadKey]: Array.isArray(data.session_uploads) ? data.session_uploads : [],
+        }));
+        setSelectedExportMessageIdsBySession((prev) => ({
+          ...prev,
+          [activeThreadKey]: prev[activeThreadKey] || [],
         }));
       } catch (e) {
         setThreadsBySession((prev) => ({
           ...prev,
           [activeThreadKey]: prev[activeThreadKey] || [],
         }));
+        setApprovedContentBySession((prev) => ({
+          ...prev,
+          [activeThreadKey]: prev[activeThreadKey] || [],
+        }));
+        setSelectedApprovedContentIdBySession((prev) => ({
+          ...prev,
+          [activeThreadKey]: prev[activeThreadKey] || "",
+        }));
+        setSessionLaneStateBySession((prev) => ({
+          ...prev,
+          [activeThreadKey]: prev[activeThreadKey] || {},
+        }));
         setSessionUploadsBySession((prev) => ({
+          ...prev,
+          [activeThreadKey]: prev[activeThreadKey] || [],
+        }));
+        setSelectedExportMessageIdsBySession((prev) => ({
           ...prev,
           [activeThreadKey]: prev[activeThreadKey] || [],
         }));
@@ -1909,17 +3127,36 @@ export default function App() {
 
           <div style={styles.mainColumn}>
             <ChatPanel
+              baseUrl={baseUrl}
+              sessionId={sessionId}
+              userId={userId}
               appId={selectedAppId}
               appName={activeAppDisplay.appName}
               starterQuestions={activeAppDisplay.starterQuestions}
               instructionUnderstandingState={instructionUnderstandingState}
               messages={activeMessages}
+              approvedContent={activeApprovedContent}
+              selectedApprovedContentId={activeSelectedApprovedContentId}
+              sessionLaneState={activeSessionLaneState}
               sessionUploads={activeSessionUploads}
               workflowStatus={currentSession?.workflow_status || null}
               onSubmitQuery={(query) => sendQueryToSession(sessionId, query)}
               onSubmitStarterQuestion={sendStarterQuestionInNewSession}
               onAdvanceWorkflow={advanceWorkflowStep}
               onUploadArtifact={uploadArtifactToSession}
+              onApproveLatestAssistantMessage={approveLatestAssistantMessage}
+              onConfirmExecution={confirmExecutionForSession}
+              onSelectApprovedContent={selectApprovedContentForSession}
+              toolInventory={execToolInventory}
+              skillInventory={execSkillInventory}
+              artifactInventory={execArtifactInventory}
+              artifactInventoryLoading={execArtifactInventoryLoading}
+              artifactInventoryError={execArtifactInventoryError}
+              onRunExecutionComposer={runExecutionComposer}
+              selectedExportMessageIds={activeSelectedExportMessageIds}
+              onToggleMessageExportSelection={toggleMessageExportSelection}
+              onExportSelectedMessages={exportSelectedMessages}
+              onDeleteArtifact={deleteArtifactFromSession}
             />
 
             <AdminPanels

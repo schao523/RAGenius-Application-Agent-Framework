@@ -36,19 +36,19 @@ export default function SessionHeader({
             onClick={onOpenInspector}
             disabled={!hasAssistantTurn}
           >
-            Inspect
+            Inspect Latest Turn
           </button>
         </div>
       </div>
       {workflowStatus?.current_step && (
-        <div style={{ ...styles.note, marginBottom: 12 }}>
-          <div>
-            <strong>Current step:</strong> {workflowStatus.current_step.title || `Step ${workflowStatus.current_step.order || "?"}`}
-          </div>
+        <div style={styles.workflowStrip}>
+          <span style={styles.workflowBadge("current")}>
+            Current: {workflowStatus.current_step.title || `Step ${workflowStatus.current_step.order || "?"}`}
+          </span>
           {workflowStatus?.next_step && (
-            <div style={{ marginTop: 8 }}>
-              <strong>Next:</strong> {workflowStatus.next_step.title || `Step ${workflowStatus.next_step.order || "?"}`}
-            </div>
+            <span style={styles.workflowBadge("next")}>
+              Next: {workflowStatus.next_step.title || `Step ${workflowStatus.next_step.order || "?"}`}
+            </span>
           )}
         </div>
       )}

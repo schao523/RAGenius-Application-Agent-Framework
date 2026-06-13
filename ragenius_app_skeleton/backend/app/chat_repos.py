@@ -27,28 +27,52 @@ def _utcnow() -> str:
 
 
 def _normalize_runtime_state(payload: Any) -> Dict[str, Any]:
+    default_lane_state = {
+        "content_lane": {},
+        "execution_lane": {},
+    }
     if not isinstance(payload, dict):
         return {
             "workflow_progress": {},
             "session_execution_state": {},
             "intermediate_outputs": [],
             "assembly_state": {},
+            "session_lane_state": deepcopy(default_lane_state),
         }
-    if any(key in payload for key in ("workflow_progress", "session_execution_state", "intermediate_outputs", "assembly_state")):
+    known_keys = (
+        "workflow_progress",
+        "session_execution_state",
+        "intermediate_outputs",
+        "assembly_state",
+        "session_lane_state",
+    )
+    if any(key in payload for key in known_keys):
         workflow_progress = payload.get("workflow_progress", {})
         session_execution_state = payload.get("session_execution_state", {})
         intermediate_outputs = payload.get("intermediate_outputs", [])
         assembly_state = payload.get("assembly_state", {})
+        session_lane_state = payload.get("session_lane_state", {})
     else:
         workflow_progress = payload
         session_execution_state = {}
         intermediate_outputs = []
         assembly_state = {}
+        session_lane_state = {}
+    normalized_lane_state = (
+        deepcopy(session_lane_state)
+        if isinstance(session_lane_state, dict)
+        else {}
+    )
+    content_lane = normalized_lane_state.get("content_lane", {})
+    execution_lane = normalized_lane_state.get("execution_lane", {})
+    normalized_lane_state["content_lane"] = content_lane if isinstance(content_lane, dict) else {}
+    normalized_lane_state["execution_lane"] = execution_lane if isinstance(execution_lane, dict) else {}
     return {
         "workflow_progress": workflow_progress if isinstance(workflow_progress, dict) else {},
         "session_execution_state": session_execution_state if isinstance(session_execution_state, dict) else {},
         "intermediate_outputs": intermediate_outputs if isinstance(intermediate_outputs, list) else [],
         "assembly_state": assembly_state if isinstance(assembly_state, dict) else {},
+        "session_lane_state": normalized_lane_state,
     }
 
 
@@ -90,7 +114,7 @@ class _RuntimeStateMemory:
         return _MEMORY_STORES[self._key]
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path)
+        connection = sqlite3.connect(str(self.db_path))
         connection.row_factory = sqlite3.Row
         return connection
 
@@ -145,6 +169,32 @@ class _RuntimeStateMemory:
                 );
                 CREATE INDEX IF NOT EXISTS idx_uploads_session_created
                     ON uploads(session_id, created_at, id);
+                CREATE TABLE IF NOT EXISTS approved_content (
+                    approved_content_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    revision_id TEXT NOT NULL,
+                    source_message_id TEXT,
+                    content_hash TEXT NOT NULL,
+                    content_text TEXT NOT NULL,
+                    artifact_refs_json TEXT NOT NULL,
+                    target_refs_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_approved_content_session_created
+                    ON approved_content(session_id, created_at, approved_content_id);
+                CREATE TABLE IF NOT EXISTS execution_intents (
+                    execution_intent_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    approved_content_id TEXT,
+                    skill_id TEXT NOT NULL,
+                    skill_version TEXT,
+                    command_text TEXT NOT NULL,
+                    mapped_input_json TEXT NOT NULL,
+                    execution_mode TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_execution_intents_session_created
+                    ON execution_intents(session_id, created_at, execution_intent_id);
                 """
             )
             session_columns = {
@@ -201,6 +251,8 @@ class _RuntimeStateMemory:
         with self._managed_connection() as connection:
             connection.execute("DELETE FROM messages")
             connection.execute("DELETE FROM uploads")
+            connection.execute("DELETE FROM approved_content")
+            connection.execute("DELETE FROM execution_intents")
             connection.execute("DELETE FROM sessions")
         if self.uploads_dir.exists():
             for path in sorted(self.uploads_dir.glob("**/*"), reverse=True):
@@ -480,6 +532,188 @@ class _RuntimeStateMemory:
                 ),
             )
         return row
+
+    def save_approved_content(
+        self,
+        *,
+        approved_content_id: str,
+        session_id: str,
+        revision_id: str,
+        source_message_id: str | None,
+        content_hash: str,
+        content_text: str,
+        artifact_refs: List[Dict[str, Any]] | None,
+        target_refs: Dict[str, Any] | None,
+        created_at: str,
+    ) -> Dict[str, Any]:
+        row = {
+            "approved_content_id": approved_content_id,
+            "session_id": session_id,
+            "revision_id": revision_id,
+            "source_message_id": source_message_id,
+            "content_hash": content_hash,
+            "content_text": content_text,
+            "artifact_refs": deepcopy(list(artifact_refs or [])),
+            "target_refs": deepcopy(dict(target_refs or {})),
+            "created_at": created_at,
+        }
+        with self._managed_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO approved_content (
+                    approved_content_id, session_id, revision_id, source_message_id,
+                    content_hash, content_text, artifact_refs_json, target_refs_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["approved_content_id"],
+                    row["session_id"],
+                    row["revision_id"],
+                    row["source_message_id"],
+                    row["content_hash"],
+                    row["content_text"],
+                    json.dumps(row["artifact_refs"], ensure_ascii=False),
+                    json.dumps(row["target_refs"], ensure_ascii=False),
+                    row["created_at"],
+                ),
+            )
+        return row
+
+    def get_approved_content(self, approved_content_id: str) -> Optional[Dict[str, Any]]:
+        with self._managed_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM approved_content WHERE approved_content_id = ?",
+                (approved_content_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "approved_content_id": row["approved_content_id"],
+            "session_id": row["session_id"],
+            "revision_id": row["revision_id"],
+            "source_message_id": row["source_message_id"],
+            "content_hash": row["content_hash"],
+            "content_text": row["content_text"],
+            "artifact_refs": deepcopy(json.loads(str(row["artifact_refs_json"] or "[]"))),
+            "target_refs": deepcopy(json.loads(str(row["target_refs_json"] or "{}"))),
+            "created_at": row["created_at"],
+        }
+
+    def get_latest_approved_content(self, session_id: str) -> Optional[Dict[str, Any]]:
+        with self._managed_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM approved_content
+                WHERE session_id = ?
+                ORDER BY created_at DESC, approved_content_id DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "approved_content_id": row["approved_content_id"],
+            "session_id": row["session_id"],
+            "revision_id": row["revision_id"],
+            "source_message_id": row["source_message_id"],
+            "content_hash": row["content_hash"],
+            "content_text": row["content_text"],
+            "artifact_refs": deepcopy(json.loads(str(row["artifact_refs_json"] or "[]"))),
+            "target_refs": deepcopy(json.loads(str(row["target_refs_json"] or "{}"))),
+            "created_at": row["created_at"],
+        }
+
+    def list_approved_content(self, session_id: str) -> List[Dict[str, Any]]:
+        with self._managed_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM approved_content
+                WHERE session_id = ?
+                ORDER BY created_at ASC, approved_content_id ASC
+                """,
+                (session_id,),
+            ).fetchall()
+        return [
+            {
+                "approved_content_id": row["approved_content_id"],
+                "session_id": row["session_id"],
+                "revision_id": row["revision_id"],
+                "source_message_id": row["source_message_id"],
+                "content_hash": row["content_hash"],
+                "content_text": row["content_text"],
+                "artifact_refs": deepcopy(json.loads(str(row["artifact_refs_json"] or "[]"))),
+                "target_refs": deepcopy(json.loads(str(row["target_refs_json"] or "{}"))),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def save_execution_intent(
+        self,
+        *,
+        execution_intent_id: str,
+        session_id: str,
+        approved_content_id: str | None,
+        skill_id: str,
+        skill_version: str | None,
+        command_text: str,
+        mapped_input: Dict[str, Any],
+        execution_mode: str,
+        created_at: str,
+    ) -> Dict[str, Any]:
+        row = {
+            "execution_intent_id": execution_intent_id,
+            "session_id": session_id,
+            "approved_content_id": approved_content_id,
+            "skill_id": skill_id,
+            "skill_version": skill_version,
+            "command_text": command_text,
+            "mapped_input": deepcopy(dict(mapped_input or {})),
+            "execution_mode": execution_mode,
+            "created_at": created_at,
+        }
+        with self._managed_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO execution_intents (
+                    execution_intent_id, session_id, approved_content_id, skill_id,
+                    skill_version, command_text, mapped_input_json, execution_mode, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["execution_intent_id"],
+                    row["session_id"],
+                    row["approved_content_id"],
+                    row["skill_id"],
+                    row["skill_version"],
+                    row["command_text"],
+                    json.dumps(row["mapped_input"], ensure_ascii=False),
+                    row["execution_mode"],
+                    row["created_at"],
+                ),
+            )
+        return row
+
+    def get_execution_intent(self, execution_intent_id: str) -> Optional[Dict[str, Any]]:
+        with self._managed_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM execution_intents WHERE execution_intent_id = ?",
+                (execution_intent_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "execution_intent_id": row["execution_intent_id"],
+            "session_id": row["session_id"],
+            "approved_content_id": row["approved_content_id"],
+            "skill_id": row["skill_id"],
+            "skill_version": row["skill_version"],
+            "command_text": row["command_text"],
+            "mapped_input": deepcopy(json.loads(str(row["mapped_input_json"] or "{}"))),
+            "execution_mode": row["execution_mode"],
+            "created_at": row["created_at"],
+        }
 
     def list_session_uploads(self, session_id: str) -> List[Dict[str, Any]]:
         with self._managed_connection() as connection:
@@ -804,6 +1038,68 @@ class SessionRepo:
 
     def list_uploads(self, session_id: str) -> List[Dict[str, Any]]:
         return self._db.list_session_uploads(session_id)
+
+    def save_approved_content(
+        self,
+        *,
+        approved_content_id: str,
+        session_id: str,
+        revision_id: str,
+        source_message_id: str | None,
+        content_hash: str,
+        content_text: str,
+        artifact_refs: List[Dict[str, Any]] | None = None,
+        target_refs: Dict[str, Any] | None = None,
+        created_at: str,
+    ) -> Dict[str, Any]:
+        return self._db.save_approved_content(
+            approved_content_id=approved_content_id,
+            session_id=session_id,
+            revision_id=revision_id,
+            source_message_id=source_message_id,
+            content_hash=content_hash,
+            content_text=content_text,
+            artifact_refs=artifact_refs,
+            target_refs=target_refs,
+            created_at=created_at,
+        )
+
+    def get_approved_content(self, approved_content_id: str) -> Optional[Dict[str, Any]]:
+        return self._db.get_approved_content(approved_content_id)
+
+    def get_latest_approved_content(self, session_id: str) -> Optional[Dict[str, Any]]:
+        return self._db.get_latest_approved_content(session_id)
+
+    def list_approved_content(self, session_id: str) -> List[Dict[str, Any]]:
+        return self._db.list_approved_content(session_id)
+
+    def save_execution_intent(
+        self,
+        *,
+        execution_intent_id: str,
+        session_id: str,
+        approved_content_id: str | None,
+        skill_id: str,
+        skill_version: str | None,
+        command_text: str,
+        mapped_input: Dict[str, Any],
+        execution_mode: str,
+        created_at: str,
+    ) -> Dict[str, Any]:
+        return self._db.save_execution_intent(
+            execution_intent_id=execution_intent_id,
+            session_id=session_id,
+            approved_content_id=approved_content_id,
+            skill_id=skill_id,
+            skill_version=skill_version,
+            command_text=command_text,
+            mapped_input=mapped_input,
+            execution_mode=execution_mode,
+            created_at=created_at,
+        )
+
+    def get_execution_intent(self, execution_intent_id: str) -> Optional[Dict[str, Any]]:
+        return self._db.get_execution_intent(execution_intent_id)
 
 
 class ChatRepo:

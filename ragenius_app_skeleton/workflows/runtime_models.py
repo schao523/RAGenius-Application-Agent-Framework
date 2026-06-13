@@ -47,6 +47,7 @@ TurnIntent = Literal[
     "finalize",
     "unknown",
 ]
+ExplicitTurnRoute = Literal["normal_interpreted_turn", "exec_override"]
 ActionTypeV2 = Literal[
     "respond_to_user",
     "generate_intermediate_output",
@@ -256,6 +257,43 @@ class InstructionHeadingNode(BaseModel):
 class GlobalAppDefaults(BaseModel):
     default_role_id: Optional[str] = None
     default_tone_style: Optional[str] = None
+
+
+class ApprovedContentSnapshotV2(BaseModel):
+    approved_content_id: str
+    session_id: str
+    revision_id: str
+    content_hash: str
+    content_text: str
+    source_message_id: Optional[str] = None
+    artifact_refs: List[Dict[str, Any]] = Field(default_factory=list)
+    target_refs: Dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class ExecutionIntentRecordV2(BaseModel):
+    execution_intent_id: str
+    session_id: str
+    skill_id: str
+    command_text: str
+    mapped_input: Dict[str, Any] = Field(default_factory=dict)
+    approved_content_id: Optional[str] = None
+    skill_version: Optional[str] = None
+    execution_mode: Literal["sync", "async"] = "sync"
+    created_at: str
+
+
+class SessionLaneStateV2(BaseModel):
+    content_lane: Dict[str, Any] = Field(default_factory=dict)
+    execution_lane: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TurnRoutingDecisionV2(BaseModel):
+    route_type: ExplicitTurnRoute = "normal_interpreted_turn"
+    command: Optional[str] = None
+    command_target: Optional[str] = None
+    parsed_args: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
 
 
 class GlobalAppContract(BaseModel):

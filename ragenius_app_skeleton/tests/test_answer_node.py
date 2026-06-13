@@ -314,6 +314,16 @@ class AnswerNodeTests(unittest.TestCase):
         self.assertEqual(out["answer_generation_meta"]["source"], "fallback_generic")
         self.assertIn("RuntimeError: boom", out["answer_generation_meta"]["llm_error"])
 
+    def test_provider_402_fallback_uses_user_facing_message(self):
+        state = base_state()
+
+        def llm(_prompt, _tools, _context):
+            raise RuntimeError('LLM HTTP error 402: {"error":{"message":"Insufficient Balance"}}')
+
+        out = answer.run(state, llm_answer=llm)
+        self.assertEqual(out["answer_generation_meta"]["source"], "fallback_provider_error")
+        self.assertIn("目前回答模型暫時不可用", out["final_answer"]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

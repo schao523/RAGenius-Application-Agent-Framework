@@ -150,6 +150,15 @@ When changing architecture, APIs, permissions, workflows, or security behavior, 
 * `docs/api-contract.md`
 * `docs/security.md`
 * `docs/workflow-execution-map.yaml`
+* `docs/auth-and-permission-policy.md`
+* `docs/confirmation-flow.md`
+* `docs/mcp-runtime-contract.md`
+* `docs/persistence-schema-contract.md`
+* `docs/queue-and-worker-model.md`
+* `docs/skill-manifest-spec.md`
+* `docs/tool-provider-contract.md`
+* `docs/workflow-runtime-semantics.md`
+
 
 ## Preferred Implementation Style
 
