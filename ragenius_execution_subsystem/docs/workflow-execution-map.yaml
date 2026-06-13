@@ -1,0 +1,177 @@
+workflow_id: ragenius_execute_skill_v1
+version: 1.0
+description: Execute validated RAGenius skill requests through controlled tool orchestration.
+
+roles:
+  - name: ragenius_app
+  - name: execution_subsystem
+  - name: system_operator
+
+events:
+  - name: execution.requested
+  - name: execution.validated
+  - name: permission.required
+  - name: tool.called
+  - name: execution.completed
+  - name: execution.failed
+  - name: execution.partial
+
+guards:
+  - name: isValidRequest
+  - name: skillExists
+  - name: skillEnabled
+  - name: inputMatchesSkillSchema
+  - name: toolsAvailable
+  - name: permissionAllowed
+  - name: dryRunDisabled
+
+states:
+  - id: start
+    type: start
+    on:
+      next: validate_request
+
+  - id: validate_request
+    type: task
+    action:
+      type: local_validation
+      schema_ref: "#/schemas/ExecutionRequest"
+    on:
+      success: load_skill
+      failure: fail_validation
+
+  - id: load_skill
+    type: task
+    action:
+      type: service_call
+      binding_ref: "svc.skill_registry.load"
+    on:
+      success: validate_skill_input
+      failure: fail_skill_unavailable
+
+  - id: validate_skill_input
+    type: task
+    action:
+      type: local_validation
+      schema_ref: "#/schemas/SkillInput"
+    on:
+      success: resolve_tools
+      failure: fail_validation
+
+  - id: resolve_tools
+    type: task
+    action:
+      type: service_call
+      binding_ref: "svc.tool_registry.resolve"
+    on:
+      success: check_permissions
+      failure: fail_missing_tool
+
+  - id: check_permissions
+    type: task
+    action:
+      type: service_call
+      binding_ref: "svc.permission_engine.evaluate"
+    on:
+      success: dry_run_check
+      failure: fail_permission_blocked
+      requires_confirmation: pending_confirmation
+
+  - id: dry_run_check
+    type: task
+    action:
+      type: local_decision
+      condition: "{{ctx.execution_options.dry_run}}"
+    on:
+      true: success_dry_run
+      false: create_execution_context
+
+  - id: create_execution_context
+    type: task
+    action:
+      type: service_call
+      binding_ref: "svc.execution_context.create"
+      idempotency_key: "{{ctx.request_id}}"
+    on:
+      success: run_skill_workflow
+      failure: fail_workflow
+
+  - id: run_skill_workflow
+    type: task
+    action:
+      type: internal_workflow
+      retry:
+        max: 1
+        backoff_ms: 300
+    on:
+      success: normalize_result
+      partial: normalize_partial_result
+      failure: rollback_if_needed
+
+  - id: rollback_if_needed
+    type: saga
+    steps:
+      - binding_ref: "svc.compensation.run"
+    on:
+      success: fail_rolled_back
+      failure: fail_manual_intervention
+
+  - id: normalize_result
+    type: task
+    action:
+      type: service_call
+      binding_ref: "svc.result_normalizer.completed"
+    on:
+      success: write_trace_logs
+      failure: fail_workflow
+
+  - id: normalize_partial_result
+    type: task
+    action:
+      type: service_call
+      binding_ref: "svc.result_normalizer.partial"
+    on:
+      success: write_trace_logs
+      failure: fail_workflow
+
+  - id: write_trace_logs
+    type: task
+    action:
+      type: service_call
+      binding_ref: "svc.execution_logger.write_summary"
+    on:
+      success: success_completed
+      failure: success_completed_with_log_warning
+
+  - id: pending_confirmation
+    type: end
+
+  - id: success_dry_run
+    type: end
+
+  - id: success_completed
+    type: end
+
+  - id: success_completed_with_log_warning
+    type: end
+
+  - id: fail_validation
+    type: end
+
+  - id: fail_skill_unavailable
+    type: end
+
+  - id: fail_missing_tool
+    type: end
+
+  - id: fail_permission_blocked
+    type: end
+
+  - id: fail_workflow
+    type: end
+
+  - id: fail_rolled_back
+    type: end
+
+  - id: fail_manual_intervention
+    type: end

@@ -1,0 +1,387 @@
+import React from "react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+import ChatMessageCard from "./ChatMessageCard";
+
+const styles = {
+  messageCard: () => ({}),
+  assistantMetaRow: {},
+  messageRoleLabel: {},
+  pill: {},
+  statusWarn: {},
+  messageBodyText: {},
+  compactNote: {},
+  actionRow: {},
+  inlineActionButton: {},
+  small: {},
+};
+
+describe("ChatMessageCard", () => {
+  it("shows a mark reviewed action for assistant replies and calls the legacy approval handler", () => {
+    const onApproveMessage = vi.fn();
+    render(
+      <ChatMessageCard
+        message={{ role: "assistant", content: "Helpful reply" }}
+        index={2}
+        styles={styles}
+        onOpenInspector={() => {}}
+        onOpenSources={() => {}}
+        onApproveMessage={onApproveMessage}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /mark reviewed/i }));
+    expect(screen.queryByRole("button", { name: /approve this reply/i })).not.toBeInTheDocument();
+
+    expect(onApproveMessage).toHaveBeenCalledWith(2);
+  });
+
+  it("does not show an approve action for user messages", () => {
+    render(
+      <ChatMessageCard
+        message={{ role: "user", content: "User message" }}
+        index={0}
+        styles={styles}
+        onOpenInspector={() => {}}
+        onOpenSources={() => {}}
+        onApproveMessage={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /mark reviewed/i })).toBeNull();
+  });
+
+  it("shows reuse selection controls for selectable messages", () => {
+    const onToggleSelectedForExport = vi.fn();
+    render(
+      <ChatMessageCard
+        message={{ id: "msg_1", role: "user", content: "User message" }}
+        index={0}
+        styles={styles}
+        selectable
+        selectedForExport={false}
+        onToggleSelectedForExport={onToggleSelectedForExport}
+        onOpenInspector={() => {}}
+        onOpenSources={() => {}}
+        onApproveMessage={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /select for reuse/i }));
+
+    expect(onToggleSelectedForExport).toHaveBeenCalledWith("msg_1");
+  });
+
+  it("toggles reuse selection when the message card body is clicked", () => {
+    const onToggleSelectedForExport = vi.fn();
+    render(
+      <ChatMessageCard
+        message={{ id: "msg_2", role: "assistant", content: "Assistant message" }}
+        index={0}
+        styles={styles}
+        selectable
+        selectedForExport={false}
+        onToggleSelectedForExport={onToggleSelectedForExport}
+        onOpenInspector={() => {}}
+        onOpenSources={() => {}}
+        onApproveMessage={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Assistant message"));
+
+    expect(onToggleSelectedForExport).toHaveBeenCalledWith("msg_2");
+  });
+
+  it("uses execution-specific actions for execution turns", () => {
+    const onOpenInspector = vi.fn();
+    const onRefreshExecutionStatus = vi.fn();
+    const onRetryExecution = vi.fn();
+    render(
+      <ChatMessageCard
+        message={{
+          id: "msg_exec",
+          role: "assistant",
+          content: "Execution submitted.",
+          retrievalSummary: {
+            execution_override: true,
+          },
+        }}
+        index={1}
+        styles={styles}
+        onOpenInspector={onOpenInspector}
+        onOpenSources={() => {}}
+        onRefreshExecutionStatus={onRefreshExecutionStatus}
+        onRetryExecution={onRetryExecution}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /execution details/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sources/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /execution details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /refresh status/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^retry$/i }));
+    expect(onOpenInspector).toHaveBeenCalledWith(1);
+    expect(onRefreshExecutionStatus).toHaveBeenCalled();
+    expect(onRetryExecution).toHaveBeenCalled();
+  });
+
+  it("shows a confirm action for pending-confirmation execution turns", () => {
+    const onConfirmExecution = vi.fn();
+    render(
+      <ChatMessageCard
+        message={{
+          id: "msg_exec_pending",
+          role: "assistant",
+          content: "Execution pending confirmation.",
+          retrievalSummary: {
+            execution_override: true,
+            execution_submit_result: {
+              execution_id: "execution_123",
+              status: "pending_confirmation",
+            },
+          },
+        }}
+        index={1}
+        styles={styles}
+        onOpenInspector={() => {}}
+        onOpenSources={() => {}}
+        onRefreshExecutionStatus={() => {}}
+        onRetryExecution={() => {}}
+        onConfirmExecution={onConfirmExecution}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+    expect(onConfirmExecution).toHaveBeenCalled();
+  });
+
+  it("shows a compact execution result preview when provided", () => {
+    render(
+      <ChatMessageCard
+        message={{
+          id: "msg_exec",
+          role: "assistant",
+          content: "Execution completed.",
+          retrievalSummary: {
+            execution_override: true,
+          },
+        }}
+        executionResultPreview="NotebookLM notebooks (2): Notebook A, Notebook B"
+        index={1}
+        styles={styles}
+        onOpenInspector={() => {}}
+        onOpenSources={() => {}}
+      />,
+    );
+
+    expect(screen.getByText(/notebooklm notebooks \(2\)/i)).toBeInTheDocument();
+  });
+
+  it("renders artifact details and an open link for execution turns with normalized artifacts", () => {
+    render(
+      <ChatMessageCard
+        message={{
+          id: "msg_export",
+          role: "assistant",
+          content: "Saved 1 selected message(s) as `session-1-chat-export.md`.",
+          retrievalSummary: {
+            execution_override: true,
+            command: "export",
+            execution_submit_result: {
+              status: "completed",
+              result: {
+                artifacts: [
+                  {
+                    artifact_id: "artifact_123",
+                    artifact_type: "chat_export",
+                    display_name: "session-1-chat-export.md",
+                    summary: "Chat export from 1 selected message",
+                    file_path: "D:\\GitHub\\Codex-RAGenius-System\\ragenius_execution_subsystem\\storage\\artifacts\\app-1\\chat_export\\artifact_123-session-1-chat-export.md",
+                  },
+                ],
+              },
+            },
+          },
+        }}
+        index={1}
+        styles={styles}
+        onOpenInspector={() => {}}
+        onOpenSources={() => {}}
+      />,
+    );
+
+    expect(screen.getAllByText(/session-1-chat-export\.md/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/chat export from 1 selected message/i)).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /^open$/i });
+    expect(link).toHaveAttribute(
+      "href",
+      "file:///D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/storage/artifacts/app-1/chat_export/artifact_123-session-1-chat-export.md",
+    );
+  });
+
+  it("renders artifact reuse actions for export confirmation turns with backend routes", () => {
+    const onUseArtifactInComposer = vi.fn();
+    const onViewArtifactLibrary = vi.fn();
+    render(
+      <ChatMessageCard
+        message={{
+          id: "msg_export_route",
+          role: "assistant",
+          content: "Created reuse artifact: Chat Export - Bible observation questions.md",
+          retrievalSummary: {
+            execution_override: true,
+            command: "export",
+            artifact_export: true,
+            export_artifact: {
+              artifact_id: "artifact_1",
+              artifact_type: "chat_export",
+              display_name: "Chat Export - Bible observation questions.md",
+              summary: "Chat export from 2 selected messages.",
+              routes: {
+                open: "/sessions/session-1/artifacts/artifact_1/file",
+                preview: "/sessions/session-1/artifacts/artifact_1/preview",
+              },
+              capabilities: {
+                can_open: true,
+                can_preview: true,
+                can_reuse: true,
+              },
+            },
+          },
+        }}
+        index={1}
+        styles={styles}
+        baseUrl="http://127.0.0.1:8012"
+        onUseArtifactInComposer={onUseArtifactInComposer}
+        onViewArtifactLibrary={onViewArtifactLibrary}
+        onOpenInspector={() => {}}
+        onOpenSources={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /use in execution composer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /view in artifact library/i }));
+
+    expect(onUseArtifactInComposer).toHaveBeenCalledWith(
+      expect.objectContaining({ artifact_id: "artifact_1" }),
+    );
+    expect(onViewArtifactLibrary).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("link", { name: /open artifact/i })).toHaveAttribute(
+      "href",
+      "http://127.0.0.1:8012/sessions/session-1/artifacts/artifact_1/file",
+    );
+  });
+
+  it("falls back to nested execution result export paths when export_artifact is sparse", () => {
+    render(
+      <ChatMessageCard
+        message={{
+          id: "msg_export_nested",
+          role: "assistant",
+          content: "Saved 1 selected message(s) as `session-1-chat-export.md`.",
+          retrievalSummary: {
+            execution_override: true,
+            command: "export",
+            artifact_export: true,
+            export_artifact: {
+              name: "session-1-chat-export.md",
+            },
+            execution_submit_result: {
+              status: "completed",
+              result: {
+                path: "D:\\GitHub\\Codex-RAGenius-System\\ragenius_execution_subsystem\\storage\\artifacts\\app-1\\chat_export\\artifact_123.json",
+                file_path: "D:\\GitHub\\Codex-RAGenius-System\\ragenius_execution_subsystem\\storage\\artifacts\\app-1\\chat_export\\artifact_123-session-1-chat-export.md",
+              },
+            },
+          },
+        }}
+        index={1}
+        styles={styles}
+        onOpenInspector={() => {}}
+        onOpenSources={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: /^open$/i })).toBeInTheDocument();
+    expect(screen.getByText(/saved file: d:\\github\\codex-ragenius-system/i)).toBeInTheDocument();
+  });
+
+  it("uses approval-specific actions for approval turns", () => {
+    const onOpenInspector = vi.fn();
+    render(
+      <ChatMessageCard
+        message={{
+          id: "msg_approval",
+          role: "assistant",
+          content: "Approved revision selected.",
+          retrievalSummary: {
+            approval_event: true,
+          },
+        }}
+        index={3}
+        styles={styles}
+        onOpenInspector={onOpenInspector}
+        onOpenSources={() => {}}
+        onApproveMessage={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /view revision/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sources/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /mark reviewed/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /view revision/i }));
+    expect(onOpenInspector).toHaveBeenCalledWith(3);
+  });
+
+  it("renders reviewed artifact actions for mark-reviewed confirmation turns", () => {
+    const onUseArtifactInComposer = vi.fn();
+    const onViewArtifactLibrary = vi.fn();
+    render(
+      <ChatMessageCard
+        message={{
+          id: "msg_reviewed",
+          role: "assistant",
+          content: "Marked reviewed and saved `Reviewed Chat - Helpful reply.md` for reuse.",
+          retrievalSummary: {
+            approval_event: true,
+            reviewed_artifact: {
+              artifact_id: "artifact_reviewed_1",
+              artifact_type: "chat_export",
+              display_name: "Reviewed Chat - Helpful reply.md",
+              summary: "Reviewed chat content saved for reuse.",
+              reviewed: true,
+              routes: {
+                open: "/sessions/session-1/artifacts/artifact_reviewed_1/file",
+                preview: "/sessions/session-1/artifacts/artifact_reviewed_1/preview",
+              },
+              capabilities: {
+                can_open: true,
+                can_preview: true,
+                can_reuse: true,
+              },
+            },
+          },
+        }}
+        index={3}
+        styles={styles}
+        baseUrl="http://127.0.0.1:8012"
+        onUseArtifactInComposer={onUseArtifactInComposer}
+        onViewArtifactLibrary={onViewArtifactLibrary}
+        onOpenInspector={() => {}}
+        onOpenSources={() => {}}
+        onApproveMessage={() => {}}
+      />,
+    );
+
+    expect(screen.getAllByText(/reviewed chat - helpful reply\.md/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/chat_export \| reviewed/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /use in execution composer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /view in artifact library/i }));
+    expect(onUseArtifactInComposer).toHaveBeenCalledWith(
+      expect.objectContaining({ artifact_id: "artifact_reviewed_1", reviewed: true }),
+    );
+    expect(onViewArtifactLibrary).toHaveBeenCalledTimes(1);
+  });
+});

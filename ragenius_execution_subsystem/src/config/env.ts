@@ -1,0 +1,88 @@
+import { z } from "zod";
+
+const booleanEnv = (defaultValue: boolean) =>
+  z.preprocess((value) => {
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === "true") {
+        return true;
+      }
+      if (normalized === "false") {
+        return false;
+      }
+    }
+    return value;
+  }, z.boolean().default(defaultValue));
+
+const envSchema = z.object({
+  DATABASE_URL: z.string().min(1).default(
+    "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public"
+  ),
+  NODE_ENV: z
+    .enum(["development", "test", "production"])
+    .default("development"),
+  PORT: z.coerce.number().int().positive().default(3000),
+  LOG_LEVEL: z
+    .enum(["debug", "info", "warn", "error"])
+    .default("info"),
+  BUILDER_BASE_URL: z.string().trim().url().optional(),
+  HTTP_PROXY: z.string().trim().optional(),
+  HTTPS_PROXY: z.string().trim().optional(),
+  ALL_PROXY: z.string().trim().optional(),
+  NO_PROXY: z.string().trim().optional(),
+  NODE_EXTRA_CA_CERTS: z.string().trim().optional(),
+  FILESYSTEM_ALLOWED_ROOTS: z.string().default(""),
+  FILESYSTEM_MUTATION_ROOTS: z.string().default(""),
+  FILESYSTEM_MAX_READ_BYTES: z.coerce.number().int().positive().default(65536),
+  FILESYSTEM_MAX_WRITE_BYTES: z.coerce.number().int().positive().default(65536),
+  FILESYSTEM_MAX_PATCH_BYTES: z.coerce.number().int().positive().default(32768),
+  ARTIFACT_STORAGE_ROOT: z.string().trim().default("storage/artifacts"),
+  ARXIV_ENABLED: booleanEnv(true),
+  ARXIV_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(4000),
+  ARXIV_RETRY_ON_429: booleanEnv(true),
+  ARXIV_MAX_RETRIES: z.coerce.number().int().min(0).default(1),
+  SEMANTIC_SCHOLAR_ENABLED: booleanEnv(true),
+  SEMANTIC_SCHOLAR_API_KEY: z.string().trim().optional(),
+  SEMANTIC_SCHOLAR_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(4000),
+  SEMANTIC_SCHOLAR_MAX_RESULTS_DEFAULT: z.coerce.number().int().positive().default(5),
+  NOTEBOOKLM_ENABLED: booleanEnv(false),
+  NOTEBOOKLM_PYTHON_COMMAND: z.string().trim().default("python"),
+  NOTEBOOKLM_BRIDGE_SCRIPT: z
+    .string()
+    .trim()
+    .default("scripts/notebooklm_bridge.py"),
+  NOTEBOOKLM_AUTH_MODE: z
+    .enum(["env_json", "profile", "storage_path"])
+    .default("env_json"),
+  NOTEBOOKLM_PROFILE: z.string().trim().optional(),
+  NOTEBOOKLM_STORAGE_PATH: z.string().trim().optional(),
+  NOTEBOOKLM_ALLOWED_OPERATIONS: z
+    .string()
+    .default("list_notebooks,list_sources,ask"),
+  NOTEBOOKLM_GENERATION_WAIT_FOR_COMPLETION: booleanEnv(true),
+  NOTEBOOKLM_GENERATION_PERSIST_ARTIFACTS: booleanEnv(true),
+  CODEX_CLI_ENABLED: booleanEnv(false),
+  CODEX_CLI_NODE_COMMAND: z.string().trim().default("node"),
+  CODEX_CLI_BRIDGE_SCRIPT: z
+    .string()
+    .trim()
+    .default("scripts/codex_cli_bridge.js"),
+  CODEX_CLI_COMMAND: z.string().trim().default("codex"),
+  CODEX_CLI_ARGS_JSON: z.string().default("[]"),
+  CODEX_CLI_TIMEOUT_MS: z.coerce.number().int().positive().default(300000),
+  OPENAI_ENABLED: booleanEnv(false),
+  OPENAI_API_KEY: z.string().trim().optional(),
+  OPENAI_BASE_URL: z.string().trim().url().optional(),
+  OPENAI_DEFAULT_MODEL: z.string().trim().optional(),
+  MCP_SERVERS_JSON: z.string().default("[]"),
+  ADAPTERS_JSON: z.string().default("[]"),
+  TOOL_RESEARCH_PAPER_SEARCH_ENABLED: booleanEnv(true),
+  TOOL_RAG_RETRIEVAL_ENABLED: booleanEnv(true),
+  TOOL_OPENAI_ANSWER_ENABLED: booleanEnv(false)
+});
+
+export type AppEnv = z.infer<typeof envSchema>;
+
+export function getEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
+  return envSchema.parse(source);
+}

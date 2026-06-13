@@ -1,0 +1,161 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Execution {
+  id          String   @id
+  requestType String   @map("request_type")
+  appId       String   @map("app_id")
+  sessionId   String   @map("session_id")
+  skillId     String   @map("skill_id")
+  requestPayload Json  @map("request_payload")
+  status      String
+  resultType  String?  @map("result_type")
+  result      Json?
+  executionProvenance Json? @map("execution_provenance")
+  executionMetadata Json? @map("execution_metadata")
+  files       Json?
+  errors      Json?
+  logsSummary String?  @map("logs_summary")
+  createdAt   DateTime @default(now()) @map("created_at")
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  workflowSteps WorkflowStep[]
+  toolCalls     ToolCall[]
+  logs          ExecutionLog[]
+
+  @@index([appId], map: "idx_executions_app_id")
+  @@index([sessionId], map: "idx_executions_session_id")
+  @@index([skillId], map: "idx_executions_skill_id")
+  @@index([status], map: "idx_executions_status")
+  @@index([createdAt], map: "idx_executions_created_at")
+  @@map("executions")
+}
+
+model WorkflowStep {
+  id            String   @id @default(uuid())
+  executionId   String   @map("execution_id")
+  stepId        String   @map("step_id")
+  stepType      String   @map("step_type")
+  status        String
+  inputSummary  Json?    @map("input_summary")
+  outputSummary Json?    @map("output_summary")
+  error         Json?
+  startedAt     DateTime? @map("started_at")
+  completedAt   DateTime? @map("completed_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  execution Execution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@index([executionId], map: "idx_workflow_steps_execution_id")
+  @@map("workflow_steps")
+}
+
+model Skill {
+  id                  String   @id
+  name                String
+  version             String
+  description         String?
+  inputSchema         Json     @map("input_schema")
+  outputSchema        Json     @map("output_schema")
+  requiredTools       Json     @map("required_tools")
+  requiredPermissions Json     @map("required_permissions")
+  workflowDefinition  Json     @map("workflow_definition")
+  enabled             Boolean  @default(true)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@index([name, version], map: "idx_skills_name_version")
+  @@map("skills")
+}
+
+model Tool {
+  id               String   @id
+  name             String
+  providerType     String   @map("provider_type")
+  inputSchema      Json     @map("input_schema")
+  outputSchema     Json     @map("output_schema")
+  permissionScopes Json     @map("permission_scopes")
+  timeoutMs        Int?     @map("timeout_ms")
+  sideEffecting    Boolean  @map("side_effecting")
+  metadata         Json?
+  enabled          Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  toolCalls ToolCall[]
+
+  @@index([providerType], map: "idx_tools_provider_type")
+  @@map("tools")
+}
+
+model ToolCall {
+  id            String   @id @default(uuid())
+  executionId   String   @map("execution_id")
+  stepId        String   @map("step_id")
+  toolId        String   @map("tool_id")
+  providerType  String   @map("provider_type")
+  status        String
+  inputSummary  Json     @map("input_summary")
+  outputSummary Json?    @map("output_summary")
+  error         Json?
+  durationMs    Int?     @map("duration_ms")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  execution Execution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  tool      Tool      @relation(fields: [toolId], references: [id], onDelete: Restrict)
+
+  @@index([executionId], map: "idx_tool_calls_execution_id")
+  @@map("tool_calls")
+}
+
+model PermissionPolicy {
+  id         String   @id @default(uuid())
+  appId      String   @map("app_id")
+  toolId     String   @map("tool_id")
+  scope      String
+  policy     String
+  conditions Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([appId, toolId, scope], map: "permission_policy_app_tool_scope_key")
+  @@map("permission_policies")
+}
+
+model McpProvider {
+  id               String   @id @default(uuid())
+  name             String
+  serverUrl        String   @map("server_url")
+  authType         String   @map("auth_type")
+  authConfig       Json?    @map("auth_config")
+  discoveredTools  Json?    @map("discovered_tools")
+  lastDiscoveredAt DateTime? @map("last_discovered_at")
+  enabled          Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("mcp_providers")
+}
+
+model ExecutionLog {
+  id          String   @id @default(uuid())
+  executionId String   @map("execution_id")
+  level       String
+  eventType   String   @map("event_type")
+  message     String
+  summary     Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  execution Execution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@index([executionId], map: "idx_execution_logs_execution_id")
+  @@map("execution_logs")
+}

@@ -1,0 +1,198 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <div>
+    <p class="text-sm text-gray-600">{{ skill.id }}</p>
+    <h1 class="text-2xl font-semibold text-gray-900">{{ skill.name }}</h1>
+    <p class="text-sm text-gray-600">{{ skill.scope }} • {{ skill.status_summary }}</p>
+  </div>
+  <div class="flex items-center gap-3">
+    <form method="post" action="{{ url_for('delete_skill', skill_id=skill.id) }}" onsubmit="return confirm('Delete this skill and all of its versions and bindings?');">
+      <button type="submit" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700">Delete Skill</button>
+    </form>
+    <a href="{{ url_for('test_skill', skill_id=skill.id) }}" class="px-4 py-2 bg-gray-800 text-white rounded hover:bg-gray-900">Test Skill</a>
+    <a href="{{ url_for('skills') }}" class="text-blue-700">Back</a>
+  </div>
+</div>
+<div class="grid lg:grid-cols-3 gap-4">
+  <section class="lg:col-span-2 bg-white border border-gray-200 rounded-lg shadow-sm p-4">
+    <h2 class="text-lg font-semibold text-gray-900 mb-3">Versions</h2>
+    <ul class="divide-y divide-gray-200">
+      {% for version in versions %}
+        <li class="py-3 space-y-3">
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <p class="font-semibold text-gray-900">{{ version.version }}</p>
+              <p class="text-sm text-gray-600">{{ version.state }} • validation {{ version.validation_status }}</p>
+              <p class="text-xs text-gray-500 break-all">{{ version.storage_root_rel_path }}</p>
+            </div>
+            {% if version.state in ['draft', 'review'] %}
+              <form method="post" action="{{ url_for('publish_skill_version', skill_id=skill.id, version_id=version.id) }}">
+                <button type="submit" class="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">Publish</button>
+              </form>
+            {% else %}
+              <span class="px-3 py-2 bg-green-50 text-green-700 rounded text-sm">{{ version.state }}</span>
+            {% endif %}
+          </div>
+          <div class="border border-gray-200 rounded-lg bg-gray-50 p-3 space-y-3">
+            <div class="flex flex-wrap items-center gap-2">
+              {% if version.policy_class == 'safe_read' %}
+                <span class="px-2 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">{{ version.risk_label }}</span>
+              {% elif version.policy_class == 'review_required' %}
+                <span class="px-2 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">{{ version.risk_label }}</span>
+              {% else %}
+                <span class="px-2 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800">{{ version.risk_label }}</span>
+              {% endif %}
+              <span class="text-xs text-gray-600">Policy: {{ version.policy_class }}</span>
+              <span class="text-xs text-gray-600">Auto-finalize: {{ 'yes' if version.auto_finalize else 'no' }}</span>
+              <span class="text-xs text-gray-600">Template: {{ version.template_family }}</span>
+            </div>
+            <p class="text-sm {% if version.policy_class == 'review_required' %}text-amber-800{% elif version.policy_class == 'unsupported' %}text-rose-800{% else %}text-gray-700{% endif %}">{{ version.review_note }}</p>
+            {% if version.has_contract %}
+              <div class="grid md:grid-cols-2 gap-3">
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-900 mb-1">Required Tools</h3>
+                  <ul class="list-disc list-inside text-sm text-gray-700">
+                    {% for tool in version.required_tools %}
+                      <li><code>{{ tool }}</code></li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-900 mb-1">Required Permissions</h3>
+                  <ul class="list-disc list-inside text-sm text-gray-700">
+                    {% for permission in version.required_permissions %}
+                      <li><code>{{ permission }}</code></li>
+                    {% else %}
+                      <li>None</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              </div>
+              {% if version.fallback_capable_tools or version.policy_expectations %}
+                <div class="grid md:grid-cols-2 gap-3">
+                  <div>
+                    <h3 class="text-sm font-semibold text-gray-900 mb-1">Fallback-capable tools</h3>
+                    <ul class="list-disc list-inside text-sm text-gray-700">
+                      {% for tool in version.fallback_capable_tools %}
+                        <li><code>{{ tool }}</code></li>
+                      {% else %}
+                        <li>None</li>
+                      {% endfor %}
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 class="text-sm font-semibold text-gray-900 mb-1">Policy Expectations</h3>
+                    <ul class="list-disc list-inside text-sm text-gray-700">
+                      {% for item in version.policy_expectations %}
+                        <li>{{ item }}</li>
+                      {% else %}
+                        <li>None</li>
+                      {% endfor %}
+                    </ul>
+                  </div>
+                </div>
+              {% endif %}
+              <div class="grid md:grid-cols-2 gap-3">
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-900 mb-1">Contract Source</h3>
+                  <p class="text-sm text-gray-700">{{ version.contract_source|title }}</p>
+                  <p class="text-xs text-gray-600 mt-1">{{ version.contract_source_note }}</p>
+                </div>
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-900 mb-1">Normalization Confidence</h3>
+                  {% if version.normalization_confidence == 'high confidence first-class family' %}
+                    <p class="text-sm font-semibold text-emerald-800">{{ version.normalization_confidence }}</p>
+                  {% elif version.normalization_confidence == 'unsupported composition' %}
+                    <p class="text-sm font-semibold text-rose-800">{{ version.normalization_confidence }}</p>
+                  {% else %}
+                    <p class="text-sm font-semibold text-amber-800">{{ version.normalization_confidence }}</p>
+                  {% endif %}
+                  <p class="text-xs text-gray-600 mt-1">{{ version.normalization_confidence_note }}</p>
+                </div>
+              </div>
+              <div class="grid md:grid-cols-1 gap-3">
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-900 mb-1">Contract Explanation</h3>
+                  <ul class="list-disc list-inside text-sm text-gray-700">
+                    {% for item in version.contract_explanation %}
+                      <li>{{ item }}</li>
+                    {% else %}
+                      <li>None</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              </div>
+              <div class="grid lg:grid-cols-3 gap-3">
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-900 mb-1">Input Schema</h3>
+                  <pre class="text-xs text-gray-700 bg-white border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap">{{ version.input_schema_pretty }}</pre>
+                </div>
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-900 mb-1">Output Schema</h3>
+                  <pre class="text-xs text-gray-700 bg-white border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap">{{ version.output_schema_pretty }}</pre>
+                </div>
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-900 mb-1">Workflow Preview</h3>
+                  <pre class="text-xs text-gray-700 bg-white border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap">{{ version.workflow_pretty }}</pre>
+                </div>
+              </div>
+            {% endif %}
+          </div>
+        </li>
+      {% else %}
+        <li class="py-3 text-gray-600">No versions found.</li>
+      {% endfor %}
+    </ul>
+  </section>
+  <aside class="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-4">
+    <div>
+      <h2 class="text-lg font-semibold text-gray-900 mb-2">Bind To App</h2>
+      <form method="post" action="{{ url_for('bind_skill', skill_id=skill.id) }}" class="space-y-3">
+        <div>
+          <label for="app_id" class="block text-sm font-medium text-gray-800">Application</label>
+          <select id="app_id" name="app_id" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+            {% for app in apps %}
+              <option value="{{ app.id }}">{{ app.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="skill_version" class="block text-sm font-medium text-gray-800">Version</label>
+          <select id="skill_version" name="skill_version" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+            {% for version in versions if version.state in ['published', 'active'] %}
+              <option value="{{ version.version }}">{{ version.version }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="permission_mode" class="block text-sm font-medium text-gray-800">Permission Mode</label>
+          <select id="permission_mode" name="permission_mode" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+            <option value="auto_allow">auto_allow</option>
+            <option value="restricted">restricted</option>
+            <option value="require_confirmation">require_confirmation</option>
+            <option value="blocked">blocked</option>
+          </select>
+        </div>
+        <label class="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" name="allow_async"> allowAsync</label>
+        <label class="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" name="allow_retries"> allowRetries</label>
+        <label class="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" name="require_approval"> requireApproval</label>
+        <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Create Binding</button>
+      </form>
+    </div>
+    <div>
+      <h2 class="text-lg font-semibold text-gray-900 mb-2">Bindings</h2>
+      <ul class="space-y-2">
+        {% for binding in bindings %}
+          <li class="border border-gray-200 rounded p-3">
+            <p class="font-semibold text-gray-900">{{ binding.app_name }}</p>
+            <p class="text-sm text-gray-600">{{ binding.skill_version }} • {{ binding.permission_mode }}</p>
+          </li>
+        {% else %}
+          <li class="text-gray-600">No bindings yet.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </aside>
+</div>
+{% endblock %}
