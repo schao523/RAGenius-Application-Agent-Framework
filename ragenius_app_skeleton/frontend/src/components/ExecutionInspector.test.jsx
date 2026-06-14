@@ -118,6 +118,63 @@ describe("ExecutionInspector", () => {
     expect(screen.getByText(/notebooklm/i)).toBeInTheDocument();
   });
 
+  it("renders OpenClaw normalized output and verification metadata", () => {
+    render(
+      <ExecutionInspector
+        open
+        tab="summary"
+        onChangeTab={vi.fn()}
+        onClose={vi.fn()}
+        message={{
+          retrievalSummary: {
+            execution_override: true,
+            command: "openclaw",
+            target_id: "openclaw_cli",
+            agent_backend: "openclaw_cli",
+            agent_query: "Create a markdown summary.",
+            execution_status_result: {
+              execution_id: "execution_openclaw_1",
+              status: "completed",
+              result: {
+                backend: "openclaw_cli",
+                status: "completed",
+                summary: "OpenClaw completed and verified 1 output(s).",
+                output_text: "Created a markdown summary for the approved content.",
+                provider_metadata: {
+                  provider_name: "OpenClaw",
+                  execution_mode: "output_required",
+                  verified_output_count: 1,
+                  required_output_count: 1,
+                  expected_output_count: 1,
+                },
+                verification_results: [
+                  {
+                    output_id: "openclaw_answer",
+                    workspace_relative_path: "outputs/openclaw_answer-openclaw-result.md",
+                    verified: true,
+                    exists: true,
+                  },
+                ],
+              },
+            },
+          },
+        }}
+        sessionLaneState={{ execution_lane: {} }}
+        styles={styles}
+      />,
+    );
+
+    expect(screen.getByText(/openclaw result/i)).toBeInTheDocument();
+    expect(screen.getByText(/provider:/i)).toBeInTheDocument();
+    expect(screen.getByText(/^OpenClaw$/)).toBeInTheDocument();
+    expect(screen.getByText(/execution mode:/i)).toBeInTheDocument();
+    expect(screen.getByText(/output_required/i)).toBeInTheDocument();
+    expect(screen.getByText(/verified outputs:/i)).toBeInTheDocument();
+    expect(screen.getByText("1 / 1")).toBeInTheDocument();
+    expect(screen.getByText(/Created a markdown summary/i)).toBeInTheDocument();
+    expect(screen.getByText(/outputs\/openclaw_answer-openclaw-result\.md/i)).toBeInTheDocument();
+  });
+
   it("prefers the selected execution turn payload over latest session-lane execution state", () => {
     render(
       <ExecutionInspector

@@ -174,10 +174,20 @@ export default function ExecutionInspector({
       ? [executionPayload.error]
       : [];
   const mappedInput = retrievalSummary.execution_intent?.mapped_input || {};
-  const isCodexAgent = String(retrievalSummary.command || "").trim().toLowerCase() === "codex";
+  const command = String(retrievalSummary.command || "").trim().toLowerCase();
+  const isCodexAgent = command === "codex";
+  const isOpenClawAgent = command === "openclaw" || String(retrievalSummary.agent_backend || "").trim() === "openclaw_cli";
+  const isAgentExecution = isCodexAgent || isOpenClawAgent;
   const agentResult = executionPayload?.result && typeof executionPayload.result === "object"
     ? executionPayload.result
     : {};
+  const providerMetadata =
+    agentResult.provider_metadata && typeof agentResult.provider_metadata === "object"
+      ? agentResult.provider_metadata
+      : {};
+  const verificationResults = Array.isArray(agentResult.verification_results)
+    ? agentResult.verification_results
+    : [];
   const executionArtifacts = normalizeExecutionArtifacts(executionPayload);
   const artifactReuseSummary = normalizeArtifactReuseSummary(mappedInput, executionArtifacts);
   const selectedExecutionId = String(
@@ -224,6 +234,31 @@ export default function ExecutionInspector({
           <div>{executionPayload.logs_summary}</div>
         </div>
       )}
+      {isOpenClawAgent && (
+        <div style={styles.inspectorGroup}>
+          <div style={styles.inspectorGroupTitle}>OpenClaw result</div>
+          <div style={styles.inspectorKeyValue}>
+            {renderKeyValue("Provider", providerMetadata.provider_name || "OpenClaw")}
+            {renderKeyValue("Backend", agentResult.backend || retrievalSummary.agent_backend || retrievalSummary.target_id)}
+            {renderKeyValue("Execution mode", providerMetadata.execution_mode)}
+            {renderKeyValue("Summary", agentResult.summary)}
+            {renderKeyValue("Verified outputs", `${providerMetadata.verified_output_count ?? 0} / ${providerMetadata.required_output_count ?? 0}`)}
+            {renderKeyValue("Expected outputs", providerMetadata.expected_output_count)}
+            {renderKeyValue("Output text", agentResult.output_text)}
+          </div>
+          {verificationResults.length > 0 ? (
+            <ul style={styles.sourceList}>
+              {verificationResults.map((item, index) => (
+                <li key={`${item?.output_id || "openclaw-output"}-${index}`}>
+                  <strong>{String(item?.output_id || "OpenClaw output")}</strong>
+                  <div>{String(item?.workspace_relative_path || item?.workspace_absolute_path || "")}</div>
+                  <div>{item?.verified ? "Verified" : item?.exists ? "Exists but not verified" : "Missing"}</div>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      )}
       {!isCodexAgent && (
         <div style={styles.inspectorGroup}>
           <div style={styles.inspectorGroupTitle}>Latest status</div>
@@ -253,11 +288,11 @@ export default function ExecutionInspector({
   const requestTab = (
     <div style={styles.inspectorSection}>
       <div style={styles.inspectorGroup}>
-        <div style={styles.inspectorGroupTitle}>{isCodexAgent ? "Agent request" : "Execution request"}</div>
-        {isCodexAgent ? (
+        <div style={styles.inspectorGroupTitle}>{isAgentExecution ? "Agent request" : "Execution request"}</div>
+        {isAgentExecution ? (
           <div style={styles.inspectorKeyValue}>
-            {renderKeyValue("Backend", "codex_cli")}
-            {renderKeyValue("Skill hint", retrievalSummary.agent_skill_hint)}
+            {renderKeyValue("Backend", retrievalSummary.agent_backend || retrievalSummary.target_id || (isCodexAgent ? "codex_cli" : "openclaw_cli"))}
+            {renderKeyValue("Skill hint", isCodexAgent ? retrievalSummary.agent_skill_hint : "")}
             {renderKeyValue("Approved Revision", retrievalSummary.approved_revision_id)}
             {renderKeyValue("Approved Content", retrievalSummary.approved_content_id)}
             {renderKeyValue("Agent query", retrievalSummary.agent_query)}
@@ -265,13 +300,14 @@ export default function ExecutionInspector({
         ) : null}
         <div style={{ ...styles.debugCode, maxHeight: 420 }}>
           {JSON.stringify(
-            isCodexAgent
+            isAgentExecution
               ? {
                   command: retrievalSummary.command,
                   target_id: retrievalSummary.target_id,
                   skill_id: retrievalSummary.skill_id,
+                  agent_backend: retrievalSummary.agent_backend,
                   agent_query: retrievalSummary.agent_query,
-                  agent_skill_hint: retrievalSummary.agent_skill_hint,
+                  agent_skill_hint: isCodexAgent ? retrievalSummary.agent_skill_hint : undefined,
                   approved_content_id: retrievalSummary.approved_content_id,
                   approved_revision_id: retrievalSummary.approved_revision_id,
                 }

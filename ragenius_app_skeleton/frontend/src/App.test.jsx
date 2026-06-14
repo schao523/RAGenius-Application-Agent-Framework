@@ -494,6 +494,36 @@ describe("buildExecutionResultPreview", () => {
 
     expect(preview).toBe("Codex confirmation required (external write)");
   });
+
+  it("builds a compact OpenClaw-agent preview from normalized result metadata", () => {
+    const preview = buildExecutionResultPreview({
+      retrievalSummary: {
+        execution_override: true,
+        command: "openclaw",
+        target_id: "openclaw_cli",
+        execution_status_result: {
+          status: "completed",
+          result: {
+            backend: "openclaw_cli",
+            status: "completed",
+            summary: "OpenClaw completed and verified 1 output(s).",
+            output_text: "Created a markdown summary for the approved content.",
+            artifacts: [{ artifact_id: "artifact_1" }],
+            provider_metadata: {
+              provider_name: "OpenClaw",
+              verified_output_count: 1,
+              required_output_count: 1,
+            },
+          },
+        },
+      },
+    });
+
+    expect(preview).toContain("OpenClaw completed");
+    expect(preview).toContain("Created a markdown summary");
+    expect(preview).toContain("Verified outputs: 1/1");
+    expect(preview).toContain("Artifacts: 1");
+  });
 });
 
 describe("App artifact fetch propagation", () => {

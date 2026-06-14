@@ -1399,6 +1399,42 @@ export function buildExecutionResultPreview(message) {
     }
     return parts.join(" | ");
   }
+  if (command === "openclaw") {
+    const result = submitResult.result && typeof submitResult.result === "object" ? submitResult.result : {};
+    if (submitResult.error) {
+      return "";
+    }
+    const providerMetadata =
+      result.provider_metadata && typeof result.provider_metadata === "object"
+        ? result.provider_metadata
+        : {};
+    const providerName = String(providerMetadata.provider_name || "OpenClaw").trim();
+    const summary = String(result.summary || "").trim();
+    const outputText = String(result.output_text || "").trim();
+    const artifacts = Array.isArray(result.artifacts) ? result.artifacts : [];
+    const verificationResults = Array.isArray(result.verification_results)
+      ? result.verification_results
+      : [];
+    const verifiedOutputCount = Number.isFinite(Number(providerMetadata.verified_output_count))
+      ? Number(providerMetadata.verified_output_count)
+      : verificationResults.filter((item) => item?.verified === true).length;
+    const requiredOutputCount = Number.isFinite(Number(providerMetadata.required_output_count))
+      ? Number(providerMetadata.required_output_count)
+      : verificationResults.filter((item) => item?.required === true).length;
+    const status = String(result.status || submitResult.status || "").trim();
+    const parts = [];
+    parts.push(summary || `${providerName}${status ? ` ${status}` : " completed"}`);
+    if (outputText) {
+      parts.push(shortenPreview(outputText, 180));
+    }
+    if (requiredOutputCount > 0 || verifiedOutputCount > 0) {
+      parts.push(`Verified outputs: ${verifiedOutputCount}/${requiredOutputCount}`);
+    }
+    if (artifacts.length > 0) {
+      parts.push(`Artifacts: ${artifacts.length}`);
+    }
+    return parts.join(" | ");
+  }
   if (command !== "tool") {
     return "";
   }
