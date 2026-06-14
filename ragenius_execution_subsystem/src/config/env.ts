@@ -70,6 +70,17 @@ const envSchema = z.object({
   CODEX_CLI_COMMAND: z.string().trim().default("codex"),
   CODEX_CLI_ARGS_JSON: z.string().default("[]"),
   CODEX_CLI_TIMEOUT_MS: z.coerce.number().int().positive().default(300000),
+  OPENCLAW_CLI_ENABLED: booleanEnv(false),
+  OPENCLAW_WSL_DISTRO: z.string().trim().default("OpenClawGateway"),
+  OPENCLAW_CLI_COMMAND: z.string().trim().default("openclaw"),
+  OPENCLAW_AGENT_ID: z.string().trim().default("main"),
+  OPENCLAW_WORKSPACE_ROOT: z
+    .string()
+    .trim()
+    .default("/home/openclaw/.openclaw/workspace"),
+  OPENCLAW_DEFAULT_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
+  OPENCLAW_MAX_STDOUT_BYTES: z.coerce.number().int().positive().default(262144),
+  OPENCLAW_MAX_STDERR_BYTES: z.coerce.number().int().positive().default(65536),
   OPENAI_ENABLED: booleanEnv(false),
   OPENAI_API_KEY: z.string().trim().optional(),
   OPENAI_BASE_URL: z.string().trim().url().optional(),

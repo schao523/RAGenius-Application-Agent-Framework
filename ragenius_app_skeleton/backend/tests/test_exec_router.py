@@ -38,6 +38,13 @@ def test_parse_exec_turn_status_command():
     assert decision.execution_id == "execution_123"
 
 
+def test_parse_exec_turn_status_command_strips_sentence_punctuation():
+    decision = parse_exec_turn("@exec status execution_123.")
+    assert decision.is_exec_turn is True
+    assert decision.command == "status"
+    assert decision.execution_id == "execution_123"
+
+
 def test_parse_exec_turn_codex_command_with_plain_request():
     decision = parse_exec_turn('@exec codex "Use NotebookLM to summarize Micah 2."')
 

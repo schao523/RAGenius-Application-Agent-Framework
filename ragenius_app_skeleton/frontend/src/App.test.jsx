@@ -273,6 +273,32 @@ describe("buildExecCommand", () => {
 
     expect(command).toBe('@exec async codex "Summarize the approved content for Bible study beginners."');
   });
+
+  it("builds an openclaw agent command", () => {
+    const command = buildExecCommand({
+      commandKind: "agent",
+      targetId: "openclaw_cli",
+      args: {
+        request: "Reply with OK.",
+      },
+      executionMode: "sync",
+    });
+
+    expect(command).toBe('@exec openclaw "Reply with OK."');
+  });
+
+  it("builds an async openclaw agent command", () => {
+    const command = buildExecCommand({
+      commandKind: "agent",
+      targetId: "openclaw_cli",
+      args: {
+        request: "Reply with OK.",
+      },
+      executionMode: "async",
+    });
+
+    expect(command).toBe('@exec async openclaw "Reply with OK."');
+  });
 });
 
 describe("buildExecutionSubmitErrorTurn", () => {

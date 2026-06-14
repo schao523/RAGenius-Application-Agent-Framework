@@ -5,7 +5,9 @@ import { registerHealthRoutes } from "./api/routes/health.routes.js";
 import { registerSkillRoutes } from "./api/routes/skills.routes.js";
 import { registerToolRoutes } from "./api/routes/tools.routes.js";
 import { createPrismaClient } from "./db/prisma.js";
+import type { AgentProvider } from "./core/agents/agent-provider.js";
 import { CodexCliProvider } from "./core/agents/codex-cli-provider.js";
+import { OpenClawCliProvider } from "./core/agents/openclaw-cli-provider.js";
 import { ExecutionEngine } from "./core/execution/execution-engine.js";
 import { ExecutionStatusService } from "./core/execution/execution-status-service.js";
 import {
@@ -117,11 +119,18 @@ export function createAppServices(
   const workflowOrchestrator =
     overrides.workflowOrchestrator ??
     new WorkflowOrchestrator(toolRegistry, toolEngine);
+  const codexCliProvider = new CodexCliProvider(runtimeConfig.providers.codexCli);
+  const openClawCliProvider = new OpenClawCliProvider(
+    runtimeConfig.providers.openClaw
+  );
   const executionEngine =
     overrides.executionEngine ??
     new ExecutionEngine({
       builderSkillClient,
-      codexCliProvider: new CodexCliProvider(runtimeConfig.providers.codexCli),
+      agentProviders: new Map<string, AgentProvider>([
+        [codexCliProvider.backend, codexCliProvider],
+        [openClawCliProvider.backend, openClawCliProvider]
+      ]),
       executionStore,
       permissionEngine,
       skillRegistry,

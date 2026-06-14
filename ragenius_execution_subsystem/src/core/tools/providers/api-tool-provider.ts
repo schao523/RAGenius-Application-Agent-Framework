@@ -33,6 +33,16 @@ export class MockApiToolProvider implements ApiToolProvider {
         args: [],
         timeoutMs: 120000
       },
+      openClaw: {
+        enabled: false,
+        wslDistro: "OpenClawGateway",
+        command: "openclaw",
+        agentId: "main",
+        workspaceRoot: "/home/openclaw/.openclaw/workspace",
+        timeoutMs: 120000,
+        maxStdoutBytes: 262144,
+        maxStderrBytes: 65536
+      },
       notebooklm: {
         enabled: false,
         pythonCommand: "python",

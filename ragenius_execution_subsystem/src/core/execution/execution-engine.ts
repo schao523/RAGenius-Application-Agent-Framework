@@ -12,6 +12,7 @@ import type {
 import { AppError } from "../errors/app-error.js";
 import { getArtifactConsumerSpec } from "../artifacts/artifact-consumption-registry.js";
 import { toAppError } from "../errors/error-classifier.js";
+import type { AgentProvider } from "../agents/agent-provider.js";
 import { classifyAgentRequest } from "../agents/agent-policy.js";
 import { CodexCliProvider } from "../agents/codex-cli-provider.js";
 import { PermissionEngine } from "../permissions/permission-engine.js";
@@ -64,7 +65,7 @@ export class ExecutionEngine {
   private readonly workflowOrchestrator: WorkflowOrchestrator;
   private readonly builderSkillClient: BuilderSkillClient | undefined;
   private readonly executionStore: ExecutionStore | undefined;
-  private readonly codexCliProvider: CodexCliProvider;
+  private readonly agentProviders: Map<string, AgentProvider>;
 
   constructor(options?: {
     skillRegistry?: SkillRegistry;
@@ -75,6 +76,7 @@ export class ExecutionEngine {
     workflowOrchestrator?: WorkflowOrchestrator;
     executionStore?: ExecutionStore;
     codexCliProvider?: CodexCliProvider;
+    agentProviders?: Map<string, AgentProvider>;
   }) {
     this.skillRegistry = options?.skillRegistry ?? new SkillRegistry();
     this.builderSkillClient = options?.builderSkillClient;
@@ -86,7 +88,7 @@ export class ExecutionEngine {
       options?.workflowOrchestrator ??
       new WorkflowOrchestrator(this.toolRegistry, this.toolEngine);
     this.executionStore = options?.executionStore;
-    this.codexCliProvider =
+    const codexCliProvider =
       options?.codexCliProvider ??
       new CodexCliProvider({
         enabled: false,
@@ -96,6 +98,9 @@ export class ExecutionEngine {
         args: [],
         timeoutMs: 300000
       });
+    this.agentProviders =
+      options?.agentProviders ??
+      new Map([[codexCliProvider.backend, codexCliProvider]]);
   }
 
   async execute(
@@ -113,10 +118,10 @@ export class ExecutionEngine {
           if (request.execution_options?.require_confirmation !== true) {
             const result = normalizePendingConfirmationResult({
               executionId,
-              toolId: "codex_cli",
+              toolId: request.agent_backend,
               permissionScope: agentPolicy.permissionScope,
               logsSummary:
-                "Execution paused because Codex agent confirmation is required.",
+                "Execution paused because agent confirmation is required.",
               resultDetails: {
                 backend: request.agent_backend,
                 risk_class: agentPolicy.riskClass,
@@ -136,7 +141,7 @@ export class ExecutionEngine {
         if (agentPolicy.mode === "blocked") {
           throw new AppError({
             code: "PERMISSION_BLOCKED",
-            message: "Codex agent execution is blocked by policy.",
+            message: "Agent execution is blocked by policy.",
             errorClass: "permission",
             httpStatus: 403,
             details: {
@@ -154,7 +159,22 @@ export class ExecutionEngine {
           });
         }
 
-        const agentResult = await this.codexCliProvider.execute(request, agentPolicy);
+        const provider = this.agentProviders.get(request.agent_backend);
+        if (!provider) {
+          throw new AppError({
+            code: "UNKNOWN_AGENT_BACKEND",
+            message: `Unknown agent backend: ${request.agent_backend}`,
+            errorClass: "validation",
+            httpStatus: 400,
+            details: { backend: request.agent_backend },
+            recoverable: false,
+            suggestedAction: "Use a supported agent backend."
+          });
+        }
+
+        const agentResult = await provider.execute(request, agentPolicy, {
+          executionId
+        });
         const result = normalizeCompletedResult({
           executionId,
           resultType: "json",
@@ -169,10 +189,10 @@ export class ExecutionEngine {
             used_fallback: false,
             fallback_count: 0,
             execution_paths: ["local"],
-            provider_ids: ["codex_cli"],
+            provider_ids: [provider.backend],
             tool_ids: []
           },
-          logsSummary: "Codex CLI agent request completed."
+          logsSummary: `${provider.backend} agent request completed.`
         });
         await this.persistResult(request, result);
         return result;

@@ -96,6 +96,7 @@ class ExecutionSubsystemClient:
         session_id: str,
         app_id: str,
         agent_query: str,
+        agent_backend: str = "codex_cli",
         agent_skill_hint: str | None = None,
         approved_content_id: str | None = None,
         approved_revision_id: str | None = None,
@@ -104,7 +105,7 @@ class ExecutionSubsystemClient:
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "request_type": "execute_agent",
-            "agent_backend": "codex_cli",
+            "agent_backend": agent_backend,
             "app_id": app_id,
             "session_id": session_id,
             "agent_query": agent_query,

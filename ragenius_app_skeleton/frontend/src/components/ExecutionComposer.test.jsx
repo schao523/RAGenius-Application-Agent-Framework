@@ -447,6 +447,59 @@ describe("ExecutionComposer", () => {
     });
   });
 
+  it("defaults agent backend to Codex CLI", () => {
+    render(
+      <ExecutionComposer
+        toolInventory={[]}
+        skillInventory={[]}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+        styles={styles}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+
+    expect(screen.getByLabelText("Agent Backend")).toHaveValue("codex_cli");
+    expect(screen.getByLabelText("Skill Hint")).toBeInTheDocument();
+  });
+
+  it("submits OpenClaw agent backend without Codex-only skill hints", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <ExecutionComposer
+        toolInventory={[]}
+        skillInventory={[]}
+        onSubmit={onSubmit}
+        onClose={vi.fn()}
+        styles={styles}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    fireEvent.change(screen.getByLabelText("Agent Backend"), { target: { value: "openclaw_cli" } });
+
+    expect(screen.queryByLabelText("Skill Hint")).not.toBeInTheDocument();
+    expect(screen.getByText(/openclaw agent mode/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Agent Request"), {
+      target: { value: "Reply with OK." },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    });
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      commandKind: "agent",
+      targetId: "openclaw_cli",
+      executionMode: "sync",
+      args: {
+        request: "Reply with OK.",
+      },
+    });
+  });
+
   it("renders an artifact picker for artifactIds fields and submits selected artifact ids", async () => {
     const onSubmit = vi.fn();
     render(

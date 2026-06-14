@@ -379,6 +379,7 @@ export default function ExecutionComposer({
   const [executionMode, setExecutionMode] = useState("sync");
   const [formState, setFormState] = useState({});
   const [agentRequest, setAgentRequest] = useState("");
+  const [agentBackend, setAgentBackend] = useState("codex_cli");
   const [agentSkillHint, setAgentSkillHint] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -937,11 +938,11 @@ export default function ExecutionComposer({
       try {
         await onSubmit?.({
           commandKind,
-          targetId: "codex_cli",
+          targetId: agentBackend,
           executionMode,
           args: {
             request: String(agentRequest || "").trim(),
-            ...(String(agentSkillHint || "").trim()
+            ...(agentBackend === "codex_cli" && String(agentSkillHint || "").trim()
               ? { skillHint: String(agentSkillHint || "").trim() }
               : {}),
           },
@@ -1012,18 +1013,34 @@ export default function ExecutionComposer({
           </select>
         </label>
         {commandKind === "agent" ? (
-          <label>
-            <div style={styles.label}>Skill Hint</div>
-            <select
-              style={styles.select}
-              value={agentSkillHint}
-              onChange={(e) => setAgentSkillHint(e.target.value)}
-              aria-label="Skill Hint"
-            >
-              <option value="">Auto</option>
-              <option value="notebooklm">NotebookLM</option>
-            </select>
-          </label>
+          <>
+            <label>
+              <div style={styles.label}>Agent Backend</div>
+              <select
+                style={styles.select}
+                value={agentBackend}
+                onChange={(e) => setAgentBackend(e.target.value)}
+                aria-label="Agent Backend"
+              >
+                <option value="codex_cli">Codex CLI</option>
+                <option value="openclaw_cli">OpenClaw CLI</option>
+              </select>
+            </label>
+            {agentBackend === "codex_cli" ? (
+              <label>
+                <div style={styles.label}>Skill Hint</div>
+                <select
+                  style={styles.select}
+                  value={agentSkillHint}
+                  onChange={(e) => setAgentSkillHint(e.target.value)}
+                  aria-label="Skill Hint"
+                >
+                  <option value="">Auto</option>
+                  <option value="notebooklm">NotebookLM</option>
+                </select>
+              </label>
+            ) : null}
+          </>
         ) : (
           <label>
             <div style={styles.label}>Target</div>
@@ -1055,7 +1072,9 @@ export default function ExecutionComposer({
       {commandKind === "agent" ? (
         <>
           <div style={styles.compactNote}>
-            Codex agent mode runs a natural-language task through the `codex_cli` backend.
+            {agentBackend === "openclaw_cli"
+              ? "OpenClaw agent mode runs the request through the `openclaw_cli` backend. Workspace staging and verification are handled by the execution subsystem."
+              : "Codex agent mode runs a natural-language task through the `codex_cli` backend."}
           </div>
           <div style={styles.small}>
             {`Predicted policy | ${agentRisk.label} (${agentRisk.riskClass.replace(/^agent_/, "").replace(/_/g, " ")})`}

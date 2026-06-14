@@ -81,6 +81,17 @@ export interface CodexCliProviderConfig {
   timeoutMs: number;
 }
 
+export interface OpenClawCliRuntimeConfig {
+  enabled: boolean;
+  wslDistro: string;
+  command: string;
+  agentId: string;
+  workspaceRoot: string;
+  timeoutMs: number;
+  maxStdoutBytes: number;
+  maxStderrBytes: number;
+}
+
 export interface ResearchPaperProviderConfig {
   arxiv: ArxivProviderConfig;
   semanticScholar: SemanticScholarProviderConfig;
@@ -89,6 +100,7 @@ export interface ResearchPaperProviderConfig {
 export interface ProviderRuntimeConfig {
   codexCli: CodexCliProviderConfig;
   notebooklm: NotebookLmProviderConfig;
+  openClaw: OpenClawCliRuntimeConfig;
   researchPaper: ResearchPaperProviderConfig;
   openAi: OpenAiProviderConfig;
 }
@@ -191,6 +203,16 @@ export function buildProviderRuntimeConfig(env: AppEnv): ProviderRuntimeConfig {
       command: env.CODEX_CLI_COMMAND,
       args: z.array(z.string()).parse(JSON.parse(env.CODEX_CLI_ARGS_JSON)),
       timeoutMs: env.CODEX_CLI_TIMEOUT_MS
+    },
+    openClaw: {
+      enabled: env.OPENCLAW_CLI_ENABLED,
+      wslDistro: env.OPENCLAW_WSL_DISTRO,
+      command: env.OPENCLAW_CLI_COMMAND,
+      agentId: env.OPENCLAW_AGENT_ID,
+      workspaceRoot: env.OPENCLAW_WORKSPACE_ROOT,
+      timeoutMs: env.OPENCLAW_DEFAULT_TIMEOUT_MS,
+      maxStdoutBytes: env.OPENCLAW_MAX_STDOUT_BYTES,
+      maxStderrBytes: env.OPENCLAW_MAX_STDERR_BYTES
     },
     notebooklm: {
       enabled: env.NOTEBOOKLM_ENABLED,

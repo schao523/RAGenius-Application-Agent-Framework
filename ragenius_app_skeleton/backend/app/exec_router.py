@@ -15,6 +15,7 @@ class ExecRouteDecision(BaseModel):
     execution_mode: str | None = None
     skill_id: str | None = None
     tool_id: str | None = None
+    agent_backend: str | None = None
     agent_query: str | None = None
     agent_skill_hint: str | None = None
     execution_id: str | None = None
@@ -82,6 +83,10 @@ def _parse_agent_query(raw_args: str) -> tuple[str | None, str | None]:
     return None, " ".join(tokens).strip() or None
 
 
+def _normalize_execution_id(raw_value: str) -> str:
+    return str(raw_value or "").strip().rstrip(".,;:!?")
+
+
 def parse_exec_turn(user_query: str) -> ExecRouteDecision:
     text = str(user_query or "").strip()
     if not text.startswith("@exec"):
@@ -92,7 +97,8 @@ def parse_exec_turn(user_query: str) -> ExecRouteDecision:
             is_exec_turn=True,
             error=(
                 "Missing execution command. Use '@exec tool <tool_id> ...', "
-                "'@exec skill <skill_id> ...', '@exec codex \"<request>\"', or '@exec status <execution_id>'."
+                "'@exec skill <skill_id> ...', '@exec codex \"<request>\"', "
+                "'@exec openclaw \"<request>\"', or '@exec status <execution_id>'."
             ),
         )
     execution_mode = None
@@ -108,7 +114,8 @@ def parse_exec_turn(user_query: str) -> ExecRouteDecision:
             execution_mode=execution_mode,
             error=(
                 "Missing execution command. Use '@exec tool <tool_id> ...', "
-                "'@exec skill <skill_id> ...', '@exec codex \"<request>\"', or '@exec status <execution_id>'."
+                "'@exec skill <skill_id> ...', '@exec codex \"<request>\"', "
+                "'@exec openclaw \"<request>\"', or '@exec status <execution_id>'."
             ),
         )
     command_parts = remainder.split(maxsplit=1)
@@ -193,7 +200,7 @@ def parse_exec_turn(user_query: str) -> ExecRouteDecision:
             parsed_args=parsed_args,
         )
     if command == "status":
-        execution_id = rest.split(maxsplit=1)[0] if rest else ""
+        execution_id = _normalize_execution_id(rest.split(maxsplit=1)[0] if rest else "")
         if not execution_id:
             return ExecRouteDecision(
                 is_exec_turn=True,
@@ -235,9 +242,41 @@ def parse_exec_turn(user_query: str) -> ExecRouteDecision:
         return ExecRouteDecision(
             is_exec_turn=True,
             command="codex",
+            agent_backend="codex_cli",
             execution_mode=execution_mode,
             agent_query=agent_query,
             agent_skill_hint=agent_skill_hint,
+            raw_args=rest,
+            parsed_args=parsed_args,
+        )
+    if command == "openclaw":
+        try:
+            _agent_skill_hint, agent_query = _parse_agent_query(rest)
+        except Exception as exc:
+            return ExecRouteDecision(
+                is_exec_turn=True,
+                command="openclaw",
+                execution_mode=execution_mode,
+                raw_args=rest,
+                error=f"Invalid exec arguments: {exc}",
+            )
+        if not agent_query:
+            return ExecRouteDecision(
+                is_exec_turn=True,
+                command="openclaw",
+                execution_mode=execution_mode,
+                raw_args=rest,
+                error='Missing OpenClaw request. Use \'@exec openclaw "<request>"\'.',
+            )
+        parsed_args = {"agent_backend": "openclaw_cli"}
+        if execution_mode:
+            parsed_args["execution_mode"] = execution_mode
+        return ExecRouteDecision(
+            is_exec_turn=True,
+            command="openclaw",
+            agent_backend="openclaw_cli",
+            execution_mode=execution_mode,
+            agent_query=agent_query,
             raw_args=rest,
             parsed_args=parsed_args,
         )
@@ -245,5 +284,5 @@ def parse_exec_turn(user_query: str) -> ExecRouteDecision:
         is_exec_turn=True,
         command=command,
         execution_mode=execution_mode,
-        error="Unsupported exec command. Supported: tool, skill, codex, status.",
+        error="Unsupported exec command. Supported: tool, skill, codex, openclaw, status.",
     )

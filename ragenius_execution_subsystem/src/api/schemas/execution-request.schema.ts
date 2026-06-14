@@ -19,9 +19,11 @@ export const executeSkillRequestSchema = executionRequestBaseSchema.extend({
   input: z.record(z.string(), z.unknown())
 });
 
+export const agentBackendSchema = z.enum(["codex_cli", "openclaw_cli"]);
+
 export const executeAgentRequestSchema = executionRequestBaseSchema.extend({
   request_type: z.literal("execute_agent"),
-  agent_backend: z.literal("codex_cli"),
+  agent_backend: agentBackendSchema,
   agent_query: z.string().trim().min(1),
   agent_skill_hint: z.string().trim().min(1).optional(),
   approved_content_id: z.string().trim().min(1).optional(),

@@ -73,6 +73,7 @@ export interface RuntimeConfigDiagnostics {
   providers: {
     codexCli: { enabled: boolean };
     notebooklm: { enabled: boolean };
+    openClaw: { enabled: boolean };
     arxiv: { enabled: boolean };
     openAi: { enabled: boolean };
     semanticScholar: { enabled: boolean; hasApiKey: boolean };
@@ -148,6 +149,9 @@ export function inspectRuntimeConfig(
     providers: {
       codexCli: {
         enabled: runtimeConfig.providers.codexCli.enabled
+      },
+      openClaw: {
+        enabled: runtimeConfig.providers.openClaw.enabled
       },
       notebooklm: {
         enabled: runtimeConfig.providers.notebooklm.enabled

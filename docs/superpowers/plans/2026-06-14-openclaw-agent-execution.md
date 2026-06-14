@@ -18,13 +18,31 @@
 - `D:/GitHub/Codex-RAGenius-System/ragenius_app_skeleton/docs/openclaw-execution-composer-design.md`
 - `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/openclaw-cli-test-results-2026-06-13.md`
 
+## Test Placement Decision
+
+Do not add new OpenClaw coverage to `ragenius_execution_subsystem/tests/execution/execute-skill.test.ts` unless an existing assertion in that file must be updated for compatibility.
+
+Reason:
+
+- the file name suggests skill execution, but it currently also contains broad route and Codex `execute_agent` coverage
+- it already has unrelated in-progress Gmail MCP test edits in the working tree
+- adding OpenClaw tests there would increase merge/conflict risk and make the file more overloaded
+
+Use dedicated test files instead:
+
+- `ragenius_execution_subsystem/tests/execution/execute-agent.test.ts` for multi-backend execution engine and schema dispatch
+- `ragenius_execution_subsystem/tests/agents/openclaw-options.test.ts`
+- `ragenius_execution_subsystem/tests/agents/openclaw-cli-bridge.test.ts`
+- `ragenius_execution_subsystem/tests/agents/openclaw-workspace.test.ts`
+- `ragenius_execution_subsystem/tests/agents/openclaw-cli-provider.test.ts`
+
 ## Milestone 1: Execution Subsystem Schema and Provider Dispatch
 
 ### Task 1: Add Agent Backend Schema Support
 
 **Files:**
 - Modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/src/api/schemas/execution-request.schema.ts`
-- Modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/tests/execution/execute-skill.test.ts`
+- Create: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/tests/execution/execute-agent.test.ts`
 
 - [ ] **Step 1: Add failing schema tests**
 
@@ -63,7 +81,7 @@ Run:
 
 ```powershell
 cd D:\GitHub\Codex-RAGenius-System\ragenius_execution_subsystem
-npm test -- execute-skill.test.ts
+npm test -- execute-agent.test.ts
 ```
 
 Expected: the OpenClaw schema test fails because `agent_backend` only accepts `codex_cli`.
@@ -89,7 +107,7 @@ agent_backend: agentBackendSchema,
 Run:
 
 ```powershell
-npm test -- execute-skill.test.ts
+npm test -- execute-agent.test.ts
 ```
 
 Expected: schema tests pass; existing Codex tests still pass.
@@ -100,7 +118,7 @@ Expected: schema tests pass; existing Codex tests still pass.
 - Create: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/src/core/agents/agent-provider.ts`
 - Modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/src/core/agents/codex-cli-provider.ts`
 - Modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/src/core/execution/execution-engine.ts`
-- Modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/tests/execution/execute-skill.test.ts`
+- Modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/tests/execution/execute-agent.test.ts`
 
 - [ ] **Step 1: Add dispatch tests**
 
@@ -168,7 +186,7 @@ Run:
 
 ```powershell
 cd D:\GitHub\Codex-RAGenius-System\ragenius_execution_subsystem
-npm test -- execute-skill.test.ts
+npm test -- execute-agent.test.ts
 ```
 
 Expected: TypeScript fails because `agentProviders` and the shared provider interface do not exist.
@@ -268,7 +286,7 @@ Use `provider.backend` for metadata provider ids instead of hardcoded `codex_cli
 Run:
 
 ```powershell
-npm test -- execute-skill.test.ts
+npm test -- execute-agent.test.ts
 ```
 
 Expected: Codex tests and OpenClaw dispatch test pass.
@@ -277,7 +295,7 @@ Expected: Codex tests and OpenClaw dispatch test pass.
 
 **Files:**
 - Modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/src/core/execution/execution-store.ts`
-- Modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/tests/execution/execute-skill.test.ts`
+- Modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/tests/execution/execute-agent.test.ts`
 
 - [ ] **Step 1: Add failing persisted id tests**
 
@@ -315,7 +333,7 @@ it("persists backend-aware agent skill ids", () => {
 Run:
 
 ```powershell
-npm test -- execute-skill.test.ts
+npm test -- execute-agent.test.ts
 ```
 
 Expected: OpenClaw case fails because store hardcodes `codex_cli`.
@@ -337,7 +355,7 @@ function persistedAgentSkillIdForRequest(request: ExecuteAgentRequest): string {
 Run:
 
 ```powershell
-npm test -- execute-skill.test.ts
+npm test -- execute-agent.test.ts
 ```
 
 Expected: tests pass.
@@ -743,7 +761,7 @@ Expected: tests pass.
 - Modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/src/config/provider-config.ts`
 - Modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/src/config/runtime-config.ts`
 - Modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/src/app.ts`
-- Modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/tests/execution/execute-skill.test.ts`
+- Create or modify: `D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/tests/config/openclaw-runtime-config.test.ts`
 
 - [ ] **Step 1: Add runtime config test**
 
@@ -758,7 +776,7 @@ assert.equal(response.json().checks.runtime_config.providers.openClaw.enabled, f
 Run:
 
 ```powershell
-npm test -- execute-skill.test.ts
+npm test -- openclaw-runtime-config.test.ts
 ```
 
 Expected: runtime config lacks OpenClaw provider.
@@ -1392,4 +1410,3 @@ Implementation is complete when:
 - frontend command generation emits `@exec openclaw`.
 - automated tests listed in Milestone 5 pass.
 - real OpenClaw smoke test is opt-in and documented.
-

@@ -2,6 +2,7 @@ import type { ExecuteAgentRequest } from "../../api/schemas/execution-request.sc
 import type { CodexCliProviderConfig } from "../../config/provider-config.js";
 import { AppError } from "../errors/app-error.js";
 import type { AgentPolicyDecision } from "./agent-policy.js";
+import type { AgentProvider } from "./agent-provider.js";
 
 import { executeCodexCliBridge } from "./codex-cli-bridge.js";
 import type {
@@ -15,7 +16,9 @@ type CodexCliBridgeExecutor = (
   request: CodexCliBridgeRequest
 ) => Promise<CodexCliBridgeResponse>;
 
-export class CodexCliProvider {
+export class CodexCliProvider implements AgentProvider {
+  readonly backend = "codex_cli" as const;
+
   constructor(
     private readonly config: CodexCliProviderConfig,
     private readonly bridgeExecutor: CodexCliBridgeExecutor = executeCodexCliBridge

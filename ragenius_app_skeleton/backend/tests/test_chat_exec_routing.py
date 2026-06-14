@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from ragenius_app_skeleton.backend.app.chat_repos import ChatRepo, SessionRepo
+from ragenius_app_skeleton.backend.app.exec_router import parse_exec_turn
 from ragenius_app_skeleton.backend.app.main import app
 import ragenius_app_skeleton.backend.app.main as app_main
 
@@ -35,6 +36,31 @@ def _install_temp_repos(monkeypatch):
     monkeypatch.setattr(app_main, "chat_repo", chat_repo)
     monkeypatch.setattr(app_main, "_load_builder_context", lambda _app_id: _builder_context())
     return session_repo, chat_repo
+
+
+def test_parse_exec_openclaw_turn():
+    decision = parse_exec_turn('@exec openclaw "Reply with OK."')
+
+    assert decision.is_exec_turn is True
+    assert decision.command == "openclaw"
+    assert decision.agent_backend == "openclaw_cli"
+    assert decision.agent_query == "Reply with OK."
+
+
+def test_parse_exec_async_openclaw_turn():
+    decision = parse_exec_turn('@exec async openclaw "Reply with OK."')
+
+    assert decision.command == "openclaw"
+    assert decision.execution_mode == "async"
+    assert decision.agent_backend == "openclaw_cli"
+
+
+def test_parse_exec_openclaw_missing_request():
+    decision = parse_exec_turn("@exec openclaw")
+
+    assert decision.is_exec_turn is True
+    assert decision.command == "openclaw"
+    assert "Missing OpenClaw request" in str(decision.error)
 
 
 def test_normal_turn_without_exec_prefix_uses_existing_chat_pipeline(monkeypatch):
@@ -579,6 +605,7 @@ def test_exec_codex_turn_submits_agent_execution(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
+    assert captured["agent_backend"] == "codex_cli"
     assert captured["agent_query"] == "Generate a quiz from the approved content."
     assert captured["agent_skill_hint"] == "notebooklm"
     assert captured["approved_content_id"].startswith("ac_")
@@ -591,6 +618,56 @@ def test_exec_codex_turn_submits_agent_execution(monkeypatch):
         "NotebookLM question answered (GPT Application Designer) "
         "Learning GPT design offers transformative advantages."
     )
+
+
+def test_exec_openclaw_turn_submits_agent_execution(monkeypatch):
+    session_repo, _ = _install_temp_repos(monkeypatch)
+    session_repo.get_or_create(
+        "session-1",
+        collection_id="app-1",
+        user_id="user-1",
+        config_version=1,
+        adapter_version=1,
+        template_version=1,
+    )
+    captured = {}
+
+    class FakeExecutionClient:
+        def submit_agent(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "status": "completed",
+                "execution_id": "execution_openclaw_123",
+                "result": {
+                    "backend": "openclaw_cli",
+                    "summary": "OpenClaw completed.",
+                },
+            }
+
+        def get_execution_status(self, execution_id: str):
+            return {"execution_id": execution_id, "status": "completed"}
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+    response = client.post(
+        "/sessions/session-1/chat",
+        json={
+            "user_id": "user-1",
+            "app_id": "app-1",
+            "user_query": '@exec openclaw "Reply with OK."',
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured["agent_backend"] == "openclaw_cli"
+    assert captured["agent_query"] == "Reply with OK."
+    assert payload["execution_override"]["command"] == "openclaw"
+    assert payload["execution_override"]["target_id"] == "openclaw_cli"
+    assert payload["execution_override"]["agent_backend"] == "openclaw_cli"
+    assert payload["session_lane_state"]["execution_lane"]["latest_execution_id"] == "execution_openclaw_123"
+    assert payload["session_lane_state"]["execution_lane"]["latest_agent_backend"] == "openclaw_cli"
+    assert payload["session_lane_state"]["execution_lane"]["latest_execution_request_skill_id"] == "openclaw_cli"
 
 
 def test_exec_codex_turn_surfaces_confirmation_required_summary(monkeypatch):
@@ -1913,6 +1990,43 @@ def test_exec_status_turn_does_not_invoke_normal_chat_pipeline(monkeypatch):
     assert payload["execution_override"]["command"] == "status"
     assert payload["execution_override"]["status_result"]["execution_id"] == "execution_123"
     assert payload["content"] == "Execution status for `execution_123` is completed."
+
+
+def test_exec_status_turn_surfaces_execution_lookup_error(monkeypatch):
+    _install_temp_repos(monkeypatch)
+
+    def fail_run_chat_pipeline(*args, **kwargs):
+        raise AssertionError("normal chat pipeline should not be used for @exec status")
+
+    class FakeExecutionClient:
+        def submit_skill(self, **kwargs):
+            raise AssertionError("submit_skill should not be called for @exec status")
+
+        def get_execution_status(self, execution_id: str):
+            return {
+                "error": {
+                    "code": "EXECUTION_NOT_FOUND",
+                    "message": "Execution record was not found.",
+                },
+                "_http_status": 404,
+            }
+
+    monkeypatch.setattr(app_main, "run_chat_pipeline", fail_run_chat_pipeline)
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+    response = client.post(
+        "/sessions/session-1/chat",
+        json={
+            "user_id": "user-1",
+            "app_id": "app-1",
+            "user_query": "@exec status execution_123",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["content"] == (
+        "Execution status for `execution_123` could not be loaded: Execution record was not found."
+    )
 
 
 def test_exec_status_turn_polls_async_notebooklm_task_without_resubmission(monkeypatch):

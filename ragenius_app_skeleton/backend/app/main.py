@@ -1120,9 +1120,10 @@ def _artifact_kind_for_skill(skill_id: str) -> str | None:
     return None
 
 
-def _codex_exec_summary_text(
+def _agent_exec_summary_text(
     submit_result: Dict[str, Any],
     *,
+    provider_label: str = "Codex",
     agent_skill_hint: str | None = None,
 ) -> str:
     def _shorten(value: Any, limit: int = 220) -> str:
@@ -1152,7 +1153,7 @@ def _codex_exec_summary_text(
         risk_label = risk_class.removeprefix("agent_").replace("_", " ")
         skill_text = f" using `{agent_skill_hint}`" if str(agent_skill_hint or "").strip() else ""
         return (
-            f"Codex agent request{skill_text} requires confirmation before proceeding "
+            f"{provider_label} agent request{skill_text} requires confirmation before proceeding "
             f"because it is classified as `{risk_label}`."
         )
 
@@ -1160,9 +1161,9 @@ def _codex_exec_summary_text(
     if isinstance(error_payload, dict):
         error_code = str(error_payload.get("code") or "").strip()
         if error_code == "PERMISSION_BLOCKED":
-            return "Codex agent request is blocked by policy because it appears destructive."
+            return f"{provider_label} agent request is blocked by policy because it appears destructive."
         message = str(error_payload.get("message") or "").strip()
-        return message or "Codex agent request failed."
+        return message or f"{provider_label} agent request failed."
 
     result_payload = submit_result.get("result")
     result_payload = result_payload if isinstance(result_payload, dict) else {}
@@ -1175,7 +1176,7 @@ def _codex_exec_summary_text(
 
     execution_id = str(submit_result.get("execution_id") or "").strip()
     suffix = f" Execution id: {execution_id}." if execution_id else ""
-    return f"Codex agent request completed.{suffix}"
+    return f"{provider_label} agent request completed.{suffix}"
 
 
 def _maybe_poll_async_provider_task(
@@ -1301,12 +1302,16 @@ def _handle_exec_status_turn(
         retrieval_summary={"execution_override": True, "command": "status", "execution_id": execution_id},
     )
     latest_status = str(result.get("status") or result.get("state") or "unknown").strip()
+    error_payload = result.get("error") if isinstance(result.get("error"), dict) else {}
+    error_message = str(error_payload.get("message") or "").strip()
     login_requirement = _resolve_notebooklm_login_requirement(result)
     if login_requirement:
         summary_text = (
             f"Login to NotebookLM is required before refreshing `{execution_id}` further. "
             f"Run `{login_requirement['login_command']}` or use the NotebookLM login action, then retry status refresh."
         )
+    elif error_message:
+        summary_text = f"Execution status for `{execution_id}` could not be loaded: {error_message}"
     else:
         summary_text = f"Execution status for `{execution_id}` is {latest_status}."
     chat_repo.append(
@@ -1525,7 +1530,7 @@ def _execute_exec_skill_target(
     }
 
 
-def _handle_exec_codex_turn(
+def _handle_exec_agent_turn(
     *,
     session_id: str,
     payload: ChatRequest,
@@ -1533,9 +1538,15 @@ def _handle_exec_codex_turn(
 ) -> Dict[str, Any]:
     if route.error:
         raise HTTPException(status_code=400, detail=route.error)
+    command = str(route.command or "codex").strip().lower()
+    agent_backend = (
+        str(route.agent_backend or "").strip()
+        or ("openclaw_cli" if command == "openclaw" else "codex_cli")
+    )
+    provider_label = "OpenClaw" if agent_backend == "openclaw_cli" else "Codex"
     agent_query = str(route.agent_query or "").strip()
     if not agent_query:
-        raise HTTPException(status_code=400, detail="Missing Codex request.")
+        raise HTTPException(status_code=400, detail=f"Missing {provider_label} request.")
     runtime_state = session_repo.get_runtime_state(session_id)
     lane_state = _session_lane_state(runtime_state)
     snapshot = resolve_approved_snapshot(
@@ -1558,6 +1569,7 @@ def _handle_exec_codex_turn(
         session_id=session_id,
         app_id=payload.app_id,
         agent_query=agent_query,
+        agent_backend=agent_backend,
         agent_skill_hint=str(route.agent_skill_hint or "").strip() or None,
         approved_content_id=snapshot.get("approved_content_id") if snapshot else None,
         approved_revision_id=snapshot.get("revision_id") if snapshot else None,
@@ -1567,13 +1579,14 @@ def _handle_exec_codex_turn(
         lane_state["content_lane"]["latest_approved_content_id"] = snapshot.get("approved_content_id")
         lane_state["content_lane"]["latest_revision_id"] = snapshot.get("revision_id")
     lane_state["execution_lane"]["latest_execution_request_skill_id"] = (
-        f"codex_cli:{route.agent_skill_hint}"
+        f"{agent_backend}:{route.agent_skill_hint}"
         if str(route.agent_skill_hint or "").strip()
-        else "codex_cli"
+        else agent_backend
     )
     lane_state["execution_lane"]["latest_execution_request_query"] = payload.user_query
     lane_state["execution_lane"]["latest_execution_result"] = submit_result
     lane_state["execution_lane"]["latest_execution_mode"] = str(route.execution_mode or "sync").strip() or "sync"
+    lane_state["execution_lane"]["latest_agent_backend"] = agent_backend
     _record_login_requirement(lane_state, result_payload=submit_result)
     if submit_result.get("execution_id"):
         lane_state["execution_lane"]["latest_execution_id"] = submit_result.get("execution_id")
@@ -1581,14 +1594,16 @@ def _handle_exec_codex_turn(
     session_repo.set_runtime_state(session_id, runtime_state)
     retrieval_summary = {
         "execution_override": True,
-        "command": "codex",
-        "target_id": "codex_cli",
+        "command": command,
+        "target_id": agent_backend,
         "skill_id": lane_state["execution_lane"]["latest_execution_request_skill_id"],
         "agent_skill_hint": str(route.agent_skill_hint or "").strip() or None,
+        "agent_backend": agent_backend,
     }
     chat_repo.append(session_id, "user", payload.user_query, retrieval_summary=retrieval_summary)
-    summary_text = _codex_exec_summary_text(
+    summary_text = _agent_exec_summary_text(
         submit_result,
+        provider_label=provider_label,
         agent_skill_hint=str(route.agent_skill_hint or "").strip() or None,
     )
     chat_repo.append(session_id, "assistant", summary_text, retrieval_summary=retrieval_summary)
@@ -1600,11 +1615,12 @@ def _handle_exec_codex_turn(
         "session_execution_state": runtime_state.get("session_execution_state", {}),
         "session_lane_state": lane_state,
         "execution_override": {
-            "command": "codex",
-            "target_id": "codex_cli",
+            "command": command,
+            "target_id": agent_backend,
             "skill_id": lane_state["execution_lane"]["latest_execution_request_skill_id"],
             "agent_query": agent_query,
             "agent_skill_hint": str(route.agent_skill_hint or "").strip() or None,
+            "agent_backend": agent_backend,
             "approved_content_id": snapshot.get("approved_content_id") if snapshot else None,
             "approved_revision_id": snapshot.get("revision_id") if snapshot else None,
             "submit_result": submit_result,
@@ -1624,8 +1640,8 @@ def _handle_exec_turn(
         return _handle_exec_tool_turn(session_id=session_id, payload=payload, route=route)
     if route.command == "skill":
         return _handle_exec_skill_turn(session_id=session_id, payload=payload, route=route)
-    if route.command == "codex":
-        return _handle_exec_codex_turn(session_id=session_id, payload=payload, route=route)
+    if route.command in {"codex", "openclaw"}:
+        return _handle_exec_agent_turn(session_id=session_id, payload=payload, route=route)
     raise HTTPException(status_code=400, detail=route.error or "Unsupported exec command.")
 
 

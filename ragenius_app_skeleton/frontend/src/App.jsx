@@ -1097,6 +1097,9 @@ export function buildExecCommand({ commandKind, targetId, args = {}, executionMo
     const requestText = String(args.request || "").trim();
     const skillHint = String(args.skillHint || "").trim();
     const execPrefix = executionMode === "async" ? "@exec async" : "@exec";
+    if (targetId === "openclaw_cli") {
+      return `${execPrefix} openclaw "${requestText.replace(/"/g, '\\"')}"`.trim();
+    }
     if (skillHint) {
       return `${execPrefix} codex use ${skillHint} "${requestText.replace(/"/g, '\\"')}"`.trim();
     }

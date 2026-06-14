@@ -1,4 +1,7 @@
-import type { ExecutionRequest } from "../../api/schemas/execution-request.schema.js";
+import type {
+  ExecuteAgentRequest,
+  ExecutionRequest
+} from "../../api/schemas/execution-request.schema.js";
 import type {
   NormalizedExecutionResult,
   ToolExecutionProvenance
@@ -9,8 +12,13 @@ export function persistedSkillIdForRequest(request: ExecutionRequest): string {
     return request.skill_id;
   }
 
+  return persistedAgentSkillIdForRequest(request);
+}
+
+function persistedAgentSkillIdForRequest(request: ExecuteAgentRequest): string {
+  const backend = strOrEmpty(request.agent_backend);
   const hint = strOrEmpty(request.agent_skill_hint);
-  return hint ? `codex_cli:${hint}` : "codex_cli";
+  return hint ? `${backend}:${hint}` : backend;
 }
 
 function strOrEmpty(value: unknown): string {
