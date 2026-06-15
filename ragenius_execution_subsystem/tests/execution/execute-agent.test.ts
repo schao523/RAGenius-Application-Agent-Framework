@@ -34,6 +34,77 @@ describe("execute_agent requests", () => {
     );
   });
 
+  it("accepts session-scoped artifact refs and provider-neutral expected outputs", () => {
+    const parsed = executionRequestSchema.parse({
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "openclaw_cli",
+      agent_query: "Summarize the selected artifact into markdown.",
+      artifact_refs: [
+        {
+          artifact_id: "artifact_123",
+          role: "source",
+          reuse_mode: "file_backed",
+          display_name: "Bible notes.md",
+          mime_type: "text/markdown"
+        }
+      ],
+      expected_outputs: [
+        {
+          output_id: "agent_answer",
+          display_name: "agent-answer.md",
+          media_type: "text/markdown",
+          required: true,
+          persist_as_artifact: true,
+          artifact_type: "agent_output",
+          min_size_bytes: 1
+        }
+      ]
+    });
+
+    assert.equal(parsed.request_type, "execute_agent");
+    assert.equal(parsed.artifact_refs?.[0]?.artifact_id, "artifact_123");
+    assert.equal(parsed.artifact_refs?.[0]?.reuse_mode, "file_backed");
+    assert.equal(parsed.expected_outputs?.[0]?.output_id, "agent_answer");
+    assert.equal(parsed.expected_outputs?.[0]?.persist_as_artifact, true);
+  });
+
+  it("rejects invalid artifact refs and expected outputs", () => {
+    assert.throws(() =>
+      executionRequestSchema.parse({
+        request_type: "execute_agent",
+        app_id: "app_001",
+        session_id: "sess_001",
+        agent_backend: "openclaw_cli",
+        agent_query: "Use this artifact.",
+        artifact_refs: [
+          {
+            artifact_id: "artifact_123",
+            role: "source",
+            reuse_mode: "raw_path"
+          }
+        ]
+      })
+    );
+
+    assert.throws(() =>
+      executionRequestSchema.parse({
+        request_type: "execute_agent",
+        app_id: "app_001",
+        session_id: "sess_001",
+        agent_backend: "openclaw_cli",
+        agent_query: "Create output.",
+        expected_outputs: [
+          {
+            output_id: "bad/output",
+            persist_as_artifact: true
+          }
+        ]
+      })
+    );
+  });
+
   it("dispatches openclaw_cli agent requests to the OpenClaw provider", async () => {
     const openclawProvider: AgentProvider = {
       backend: "openclaw_cli",

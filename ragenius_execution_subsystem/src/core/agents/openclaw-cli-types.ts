@@ -17,6 +17,7 @@ export type OpenClawStagedInput = {
   content_sha256?: string;
   size_bytes?: number;
   workspace_relative_path?: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type OpenClawExpectedOutput = {
@@ -27,6 +28,7 @@ export type OpenClawExpectedOutput = {
   required: boolean;
   workspace_relative_path?: string;
   persist_as_artifact: boolean;
+  artifact_type?: "agent_output";
   artifact_role?: "final" | "intermediate" | "debug";
   min_size_bytes?: number;
   expected_sha256?: string;

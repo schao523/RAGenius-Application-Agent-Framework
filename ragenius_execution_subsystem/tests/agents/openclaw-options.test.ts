@@ -44,6 +44,38 @@ test("generates default output for ambiguous approved-content output requests", 
   );
 });
 
+test("uses provider-neutral expected outputs for OpenClaw output planning", () => {
+  const options = normalizeOpenClawOptions({
+    request: {
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "openclaw_cli",
+      agent_query: "Create a reusable output.",
+      expected_outputs: [
+        {
+          output_id: "agent_answer",
+          display_name: "answer.md",
+          required: true
+        }
+      ]
+    },
+    executionId: "execution_001"
+  });
+
+  assert.equal(options.execution_mode, "output_required");
+  assert.equal(options.expected_outputs.length, 1);
+  assert.equal(options.expected_outputs[0]?.output_id, "agent_answer");
+  assert.equal(options.expected_outputs[0]?.display_name, "answer.md");
+  assert.equal(options.expected_outputs[0]?.media_type, "text/markdown");
+  assert.equal(options.expected_outputs[0]?.persist_as_artifact, true);
+  assert.equal(options.expected_outputs[0]?.artifact_type, "agent_output");
+  assert.equal(
+    options.expected_outputs[0]?.workspace_relative_path,
+    "outputs/agent_answer-answer.md"
+  );
+});
+
 test("rejects unsafe workspace relative paths", () => {
   assert.throws(() =>
     normalizeOpenClawOptions({

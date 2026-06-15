@@ -21,6 +21,35 @@ export const executeSkillRequestSchema = executionRequestBaseSchema.extend({
 
 export const agentBackendSchema = z.enum(["codex_cli", "openclaw_cli"]);
 
+export const agentArtifactRefSchema = z
+  .object({
+    artifact_id: z.string().trim().min(1),
+    artifact_version_id: z.string().trim().min(1).optional(),
+    role: z.enum(["source", "context", "template", "attachment"]),
+    reuse_mode: z.enum([
+      "inline_text",
+      "file_backed",
+      "binary_payload",
+      "metadata_only"
+    ]),
+    display_name: z.string().trim().min(1).optional(),
+    mime_type: z.string().trim().min(1).optional()
+  })
+  .strict();
+
+export const agentExpectedOutputSchema = z
+  .object({
+    output_id: z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+    display_name: z.string().trim().min(1).optional(),
+    media_type: z.string().trim().min(1).optional(),
+    required: z.boolean().optional(),
+    persist_as_artifact: z.boolean().optional(),
+    artifact_type: z.literal("agent_output").optional(),
+    min_size_bytes: z.number().int().nonnegative().optional(),
+    expected_sha256: z.string().trim().regex(/^[a-fA-F0-9]{64}$/).optional()
+  })
+  .strict();
+
 export const executeAgentRequestSchema = executionRequestBaseSchema.extend({
   request_type: z.literal("execute_agent"),
   agent_backend: agentBackendSchema,
@@ -28,6 +57,8 @@ export const executeAgentRequestSchema = executionRequestBaseSchema.extend({
   agent_skill_hint: z.string().trim().min(1).optional(),
   approved_content_id: z.string().trim().min(1).optional(),
   approved_revision_id: z.string().trim().min(1).optional(),
+  artifact_refs: z.array(agentArtifactRefSchema).optional(),
+  expected_outputs: z.array(agentExpectedOutputSchema).optional(),
   context: z.record(z.string(), z.unknown()).optional()
 });
 
@@ -37,6 +68,8 @@ export const executionRequestSchema = z.discriminatedUnion("request_type", [
 ]);
 
 export type ExecutionOptions = z.infer<typeof executionOptionsSchema>;
+export type AgentArtifactRef = z.infer<typeof agentArtifactRefSchema>;
+export type AgentExpectedOutput = z.infer<typeof agentExpectedOutputSchema>;
 export type ExecuteSkillRequest = z.infer<typeof executeSkillRequestSchema>;
 export type ExecuteAgentRequest = z.infer<typeof executeAgentRequestSchema>;
 export type ExecutionRequest = z.infer<typeof executionRequestSchema>;

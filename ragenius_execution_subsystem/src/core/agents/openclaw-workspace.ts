@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 import type {
   OpenClawExpectedOutput,
+  OpenClawStagedInput,
   OpenClawVerificationResult
 } from "./openclaw-cli-types.js";
+import type { ResolvedAgentArtifact } from "./agent-artifact-resolver.js";
 
 export type OpenClawFileInspection = {
   exists: boolean;
@@ -41,6 +45,12 @@ export type StageBinaryInput = {
     expectedSizeBytes: number;
     expectedSha256: string;
   }) => Promise<OpenClawFileInspection>;
+};
+
+export type StageResolvedAgentArtifactsInput = {
+  workspaceRoot: string;
+  artifacts: ResolvedAgentArtifact[];
+  transfer: StageBinaryInput["transfer"];
 };
 
 export function assertSafeWorkspaceRelativePath(value: string): string {
@@ -179,6 +189,106 @@ export async function stageBinaryInputWithVerifiedBase64(
   };
 }
 
+export async function stageResolvedAgentArtifactsForOpenClaw(
+  input: StageResolvedAgentArtifactsInput
+): Promise<OpenClawStagedInput[]> {
+  const staged: OpenClawStagedInput[] = [];
+
+  for (const artifact of input.artifacts) {
+    const mediaType = artifact.payload.mime_type ?? "application/octet-stream";
+
+    if (artifact.requested_reuse_mode === "metadata_only") {
+      staged.push({
+        input_id: artifact.artifact_id,
+        source_kind: "artifact",
+        source_ref: { artifact_id: artifact.artifact_id },
+        display_name: artifact.display_name,
+        media_type: mediaType,
+        encoding: "utf8",
+        metadata: artifact.payload.metadata
+      });
+      continue;
+    }
+
+    const bytes = await payloadBytesForArtifact(artifact);
+    const workspaceRelativePath = `inputs/${artifact.artifact_id}-${sanitizeWorkspaceFileName(
+      artifact.display_name
+    )}`;
+    const stagedFile = await stageBinaryInputWithVerifiedBase64({
+      inputId: artifact.artifact_id,
+      bytes,
+      workspaceRoot: input.workspaceRoot,
+      workspaceRelativePath,
+      transfer: input.transfer
+    });
+
+    staged.push({
+      input_id: artifact.artifact_id,
+      source_kind: "artifact",
+      source_ref: { artifact_id: artifact.artifact_id },
+      display_name: artifact.display_name,
+      media_type: mediaType,
+      encoding: artifact.requested_reuse_mode === "inline_text" ? "utf8" : "binary",
+      content_sha256: stagedFile.sha256,
+      size_bytes: stagedFile.size_bytes,
+      workspace_relative_path: stagedFile.workspace_relative_path,
+      metadata: artifact.payload.metadata
+    });
+  }
+
+  return staged;
+}
+
+export async function transferOpenClawInputViaWsl(input: {
+  wslDistro: string;
+  base64Chunks: string[];
+  workspaceAbsolutePath: string;
+  expectedSizeBytes: number;
+  expectedSha256: string;
+}): Promise<OpenClawFileInspection> {
+  const script = buildOpenClawStageInputScript(input.workspaceAbsolutePath);
+  await spawnWslText({
+    wslDistro: input.wslDistro,
+    args: ["bash", "-c", script],
+    stdin: input.base64Chunks.join("")
+  });
+
+  return inspectOpenClawWorkspaceFileViaWsl({
+    wslDistro: input.wslDistro,
+    workspaceAbsolutePath: input.workspaceAbsolutePath
+  });
+}
+
+export async function readOpenClawWorkspaceFileViaWsl(input: {
+  wslDistro: string;
+  workspaceAbsolutePath: string;
+}): Promise<Buffer> {
+  const result = await spawnWslText({
+    wslDistro: input.wslDistro,
+    args: ["bash", "-c", buildOpenClawReadFileScript(input.workspaceAbsolutePath)]
+  });
+  return Buffer.from(result.stdout.trim(), "base64");
+}
+
+export function buildOpenClawStageInputScript(
+  workspaceAbsolutePath: string
+): string {
+  const safePath = shellQuoteWorkspaceAbsolutePath(workspaceAbsolutePath);
+  return [
+    "set -euo pipefail",
+    `mkdir -p "$(dirname ${safePath})"`,
+    `base64 -d > ${safePath}`
+  ].join("; ");
+}
+
+export function buildOpenClawReadFileScript(workspaceAbsolutePath: string): string {
+  const safePath = shellQuoteWorkspaceAbsolutePath(workspaceAbsolutePath);
+  return [
+    "set -euo pipefail",
+    `base64 -w 0 ${safePath}`
+  ].join("; ");
+}
+
 export async function inspectOpenClawWorkspaceFileViaWsl(input: {
   wslDistro: string;
   workspaceAbsolutePath: string;
@@ -251,17 +361,21 @@ async function spawnWslText(input: {
   wslDistro: string;
   args: string[];
   allowNonZeroExit?: boolean;
+  stdin?: string;
 }): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn("wsl", ["-d", input.wslDistro, ...input.args], {
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: [typeof input.stdin === "string" ? "pipe" : "ignore", "pipe", "pipe"]
     });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+    child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
     child.on("error", reject);
+    if (typeof input.stdin === "string" && child.stdin) {
+      child.stdin.end(input.stdin);
+    }
     child.on("close", (exitCode) => {
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
@@ -276,4 +390,37 @@ async function spawnWslText(input: {
       resolve({ exitCode, stdout, stderr });
     });
   });
+}
+
+async function payloadBytesForArtifact(
+  artifact: ResolvedAgentArtifact
+): Promise<Buffer> {
+  if (typeof artifact.payload.text_content === "string") {
+    return Buffer.from(artifact.payload.text_content, "utf-8");
+  }
+
+  if (typeof artifact.payload.binary_content_base64 === "string") {
+    return Buffer.from(artifact.payload.binary_content_base64, "base64");
+  }
+
+  if (typeof artifact.payload.file_path === "string") {
+    return fs.readFile(artifact.payload.file_path);
+  }
+
+  throw new Error(
+    `Resolved artifact ${artifact.artifact_id} does not contain reusable bytes.`
+  );
+}
+
+function sanitizeWorkspaceFileName(value: string): string {
+  const baseName = path.basename(String(value || "").trim()) || "artifact";
+  return baseName.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").trim() || "artifact";
+}
+
+function shellQuoteWorkspaceAbsolutePath(value: string): string {
+  const normalized = String(value || "").trim();
+  if (!normalized || !normalized.startsWith("/") || normalized.includes("\0")) {
+    throw new Error(`Unsafe OpenClaw workspace-absolute path: ${value}`);
+  }
+  return `'${normalized.replace(/'/g, "'\\''")}'`;
 }

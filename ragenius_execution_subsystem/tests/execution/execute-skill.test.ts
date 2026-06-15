@@ -3655,8 +3655,12 @@ describe("execution routes", () => {
   });
 
   it("confirms and completes Gmail direct send through the Gmail MCP provider", async () => {
+    let gmailSendMessageArguments: Record<string, unknown> | undefined;
     globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
-      const payload = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+      const payload = JSON.parse(String(init?.body ?? "{}")) as {
+        method?: string;
+        params?: { arguments?: Record<string, unknown> };
+      };
 
       if (payload.method === "initialize") {
         return new Response(
@@ -3703,6 +3707,7 @@ describe("execution routes", () => {
         );
       }
 
+      gmailSendMessageArguments = payload.params?.arguments;
       return new Response(
         JSON.stringify({
           jsonrpc: "2.0",
@@ -3791,6 +3796,11 @@ describe("execution routes", () => {
 
     assert.equal(confirmResponse.statusCode, 200);
     assert.equal(confirmResponse.json().status, "completed");
+    assert.deepEqual(gmailSendMessageArguments, {
+      to: ["alice@example.com"],
+      subject: "Hello",
+      body: "Direct send content"
+    });
     assert.deepEqual(confirmResponse.json().result, {
       id: "sent-message-2",
       status: "sent",

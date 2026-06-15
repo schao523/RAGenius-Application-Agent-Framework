@@ -8,6 +8,9 @@ import { createPrismaClient } from "./db/prisma.js";
 import type { AgentProvider } from "./core/agents/agent-provider.js";
 import { CodexCliProvider } from "./core/agents/codex-cli-provider.js";
 import { OpenClawCliProvider } from "./core/agents/openclaw-cli-provider.js";
+import { AgentArtifactResolver } from "./core/agents/agent-artifact-resolver.js";
+import { AgentOutputArtifactPersister } from "./core/agents/agent-output-artifact-persister.js";
+import { readOpenClawWorkspaceFileViaWsl } from "./core/agents/openclaw-workspace.js";
 import { ExecutionEngine } from "./core/execution/execution-engine.js";
 import { ExecutionStatusService } from "./core/execution/execution-status-service.js";
 import {
@@ -120,8 +123,23 @@ export function createAppServices(
     overrides.workflowOrchestrator ??
     new WorkflowOrchestrator(toolRegistry, toolEngine);
   const codexCliProvider = new CodexCliProvider(runtimeConfig.providers.codexCli);
+  const agentArtifactResolver = new AgentArtifactResolver(artifactStore);
+  const agentOutputArtifactPersister = new AgentOutputArtifactPersister(
+    artifactStore,
+    {
+      readOutputBytes: (workspaceAbsolutePath) =>
+        readOpenClawWorkspaceFileViaWsl({
+          wslDistro: runtimeConfig.providers.openClaw.wslDistro,
+          workspaceAbsolutePath
+        })
+    }
+  );
   const openClawCliProvider = new OpenClawCliProvider(
-    runtimeConfig.providers.openClaw
+    runtimeConfig.providers.openClaw,
+    {
+      resolveArtifacts: (input) => agentArtifactResolver.resolve(input),
+      persistOutput: (input) => agentOutputArtifactPersister.persist(input)
+    }
   );
   const executionEngine =
     overrides.executionEngine ??

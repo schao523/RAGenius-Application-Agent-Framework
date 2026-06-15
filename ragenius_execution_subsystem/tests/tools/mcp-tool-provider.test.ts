@@ -1185,8 +1185,12 @@ describe("mcp tool provider", () => {
   });
 
   it("discovers and executes the Gmail send-message tool as a side-effecting write path", async () => {
+    let callArguments: Record<string, unknown> | undefined;
     globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
-      const payload = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+      const payload = JSON.parse(String(init?.body ?? "{}")) as {
+        method?: string;
+        params?: { arguments?: Record<string, unknown> };
+      };
 
       if (payload.method === "initialize") {
         return new Response(
@@ -1216,6 +1220,7 @@ describe("mcp tool provider", () => {
         );
       }
 
+      callArguments = payload.params?.arguments;
       return new Response(
         JSON.stringify({
           jsonrpc: "2.0",
@@ -1262,6 +1267,11 @@ describe("mcp tool provider", () => {
       { appId: "app_001" }
     );
 
+    assert.deepEqual(callArguments, {
+      to: ["alice@example.com"],
+      subject: "Hello",
+      body: "Direct send content"
+    });
     assert.deepEqual(result, {
       id: "sent-message-2",
       status: "sent",

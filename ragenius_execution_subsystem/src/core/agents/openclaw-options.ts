@@ -1,6 +1,10 @@
 import type { ExecuteAgentRequest } from "../../api/schemas/execution-request.schema.js";
 
 import {
+  planAgentExpectedOutputs,
+  type PlannedAgentExpectedOutput
+} from "./agent-expected-output-planner.js";
+import {
   type NormalizedOpenClawProviderOptions,
   type OpenClawExpectedOutput,
   type OpenClawExecutionMode,
@@ -28,7 +32,11 @@ export function normalizeOpenClawOptions(input: {
   validateTimeout(rawOptions.timeout_ms);
 
   const stagedInputs = validateStagedInputs(rawOptions.staged_inputs ?? []);
-  let expectedOutputs = validateExpectedOutputs(rawOptions.expected_outputs ?? []);
+  const plannedOutputs = planAgentExpectedOutputs({ request: input.request });
+  let expectedOutputs =
+    plannedOutputs.length > 0
+      ? validateExpectedOutputs(plannedOutputs.map(plannedOutputToOpenClawOutput))
+      : validateExpectedOutputs(rawOptions.expected_outputs ?? []);
   let executionMode = classifyOpenClawExecutionMode({
     request: input.request,
     options: rawOptions,
@@ -38,9 +46,12 @@ export function normalizeOpenClawOptions(input: {
 
   if (
     executionMode === "output_required" &&
-    !expectedOutputs.some((output) => output.required)
+    expectedOutputs.length === 0
   ) {
-    expectedOutputs = [defaultExpectedOutput()];
+    expectedOutputs = planAgentExpectedOutputs({
+      request: input.request,
+      generateDefaultOutput: true
+    }).map(plannedOutputToOpenClawOutput);
   }
   expectedOutputs = expectedOutputs.map((output) => ({
     ...output,
@@ -53,6 +64,25 @@ export function normalizeOpenClawOptions(input: {
     execution_mode: executionMode,
     staged_inputs: stagedInputs,
     expected_outputs: expectedOutputs
+  };
+}
+
+function plannedOutputToOpenClawOutput(
+  output: PlannedAgentExpectedOutput
+): OpenClawExpectedOutput {
+  return {
+    output_id: output.output_id,
+    purpose: "answer",
+    display_name: output.display_name,
+    media_type: output.media_type,
+    required: output.required,
+    persist_as_artifact: output.persist_as_artifact,
+    artifact_type: output.artifact_type,
+    artifact_role: "final",
+    ...(typeof output.min_size_bytes === "number"
+      ? { min_size_bytes: output.min_size_bytes }
+      : {}),
+    ...(output.expected_sha256 ? { expected_sha256: output.expected_sha256 } : {})
   };
 }
 
