@@ -670,6 +670,203 @@ def test_exec_openclaw_turn_submits_agent_execution(monkeypatch):
     assert payload["session_lane_state"]["execution_lane"]["latest_execution_request_skill_id"] == "openclaw_cli"
 
 
+def test_exec_openclaw_turn_passes_structured_artifact_refs_and_expected_outputs(monkeypatch):
+    session_repo, _ = _install_temp_repos(monkeypatch)
+    session_repo.get_or_create(
+        "session-1",
+        collection_id="app-1",
+        user_id="user-1",
+        config_version=1,
+        adapter_version=1,
+        template_version=1,
+    )
+    captured = {}
+
+    class FakeExecutionClient:
+        def submit_agent(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "status": "completed",
+                "execution_id": "execution_openclaw_artifact_123",
+                "result": {
+                    "backend": "openclaw_cli",
+                    "summary": "OpenClaw completed.",
+                },
+            }
+
+        def get_execution_status(self, execution_id: str):
+            return {"execution_id": execution_id, "status": "completed"}
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+    response = client.post(
+        "/sessions/session-1/chat",
+        json={
+            "user_id": "user-1",
+            "app_id": "app-1",
+            "user_query": '@exec openclaw "Create a reusable study note."',
+            "execution_request": {
+                "artifact_refs": [
+                    {
+                        "artifact_id": "artifact_chat_1",
+                        "role": "source",
+                        "reuse_mode": "inline_text",
+                        "display_name": "Study notes.md",
+                        "mime_type": "text/markdown",
+                    }
+                ],
+                "expected_outputs": [
+                    {
+                        "output_id": "agent_answer",
+                        "display_name": "agent-answer.md",
+                        "media_type": "text/markdown",
+                        "required": True,
+                        "persist_as_artifact": True,
+                    }
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["agent_backend"] == "openclaw_cli"
+    assert captured["agent_query"] == "Create a reusable study note."
+    assert captured["artifact_refs"][0]["artifact_id"] == "artifact_chat_1"
+    assert captured["artifact_refs"][0]["reuse_mode"] == "inline_text"
+    assert captured["expected_outputs"][0]["output_id"] == "agent_answer"
+    assert captured["expected_outputs"][0]["persist_as_artifact"] is True
+
+
+def test_exec_openclaw_turn_enriches_persisted_agent_output_artifacts(monkeypatch):
+    session_repo, _ = _install_temp_repos(monkeypatch)
+    session_repo.get_or_create(
+        "session-1",
+        collection_id="app-1",
+        user_id="user-1",
+        config_version=1,
+        adapter_version=1,
+        template_version=1,
+    )
+    captured_inventory = {}
+
+    class FakeExecutionClient:
+        def submit_agent(self, **kwargs):
+            return {
+                "status": "completed",
+                "execution_id": "execution_openclaw_artifact_123",
+                "result": {
+                    "backend": "openclaw_cli",
+                    "summary": "OpenClaw completed.",
+                    "artifacts": [
+                        {
+                            "artifact_id": "artifact_agent_1",
+                            "artifact_type": "agent_output",
+                            "display_name": "Study Guide.md",
+                            "mime_type": "text/markdown",
+                            "verified": True,
+                        }
+                    ],
+                },
+            }
+
+        def get_artifact_inventory(self, **kwargs):
+            captured_inventory.update(kwargs)
+            return {
+                "items": [
+                    {
+                        "artifact_id": "artifact_agent_1",
+                        "artifact_type": "agent_output",
+                        "display_name": "Study Guide.md",
+                        "mime_type": "text/markdown",
+                        "status": "ready",
+                        "summary": "Agent output from OpenClaw.",
+                        "path": "storage/artifacts/app-1/agent_output/artifact_agent_1.json",
+                        "file_path": "storage/artifacts/app-1/agent_output/artifact_agent_1-Study-Guide.md",
+                        "consumption": {
+                            "default_mode": "file_backed",
+                            "supported_modes": ["file_backed", "inline_text", "metadata_only"],
+                        },
+                        "eligible_consumers": ["execution_composer", "agent_context"],
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+    response = client.post(
+        "/sessions/session-1/chat",
+        json={
+            "user_id": "user-1",
+            "app_id": "app-1",
+            "user_query": '@exec openclaw "Create Study Guide.md from the selected notes."',
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    artifacts = payload["execution_override"]["submit_result"]["result"]["artifacts"]
+    assert captured_inventory["app_id"] == "app-1"
+    assert captured_inventory["session_id"] == "session-1"
+    assert artifacts[0]["artifact_id"] == "artifact_agent_1"
+    assert artifacts[0]["display_name"] == "Study Guide.md"
+    assert artifacts[0]["routes"]["open"] == "/sessions/session-1/artifacts/artifact_agent_1/file?app_id=app-1&user_id=user-1"
+    assert artifacts[0]["routes"]["preview"] == "/sessions/session-1/artifacts/artifact_agent_1/preview?app_id=app-1&user_id=user-1"
+    assert artifacts[0]["capabilities"]["can_reuse"] is True
+    history = app_main.chat_repo.history("session-1")
+    assistant_turn = history[-1]
+    stored_artifacts = assistant_turn["retrievalSummary"]["execution_submit_result"]["result"]["artifacts"]
+    assert stored_artifacts[0]["routes"]["open"] == artifacts[0]["routes"]["open"]
+
+
+def test_exec_openclaw_turn_derives_expected_output_filename_from_query(monkeypatch):
+    session_repo, _ = _install_temp_repos(monkeypatch)
+    session_repo.get_or_create(
+        "session-1",
+        collection_id="app-1",
+        user_id="user-1",
+        config_version=1,
+        adapter_version=1,
+        template_version=1,
+    )
+    captured = {}
+
+    class FakeExecutionClient:
+        def submit_agent(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "status": "completed",
+                "execution_id": "execution_openclaw_named_output_123",
+                "result": {"backend": "openclaw_cli", "summary": "OpenClaw completed."},
+            }
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+    response = client.post(
+        "/sessions/session-1/chat",
+        json={
+            "user_id": "user-1",
+            "app_id": "app-1",
+            "user_query": '@exec openclaw "Read the selected artifact and create Study Questions.md"',
+            "execution_request": {
+                "artifact_refs": [
+                    {
+                        "artifact_id": "artifact_chat_1",
+                        "role": "source",
+                        "reuse_mode": "inline_text",
+                    }
+                ]
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["expected_outputs"][0]["output_id"] == "agent_answer"
+    assert captured["expected_outputs"][0]["display_name"] == "Study Questions.md"
+    assert captured["expected_outputs"][0]["media_type"] == "text/markdown"
+    assert captured["expected_outputs"][0]["required"] is True
+    assert captured["expected_outputs"][0]["persist_as_artifact"] is True
+
+
 def test_exec_codex_turn_surfaces_confirmation_required_summary(monkeypatch):
     session_repo, _ = _install_temp_repos(monkeypatch)
     session_repo.get_or_create(

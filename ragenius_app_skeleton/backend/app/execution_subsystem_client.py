@@ -100,6 +100,8 @@ class ExecutionSubsystemClient:
         agent_skill_hint: str | None = None,
         approved_content_id: str | None = None,
         approved_revision_id: str | None = None,
+        artifact_refs: list[dict[str, Any]] | None = None,
+        expected_outputs: list[dict[str, Any]] | None = None,
         context_payload: dict[str, Any] | None = None,
         require_confirmation: bool = False,
     ) -> dict[str, Any]:
@@ -119,6 +121,10 @@ class ExecutionSubsystemClient:
             payload["approved_content_id"] = approved_content_id
         if approved_revision_id:
             payload["approved_revision_id"] = approved_revision_id
+        if artifact_refs:
+            payload["artifact_refs"] = artifact_refs
+        if expected_outputs:
+            payload["expected_outputs"] = expected_outputs
         if context_payload:
             payload["context"] = context_payload
         return self._json_request("POST", "/executions", payload)

@@ -102,6 +102,7 @@ class ChatRequest(BaseModel):
     config_version: int = 1
     adapter_version: int = 1
     template_version: int = 1
+    execution_request: dict[str, Any] | None = None
 
 
 class BuilderIngestPayload(BaseModel):
@@ -601,6 +602,16 @@ def _artifact_is_previewable(item: dict[str, Any]) -> bool:
     return file_path.endswith((".md", ".txt", ".pdf", ".json", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4"))
 
 
+def _artifact_default_consumption(artifact_type: str) -> dict[str, Any] | None:
+    normalized = str(artifact_type or "").strip()
+    if normalized in {"agent_output", "chat_export", "notebooklm_report"}:
+        return {
+            "default_mode": "file_backed",
+            "supported_modes": ["file_backed", "inline_text", "metadata_only"],
+        }
+    return None
+
+
 def _artifact_type_label(artifact_type: str) -> str:
     explicit = {
         "chat_export": "Chat Export",
@@ -737,6 +748,79 @@ def _normalize_session_artifact_item(
             "artifact_id": artifact_id,
             "file_path": str(item.get("file_path") or "").strip() or None,
             "metadata_path": str(item.get("path") or "").strip() or None,
+        },
+    }
+
+
+def _enrich_execution_result_artifacts(
+    *,
+    session_id: str,
+    app_id: str,
+    user_id: str,
+    submit_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    result_payload = submit_result.get("result")
+    if not isinstance(result_payload, dict):
+        return submit_result
+    raw_artifacts = result_payload.get("artifacts")
+    if not isinstance(raw_artifacts, list) or not raw_artifacts:
+        return submit_result
+
+    artifact_ids = [
+        str(item.get("artifact_id") or "").strip()
+        for item in raw_artifacts
+        if isinstance(item, dict) and str(item.get("artifact_id") or "").strip()
+    ]
+    inventory_by_id: dict[str, dict[str, Any]] = {}
+    if artifact_ids:
+        try:
+            inventory_payload = execution_client.get_artifact_inventory(
+                app_id=app_id,
+                session_id=session_id,
+                artifact_type=None,
+                eligible_for=None,
+                status="ready",
+            ) or {}
+            inventory_items = _normalize_artifact_inventory_items(
+                [item for item in inventory_payload.get("items", []) if isinstance(item, dict)]
+            )
+            for item in inventory_items:
+                artifact_id = str(item.get("artifact_id") or "").strip()
+                if artifact_id:
+                    inventory_by_id[artifact_id] = item
+        except Exception:
+            inventory_by_id = {}
+
+    enriched_artifacts: list[dict[str, Any]] = []
+    for raw_item in raw_artifacts:
+        if not isinstance(raw_item, dict):
+            continue
+        artifact_id = str(raw_item.get("artifact_id") or "").strip()
+        inventory_item = inventory_by_id.get(artifact_id, {})
+        merged = {**raw_item, **inventory_item}
+        artifact_type = str(merged.get("artifact_type") or raw_item.get("artifact_type") or "").strip()
+        if artifact_type and not isinstance(merged.get("consumption"), dict):
+            consumption = _artifact_default_consumption(artifact_type)
+            if consumption:
+                merged["consumption"] = consumption
+        if not merged.get("eligible_consumers") and artifact_type == "agent_output":
+            merged["eligible_consumers"] = ["execution_composer", "agent_context"]
+        enriched_artifacts.append(
+            _normalize_session_artifact_item(
+                session_id=session_id,
+                app_id=app_id,
+                user_id=user_id,
+                item=merged,
+            )
+            if artifact_id
+            else merged
+        )
+
+    return {
+        **submit_result,
+        "result": {
+            **result_payload,
+            "artifacts": enriched_artifacts,
         },
     }
 
@@ -953,6 +1037,103 @@ def _normalize_exec_overrides_for_skill(skill_id: str, overrides: Dict[str, Any]
                 str(item).strip() for item in recipients if str(item).strip()
             )
     return normalized
+
+
+def _structured_execution_request(payload: ChatRequest) -> Dict[str, Any]:
+    request_payload = payload.execution_request
+    return request_payload if isinstance(request_payload, dict) else {}
+
+
+def _coerce_list_of_dicts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _agent_artifact_refs_from_request(payload: ChatRequest) -> list[dict[str, Any]]:
+    request_payload = _structured_execution_request(payload)
+    return _coerce_list_of_dicts(
+        request_payload.get("artifact_refs")
+        if "artifact_refs" in request_payload
+        else request_payload.get("artifactRefs")
+    )
+
+
+def _agent_expected_outputs_from_request(payload: ChatRequest) -> list[dict[str, Any]]:
+    request_payload = _structured_execution_request(payload)
+    return _coerce_list_of_dicts(
+        request_payload.get("expected_outputs")
+        if "expected_outputs" in request_payload
+        else request_payload.get("expectedOutputs")
+    )
+
+
+def _safe_agent_output_display_name(value: str) -> str:
+    normalized = " ".join(str(value or "").strip().split())
+    normalized = normalized.replace("\\", "-").replace("/", "-").replace(":", "-")
+    normalized = "".join(ch for ch in normalized if ch.isprintable() and ch not in '<>"|?*')
+    normalized = normalized.strip(" .-_")
+    if not normalized:
+        return "openclaw-result.md"
+    if not Path(normalized).suffix:
+        normalized = f"{normalized}.md"
+    return normalized[:100]
+
+
+def _infer_agent_output_display_name(agent_query: str) -> str | None:
+    text = " ".join(str(agent_query or "").strip().split())
+    if not text:
+        return None
+    action_match = re.search(
+        r"\b(?:create|write|save|export|produce|generate|prepare)\s+"
+        r"(?:a|an|the)?\s*(?:file|artifact|document|output)?\s*"
+        r"(?:named|called|titled|as)?\s*"
+        r"[\"“”']?([^\"“”']{1,80}?\.(?:md|markdown|txt|pdf|json))\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if action_match:
+        return _safe_agent_output_display_name(action_match.group(1))
+    quoted = re.findall(r'["“”\']([^"“”\']{1,80}?\.(?:md|markdown|txt|pdf|json))["“”\']', text, flags=re.IGNORECASE)
+    if quoted:
+        return _safe_agent_output_display_name(quoted[-1])
+    title_match = re.search(
+        r"\b(?:titled|named|called|title)\s+[\"“”']([^\"“”']{1,80})[\"“”']",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if title_match:
+        return _safe_agent_output_display_name(title_match.group(1))
+    return None
+
+
+def _agent_expected_outputs_for_openclaw(
+    *,
+    payload: ChatRequest,
+    agent_query: str,
+) -> list[dict[str, Any]]:
+    expected_outputs = _agent_expected_outputs_from_request(payload)
+    inferred_display_name = _infer_agent_output_display_name(agent_query)
+    if expected_outputs:
+        normalized: list[dict[str, Any]] = []
+        for index, item in enumerate(expected_outputs):
+            row = dict(item)
+            if index == 0 and inferred_display_name and not str(row.get("display_name") or "").strip():
+                row["display_name"] = inferred_display_name
+            normalized.append(row)
+        return normalized
+    if not inferred_display_name:
+        return []
+    return [
+        {
+            "output_id": "agent_answer",
+            "display_name": inferred_display_name,
+            "media_type": "text/markdown",
+            "required": True,
+            "persist_as_artifact": True,
+            "artifact_type": "agent_output",
+        }
+    ]
 
 
 def _render_chat_export_content(messages: list[dict[str, Any]], export_format: str) -> str:
@@ -1565,6 +1746,12 @@ def _handle_exec_agent_turn(
             "revision_id": snapshot.get("revision_id"),
             "content_text": snapshot.get("content_text"),
         }
+    artifact_refs = _agent_artifact_refs_from_request(payload)
+    expected_outputs = (
+        _agent_expected_outputs_for_openclaw(payload=payload, agent_query=agent_query)
+        if agent_backend == "openclaw_cli"
+        else _agent_expected_outputs_from_request(payload)
+    )
     submit_result = execution_client.submit_agent(
         session_id=session_id,
         app_id=payload.app_id,
@@ -1573,7 +1760,15 @@ def _handle_exec_agent_turn(
         agent_skill_hint=str(route.agent_skill_hint or "").strip() or None,
         approved_content_id=snapshot.get("approved_content_id") if snapshot else None,
         approved_revision_id=snapshot.get("revision_id") if snapshot else None,
+        artifact_refs=artifact_refs,
+        expected_outputs=expected_outputs,
         context_payload=context_payload,
+    )
+    submit_result = _enrich_execution_result_artifacts(
+        session_id=session_id,
+        app_id=payload.app_id,
+        user_id=payload.user_id,
+        submit_result=submit_result,
     )
     if snapshot is not None:
         lane_state["content_lane"]["latest_approved_content_id"] = snapshot.get("approved_content_id")
@@ -1601,12 +1796,16 @@ def _handle_exec_agent_turn(
         "agent_backend": agent_backend,
     }
     chat_repo.append(session_id, "user", payload.user_query, retrieval_summary=retrieval_summary)
+    assistant_retrieval_summary = {
+        **retrieval_summary,
+        "execution_submit_result": submit_result,
+    }
     summary_text = _agent_exec_summary_text(
         submit_result,
         provider_label=provider_label,
         agent_skill_hint=str(route.agent_skill_hint or "").strip() or None,
     )
-    chat_repo.append(session_id, "assistant", summary_text, retrieval_summary=retrieval_summary)
+    chat_repo.append(session_id, "assistant", summary_text, retrieval_summary=assistant_retrieval_summary)
     return {
         "content": summary_text,
         "citations": [],
