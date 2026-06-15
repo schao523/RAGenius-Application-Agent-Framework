@@ -1350,6 +1350,8 @@ class SkillManagementTests(unittest.TestCase):
 
     def test_subsystem_page_shows_runtime_integration_inventory(self) -> None:
         class FakeExecutionClient:
+            base_url = "http://127.0.0.1:3001"
+
             def get_runtime_readyz(self):
                 return {
                     "ok": True,
@@ -1583,12 +1585,16 @@ class SkillManagementTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Runtime Integration Inventory", body)
+        self.assertIn("Execution base URL", body)
+        self.assertIn("http://127.0.0.1:3001", body)
         self.assertIn("Startup auto-discovery", body)
         self.assertIn("gmail", body)
         self.assertIn("gdrive", body)
         self.assertIn("notebooklm", body)
         self.assertIn("Skill Authoring Coverage", body)
         self.assertIn("Runtime Tool Inventory", body)
+        self.assertIn("/readyz", body)
+        self.assertIn("/v1/tools/inventory", body)
         self.assertIn("notebooklm.generate_video", body)
         self.assertIn("adapter.notebooklm.generate_video", body)
         self.assertIn("default family inference supported", body)
@@ -1600,6 +1606,18 @@ class SkillManagementTests(unittest.TestCase):
         self.assertIn("Fallback Summary", body)
         self.assertIn("Total executions", body)
         self.assertIn("mcp.gdrive.download_file_content", body)
+
+    def test_execution_client_defaults_to_local_execution_subsystem_port(self) -> None:
+        app_module = importlib.import_module("app")
+        original_value = os.environ.pop("RAGENIUS_EXECUTION_BASE_URL", None)
+
+        try:
+            client = app_module._execution_client()
+        finally:
+            if original_value is not None:
+                os.environ["RAGENIUS_EXECUTION_BASE_URL"] = original_value
+
+        self.assertEqual(client.base_url, "http://127.0.0.1:3001")
 
     def test_subsystem_page_refreshes_mcp_provider_status(self) -> None:
         class FakeExecutionClient:
@@ -1645,6 +1663,219 @@ class SkillManagementTests(unittest.TestCase):
             payload["tools_discovered"][0]["id"],
             "mcp.gdrive.download_file_content",
         )
+
+    def test_subsystem_tools_info_export_writes_markdown_from_runtime_inventory(self) -> None:
+        class FakeExecutionClient:
+            def get_runtime_readyz(self):
+                return {
+                    "ok": True,
+                    "status_code": 200,
+                    "body": {"checks": {"runtime_config": {"mcp": {}}, "mcp_discovery": {}}},
+                }
+
+            def get_mcp_provider_status(self):
+                return {
+                    "ok": True,
+                    "status_code": 200,
+                    "body": {"startup_completed": True, "providers": {}},
+                }
+
+            def get_runtime_integrations(self):
+                return {
+                    "ok": True,
+                    "status_code": 200,
+                    "body": {"items": [], "summary": {"total_integrations": 0, "by_family": {}}},
+                }
+
+            def get_tool_inventory(self):
+                return {
+                    "ok": True,
+                    "status_code": 200,
+                    "body": {
+                        "items": [
+                            {
+                                "tool_id": "retrieve_documents",
+                                "name": "Retrieve Documents",
+                                "family": "rag_adapter",
+                                "provider_id": "rag_subsystem",
+                                "enabled": True,
+                                "permission_scopes": ["rag.read"],
+                                "side_effecting": False,
+                                "timeout_ms": 2000,
+                                "policy_class": "safe_read",
+                                "fallback_capable": False,
+                                "fallback_strategy": None,
+                                "input_schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "query": {"type": "string"},
+                                        "top_k": {"type": "number"},
+                                    },
+                                    "required": ["query"],
+                                },
+                                "output_schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "items": {"type": "array"},
+                                    },
+                                    "required": ["items"],
+                                },
+                                "metadata": {
+                                    "policyClass": "safe_read",
+                                },
+                            },
+                            {
+                                "tool_id": "adapter.notebooklm.generate_video",
+                                "name": "NotebookLM Generate Video",
+                                "family": "adapter",
+                                "provider_id": "notebooklm",
+                                "enabled": True,
+                                "permission_scopes": ["external_api.write"],
+                                "side_effecting": True,
+                                "timeout_ms": 240000,
+                                "policy_class": "review_required",
+                                "fallback_capable": False,
+                                "fallback_strategy": None,
+                                "input_schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "notebookId": {"type": "string"},
+                                        "instructions": {"type": "string"},
+                                    },
+                                    "required": ["instructions"],
+                                },
+                                "output_schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "artifact_id": {"type": "string"},
+                                    },
+                                    "required": ["artifact_id"],
+                                },
+                                "metadata": {
+                                    "requiresConfirmation": True,
+                                },
+                            },
+                        ]
+                    },
+                }
+
+            def get_recent_execution_diagnostics(self, limit: int = 10, used_fallback=None, execution_path=None):
+                return {
+                    "ok": True,
+                    "status_code": 200,
+                    "body": {"items": [], "summary": {}},
+                }
+
+        store = DatabaseStore(
+            ":memory:",
+            storage_root=self._tmpdir / "builder_storage",
+            seed_data=False,
+        )
+        app_module = importlib.import_module("app")
+        original_store = app_module.store
+        original_execution_client = app_module._execution_client
+        original_export_path = app_module._TOOLS_INFO_EXPORT_PATH
+        export_path = self._tmpdir / "docs" / "tools_info.md"
+        app_module.store = store
+        app_module._execution_client = lambda: FakeExecutionClient()
+        app_module._TOOLS_INFO_EXPORT_PATH = export_path
+        app_module.app.config["TESTING"] = True
+
+        try:
+            client = app_module.app.test_client()
+            response = client.post(
+                "/admin/subsystem/tools-info/export",
+                follow_redirects=True,
+            )
+            body = response.get_data(as_text=True)
+        finally:
+            app_module._TOOLS_INFO_EXPORT_PATH = original_export_path
+            app_module._execution_client = original_execution_client
+            app_module.store = original_store
+            store.close()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(export_path.exists())
+        exported = export_path.read_text(encoding="utf-8")
+        self.assertIn("tools_info.md export written", body)
+        self.assertIn("docs/tools_info.md", body)
+        self.assertIn("# RAGenius Tools Inventory", exported)
+        self.assertIn("## `retrieve_documents`", exported)
+        self.assertIn("## `adapter.notebooklm.generate_video`", exported)
+        self.assertIn("Permission scopes: `rag.read`", exported)
+        self.assertIn("Permission scopes: `external_api.write`", exported)
+        self.assertIn("Side effects: `read_only`", exported)
+        self.assertIn("Side effects: `write`", exported)
+        self.assertIn('"query": {', exported)
+        self.assertIn('"instructions": {', exported)
+        self.assertIn('"artifact_id": {', exported)
+
+    def test_subsystem_tools_info_export_writes_diagnostic_markdown_when_inventory_unavailable(self) -> None:
+        class FakeExecutionClient:
+            def get_runtime_readyz(self):
+                return {
+                    "ok": False,
+                    "status_code": None,
+                    "body": {"error": {"message": "connection refused"}},
+                }
+
+            def get_mcp_provider_status(self):
+                return {"ok": False, "status_code": None, "body": {}}
+
+            def get_runtime_integrations(self):
+                return {"ok": False, "status_code": None, "body": {}}
+
+            def get_tool_inventory(self):
+                return {
+                    "ok": False,
+                    "status_code": None,
+                    "body": {
+                        "error": {
+                            "code": "EXECUTION_SUBSYSTEM_UNAVAILABLE",
+                            "message": "connection refused",
+                        }
+                    },
+                }
+
+            def get_recent_execution_diagnostics(self, limit: int = 10, used_fallback=None, execution_path=None):
+                return {"ok": False, "status_code": None, "body": {}}
+
+        store = DatabaseStore(
+            ":memory:",
+            storage_root=self._tmpdir / "builder_storage",
+            seed_data=False,
+        )
+        app_module = importlib.import_module("app")
+        original_store = app_module.store
+        original_execution_client = app_module._execution_client
+        original_export_path = app_module._TOOLS_INFO_EXPORT_PATH
+        export_path = self._tmpdir / "docs" / "tools_info.md"
+        app_module.store = store
+        app_module._execution_client = lambda: FakeExecutionClient()
+        app_module._TOOLS_INFO_EXPORT_PATH = export_path
+        app_module.app.config["TESTING"] = True
+
+        try:
+            client = app_module.app.test_client()
+            response = client.post(
+                "/admin/subsystem/tools-info/export",
+                follow_redirects=True,
+            )
+            body = response.get_data(as_text=True)
+        finally:
+            app_module._TOOLS_INFO_EXPORT_PATH = original_export_path
+            app_module._execution_client = original_execution_client
+            app_module.store = original_store
+            store.close()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(export_path.exists())
+        exported = export_path.read_text(encoding="utf-8")
+        self.assertIn("tools_info.md export written", body)
+        self.assertIn("# RAGenius Tools Inventory Export Failed", exported)
+        self.assertIn("EXECUTION_SUBSYSTEM_UNAVAILABLE", exported)
+        self.assertIn("connection refused", exported)
+        self.assertIn("RAGENIUS_EXECUTION_BASE_URL", exported)
 
     def test_normalize_safe_read_skill_builds_file_inspection_draft(self) -> None:
         markdown = "\n".join(

@@ -91,12 +91,29 @@
       <h2 class="text-lg font-semibold text-gray-900">Runtime Integration Inventory</h2>
       <p class="text-sm text-gray-600">Cross-family view of configured runtime integrations, including MCP, adapter-backed integrations like NotebookLM, and local/runtime-native tool families.</p>
     </div>
+    <form method="post" action="{{ url_for('export_tools_info') }}">
+      <button type="submit" class="px-3 py-2 rounded bg-gray-800 text-white hover:bg-gray-900">Export tools_info.md</button>
+    </form>
   </div>
+
+  {% if tools_info_export_status == "written" %}
+    <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+      tools_info.md export written to <code>{{ tools_info_export_path or 'docs/tools_info.md' }}</code>.
+    </div>
+  {% elif tools_info_export_status == "error" %}
+    <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+      tools_info.md export failed. Builder could not retrieve the execution inventory.
+    </div>
+  {% endif %}
 
   <div class="grid gap-4 lg:grid-cols-2 mb-4">
     <article class="border border-gray-100 rounded-lg p-4 bg-gray-50">
       <h3 class="text-sm font-semibold text-gray-900 mb-2">Discovery Overview</h3>
       <dl class="space-y-2 text-sm">
+        <div class="grid grid-cols-[12rem_1fr] gap-3">
+          <dt class="font-medium text-gray-700">Execution base URL</dt>
+          <dd class="text-gray-900 break-all"><code>{{ runtime_inventory.execution_base_url }}</code></dd>
+        </div>
         <div class="grid grid-cols-[12rem_1fr] gap-3">
           <dt class="font-medium text-gray-700">Transport OK</dt>
           <dd class="text-gray-900">{{ "yes" if runtime_inventory.transport_ok else "no" }}</dd>
@@ -137,6 +154,30 @@
       {% endif %}
     </article>
   </div>
+
+  <article class="border border-gray-100 rounded-lg p-4 bg-gray-50 mb-4">
+    <h3 class="text-sm font-semibold text-gray-900 mb-2">Endpoint Status</h3>
+    <div class="overflow-auto border border-gray-100 rounded bg-white">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50 text-gray-700">
+          <tr>
+            <th class="text-left px-3 py-2">Path</th>
+            <th class="text-left px-3 py-2">OK</th>
+            <th class="text-left px-3 py-2">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in runtime_inventory.endpoint_statuses %}
+            <tr class="border-t border-gray-100">
+              <td class="px-3 py-2 text-gray-900"><code>{{ item.path }}</code></td>
+              <td class="px-3 py-2 text-gray-900">{{ "yes" if item.ok else "no" }}</td>
+              <td class="px-3 py-2 text-gray-900">{{ item.status_code if item.status_code is not none else "-" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
 
   {% if runtime_inventory.runtime_error %}
     <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">

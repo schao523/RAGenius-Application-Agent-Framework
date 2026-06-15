@@ -23,6 +23,10 @@ from execution_client import ExecutionSubsystemClient
 from instruction_model_adapter import InstructionModelAdapter
 from policy import get_template_family_policy
 from skill_normalization import AUTHOR_TOOL_ALIAS_MAP, EXPLICIT_REQUIRED_TOOL_TEMPLATE_MAP
+from tools_info_export import (
+    write_tools_info_failure_markdown,
+    write_tools_info_markdown,
+)
 from rag_stub import (
     process_files,
     retrieve_data,
@@ -45,6 +49,8 @@ _ingest_cancel_lock = threading.Lock()
 _ingest_cancel_doc_ids: set[str] = set()
 _INGEST_STALE_SECONDS = 15 * 60
 _SKILL_IMPORT_UPLOAD_ROOT = Path(__file__).resolve().parent / "storage" / "_skill_import_uploads"
+_TOOLS_INFO_EXPORT_PATH = Path(__file__).resolve().parents[2] / "docs" / "tools_info.md"
+_DEFAULT_EXECUTION_BASE_URL = "http://127.0.0.1:3001"
 _DEFAULT_INSTRUCTION_MODEL_SNAPSHOT_ROOT = (
     Path(__file__).resolve().parents[2]
     / "ragenius_app_skeleton"
@@ -160,11 +166,12 @@ def _alias_support_matrix() -> list[dict]:
 
 
 def _runtime_inventory_view():
-    readyz = _execution_client().get_runtime_readyz()
-    provider_status = _execution_client().get_mcp_provider_status()
-    integrations = _execution_client().get_runtime_integrations()
-    tool_inventory = _execution_client().get_tool_inventory()
-    recent_execution_diagnostics = _execution_client().get_recent_execution_diagnostics(
+    client = _execution_client()
+    readyz = client.get_runtime_readyz()
+    provider_status = client.get_mcp_provider_status()
+    integrations = client.get_runtime_integrations()
+    tool_inventory = client.get_tool_inventory()
+    recent_execution_diagnostics = client.get_recent_execution_diagnostics(
         limit=10,
         used_fallback=True,
     )
@@ -232,6 +239,11 @@ def _runtime_inventory_view():
         )
 
     return {
+        "execution_base_url": getattr(
+            client,
+            "base_url",
+            os.environ.get("RAGENIUS_EXECUTION_BASE_URL", _DEFAULT_EXECUTION_BASE_URL),
+        ),
         "transport_ok": bool(
             readyz.get("ok", False)
             and provider_status.get("ok", False)
@@ -239,6 +251,33 @@ def _runtime_inventory_view():
             and tool_inventory.get("ok", False)
             and recent_execution_diagnostics.get("ok", False)
         ),
+        "endpoint_statuses": [
+            {
+                "path": "/readyz",
+                "ok": bool(readyz.get("ok", False)),
+                "status_code": readyz.get("status_code"),
+            },
+            {
+                "path": "/v1/tools/providers/mcp/status",
+                "ok": bool(provider_status.get("ok", False)),
+                "status_code": provider_status.get("status_code"),
+            },
+            {
+                "path": "/v1/runtime/integrations",
+                "ok": bool(integrations.get("ok", False)),
+                "status_code": integrations.get("status_code"),
+            },
+            {
+                "path": "/v1/tools/inventory",
+                "ok": bool(tool_inventory.get("ok", False)),
+                "status_code": tool_inventory.get("status_code"),
+            },
+            {
+                "path": "/v1/executions/diagnostics/recent",
+                "ok": bool(recent_execution_diagnostics.get("ok", False)),
+                "status_code": recent_execution_diagnostics.get("status_code"),
+            },
+        ],
         "readyz_status_code": readyz.get("status_code"),
         "provider_status_code": provider_status.get("status_code"),
         "integration_status_code": integrations.get("status_code"),
@@ -471,7 +510,7 @@ def parse_skill(skill_id: str):
 
 
 def _execution_client() -> ExecutionSubsystemClient:
-    base_url = os.environ.get("RAGENIUS_EXECUTION_BASE_URL", "http://127.0.0.1:3000")
+    base_url = os.environ.get("RAGENIUS_EXECUTION_BASE_URL", _DEFAULT_EXECUTION_BASE_URL)
     return ExecutionSubsystemClient(base_url)
 
 
@@ -1381,10 +1420,56 @@ def test_skill(skill_id):
 
 @app.route("/admin/subsystem")
 def subsystem_settings():
+    export_status = (request.args.get("tools_info_export") or "").strip().lower()
+    export_path = (request.args.get("tools_info_path") or "").strip()
     return render_template(
         "subsystem_settings.html",
         subsystem=_global_subsystem_settings_view(),
         runtime_inventory=_runtime_inventory_view(),
+        tools_info_export_status=export_status,
+        tools_info_export_path=export_path,
+    )
+
+
+@app.route("/admin/subsystem/tools-info/export", methods=["POST"])
+def export_tools_info():
+    client = _execution_client()
+    inventory_response = client.get_tool_inventory()
+    body = inventory_response.get("body", {}) if isinstance(inventory_response, dict) else {}
+    status_code = inventory_response.get("status_code") if isinstance(inventory_response, dict) else None
+    inventory_items = body.get("items", []) if isinstance(body, dict) else []
+    if (
+        not isinstance(inventory_response, dict)
+        or not inventory_response.get("ok", False)
+        or not isinstance(inventory_items, list)
+    ):
+        written_path = write_tools_info_failure_markdown(
+            _TOOLS_INFO_EXPORT_PATH,
+            base_url=getattr(
+                client,
+                "base_url",
+                os.environ.get("RAGENIUS_EXECUTION_BASE_URL", _DEFAULT_EXECUTION_BASE_URL),
+            ),
+            status_code=status_code,
+            error=body.get("error") if isinstance(body, dict) else None,
+        )
+        relative_path = written_path.relative_to(Path(__file__).resolve().parents[2]).as_posix()
+        return redirect(
+            url_for(
+                "subsystem_settings",
+                tools_info_export="written",
+                tools_info_path=relative_path,
+            )
+        )
+
+    written_path = write_tools_info_markdown(_TOOLS_INFO_EXPORT_PATH, inventory_items)
+    relative_path = written_path.relative_to(Path(__file__).resolve().parents[2]).as_posix()
+    return redirect(
+        url_for(
+            "subsystem_settings",
+            tools_info_export="written",
+            tools_info_path=relative_path,
+        )
     )
 
 
