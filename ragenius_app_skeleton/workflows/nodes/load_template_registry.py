@@ -49,6 +49,45 @@ DOMAIN_JSON_FILES = [
     "retrieval_mapping_rules.json",
 ]
 
+
+def _string_or_none(value: Any) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _activation_step_scope_id(activation: Any) -> str | None:
+    if not isinstance(activation, dict):
+        return None
+    return _string_or_none(activation.get("step_scope_id"))
+
+
+def _sanitize_session_execution_state_for_rehydration(
+    existing_session_state: Dict[str, Any],
+    workflow_progress: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Drop stale step-scoped activations before strict runtime validation."""
+    sanitized = dict(existing_session_state or {})
+    active_step_scope_id = (
+        _string_or_none(sanitized.get("active_step_scope_id"))
+        or _string_or_none(workflow_progress.get("step_scope_id"))
+    )
+    if not active_step_scope_id:
+        return sanitized
+
+    procedure_activation_step_id = _activation_step_scope_id(
+        sanitized.get("procedure_step_activation")
+    )
+    if procedure_activation_step_id and procedure_activation_step_id != active_step_scope_id:
+        sanitized.pop("procedure_step_activation", None)
+
+    support_activation_step_id = _activation_step_scope_id(
+        sanitized.get("primary_support_module_activation")
+    )
+    if support_activation_step_id and support_activation_step_id != active_step_scope_id:
+        sanitized.pop("primary_support_module_activation", None)
+
+    return sanitized
+
 RESOURCE_PATTERN = re.compile(
     r"([A-Za-z0-9_\-\[\]\u4e00-\u9fff][A-Za-z0-9_\-\[\]\u4e00-\u9fff ]*\.(?:md|pdf|txt|docx|zip))"
 )
@@ -3572,6 +3611,10 @@ def run(
         state.get("session_execution_state", {})
         if isinstance(state.get("session_execution_state"), dict)
         else {}
+    )
+    existing_session_state = _sanitize_session_execution_state_for_rehydration(
+        existing_session_state,
+        workflow_progress,
     )
     assembly_state = (
         existing_session_state.get("assembly_state", {})
