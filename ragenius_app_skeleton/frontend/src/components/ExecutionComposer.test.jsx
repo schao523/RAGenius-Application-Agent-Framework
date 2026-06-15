@@ -443,6 +443,12 @@ describe("ExecutionComposer", () => {
       args: {
         request: "Use NotebookLM to create a Traditional Chinese study guide for Micah 2.",
         skillHint: "notebooklm",
+        expectedOutputs: [
+          expect.objectContaining({
+            output_id: "agent_output",
+            persist_as_artifact: true,
+          }),
+        ],
       },
     });
   });
@@ -496,6 +502,73 @@ describe("ExecutionComposer", () => {
       executionMode: "sync",
       args: {
         request: "Reply with OK.",
+        expectedOutputs: [
+          expect.objectContaining({
+            output_id: "agent_output",
+            persist_as_artifact: true,
+          }),
+        ],
+      },
+    });
+  });
+
+  it("submits agent mode with selected artifacts and expected reusable output", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <ExecutionComposer
+        toolInventory={[]}
+        skillInventory={[]}
+        artifactInventory={[
+          {
+            artifact_id: "artifact_chat",
+            display_name: "Reviewed Chat.md",
+            artifact_type: "chat_export",
+            mime_type: "text/markdown",
+            consumption: {
+              default_mode: "inline_text",
+              supported_modes: ["inline_text", "file_backed"],
+            },
+          },
+        ]}
+        onSubmit={onSubmit}
+        onClose={vi.fn()}
+        styles={styles}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    fireEvent.change(screen.getByLabelText("Agent Backend"), { target: { value: "openclaw_cli" } });
+
+    expect(screen.getByText(/agent artifacts/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/reviewed chat\.md/i));
+    fireEvent.change(screen.getByLabelText("Agent Request"), {
+      target: { value: "Use the selected artifact to produce a concise study note." },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    });
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      commandKind: "agent",
+      targetId: "openclaw_cli",
+      executionMode: "sync",
+      args: {
+        request: "Use the selected artifact to produce a concise study note.",
+        artifactRefs: [
+          {
+            artifact_id: "artifact_chat",
+            role: "source",
+            reuse_mode: "inline_text",
+          },
+        ],
+        expectedOutputs: [
+          expect.objectContaining({
+            output_id: "agent_output",
+            artifact_type: "agent_output",
+            persist_as_artifact: true,
+          }),
+        ],
       },
     });
   });
@@ -1018,6 +1091,68 @@ describe("ExecutionComposer", () => {
       executionMode: "sync",
       args: expect.objectContaining({
         artifactIds: ["artifact_pdf"],
+      }),
+    });
+  });
+
+  it("opens in agent mode with suggested agent output artifact preselected", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <ExecutionComposer
+        toolInventory={[]}
+        skillInventory={[]}
+        artifactInventory={[
+          {
+            artifact_id: "artifact_agent",
+            display_name: "Agent Output - Study Notes.md",
+            artifact_type: "agent_output",
+            mime_type: "text/markdown",
+            consumption: {
+              default_mode: "inline_text",
+              supported_modes: ["inline_text", "file_backed"],
+            },
+          },
+        ]}
+        initialCommandKind="agent"
+        initialAgentBackend="openclaw_cli"
+        initialArtifactSuggestion={{
+          artifact_id: "artifact_agent",
+          display_name: "Agent Output - Study Notes.md",
+          artifact_type: "agent_output",
+          mime_type: "text/markdown",
+        }}
+        onSubmit={onSubmit}
+        onClose={vi.fn()}
+        styles={styles}
+      />,
+    );
+
+    expect(screen.getByLabelText("Mode")).toHaveValue("agent");
+    expect(screen.getByLabelText("Agent Backend")).toHaveValue("openclaw_cli");
+    expect(screen.getByText(/selected artifacts \(1\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/agent output - study notes\.md \(inline text\)/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Agent Request"), {
+      target: { value: "Reuse the selected agent output." },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    });
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      commandKind: "agent",
+      targetId: "openclaw_cli",
+      executionMode: "sync",
+      args: expect.objectContaining({
+        request: "Reuse the selected agent output.",
+        artifactRefs: [
+          {
+            artifact_id: "artifact_agent",
+            role: "source",
+            reuse_mode: "inline_text",
+          },
+        ],
       }),
     });
   });

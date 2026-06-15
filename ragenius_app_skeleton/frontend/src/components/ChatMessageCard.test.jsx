@@ -214,7 +214,7 @@ describe("ChatMessageCard", () => {
 
     expect(screen.getAllByText(/session-1-chat-export\.md/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/chat export from 1 selected message/i)).toBeInTheDocument();
-    const link = screen.getByRole("link", { name: /^open$/i });
+    const link = screen.getByRole("link", { name: /open saved file/i });
     expect(link).toHaveAttribute(
       "href",
       "file:///D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/storage/artifacts/app-1/chat_export/artifact_123-session-1-chat-export.md",
@@ -261,14 +261,15 @@ describe("ChatMessageCard", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /use in execution composer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /reuse in composer/i }));
     fireEvent.click(screen.getByRole("button", { name: /view in artifact library/i }));
 
     expect(onUseArtifactInComposer).toHaveBeenCalledWith(
       expect.objectContaining({ artifact_id: "artifact_1" }),
+      expect.any(Object),
     );
     expect(onViewArtifactLibrary).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("link", { name: /open artifact/i })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /open saved file/i })).toHaveAttribute(
       "href",
       "http://127.0.0.1:8012/sessions/session-1/artifacts/artifact_1/file",
     );
@@ -304,7 +305,7 @@ describe("ChatMessageCard", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: /^open$/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open saved file/i })).toBeInTheDocument();
     expect(screen.getByText(/saved file: d:\\github\\codex-ragenius-system/i)).toBeInTheDocument();
   });
 
@@ -377,10 +378,88 @@ describe("ChatMessageCard", () => {
 
     expect(screen.getAllByText(/reviewed chat - helpful reply\.md/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/chat_export \| reviewed/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /use in execution composer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /reuse in composer/i }));
     fireEvent.click(screen.getByRole("button", { name: /view in artifact library/i }));
     expect(onUseArtifactInComposer).toHaveBeenCalledWith(
       expect.objectContaining({ artifact_id: "artifact_reviewed_1", reviewed: true }),
+      expect.any(Object),
+    );
+    expect(onViewArtifactLibrary).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders agent output artifact actions and passes agent reuse context", () => {
+    const onUseArtifactInComposer = vi.fn();
+    const onViewArtifactLibrary = vi.fn();
+    render(
+      <ChatMessageCard
+        message={{
+          id: "msg_agent_output",
+          role: "assistant",
+          content: "OpenClaw completed and saved a reusable output.",
+          retrievalSummary: {
+            execution_override: true,
+            command: "openclaw",
+            target_id: "openclaw_cli",
+            execution_status_result: {
+              status: "completed",
+              result: {
+                artifacts: [
+                  {
+                    artifact_id: "artifact_agent_1",
+                    artifact_type: "agent_output",
+                    display_name: "Agent Output - Study Notes.md",
+                    summary: "Verified OpenClaw output saved for reuse.",
+                    mime_type: "text/markdown",
+                    routes: {
+                      preview: "/sessions/session-1/artifacts/artifact_agent_1/preview",
+                      open: "/sessions/session-1/artifacts/artifact_agent_1/file",
+                    },
+                    capabilities: {
+                      can_open: true,
+                      can_preview: true,
+                      can_reuse: true,
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        }}
+        index={4}
+        styles={styles}
+        baseUrl="http://127.0.0.1:8012"
+        onUseArtifactInComposer={onUseArtifactInComposer}
+        onViewArtifactLibrary={onViewArtifactLibrary}
+        onOpenInspector={() => {}}
+        onOpenSources={() => {}}
+        onRefreshExecutionStatus={() => {}}
+        onRetryExecution={() => {}}
+        selectable
+        onToggleSelectedForExport={() => {}}
+        onApproveMessage={() => {}}
+      />,
+    );
+
+    expect(screen.getByText(/agent output - study notes\.md/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /preview/i })).toHaveAttribute(
+      "href",
+      "http://127.0.0.1:8012/sessions/session-1/artifacts/artifact_agent_1/preview",
+    );
+    expect(screen.getByRole("link", { name: /preview/i })).toHaveAttribute("target", "_blank");
+    expect(screen.getByRole("link", { name: /open saved file/i })).toHaveAttribute(
+      "href",
+      "http://127.0.0.1:8012/sessions/session-1/artifacts/artifact_agent_1/file",
+    );
+    expect(screen.getByRole("link", { name: /open saved file/i })).toHaveAttribute("target", "_blank");
+    expect(screen.queryByRole("button", { name: /select for reuse/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /mark reviewed/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /reuse in composer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /view in artifact library/i }));
+
+    expect(onUseArtifactInComposer).toHaveBeenCalledWith(
+      expect.objectContaining({ artifact_id: "artifact_agent_1", artifact_type: "agent_output" }),
+      expect.objectContaining({ commandKind: "agent", agentBackend: "openclaw_cli" }),
     );
     expect(onViewArtifactLibrary).toHaveBeenCalledTimes(1);
   });

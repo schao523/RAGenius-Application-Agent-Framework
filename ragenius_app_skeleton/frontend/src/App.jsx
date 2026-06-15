@@ -1119,6 +1119,72 @@ export function buildExecCommand({ commandKind, targetId, args = {}, executionMo
   return `${execPrefix} ${normalizedKind} ${normalizedTargetId}${serializedArgs ? ` ${serializedArgs}` : ""}`.trim();
 }
 
+function normalizeComposerArtifactRefs(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+      const artifactId = String(entry.artifact_id || entry.artifactId || "").trim();
+      if (!artifactId) {
+        return null;
+      }
+      return {
+        artifact_id: artifactId,
+        role: String(entry.role || "source").trim() || "source",
+        reuse_mode: String(entry.reuse_mode || entry.reuseMode || "inline_text").trim() || "inline_text",
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeComposerExpectedOutputs(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+      const outputId = String(entry.output_id || entry.outputId || "").trim();
+      if (!outputId) {
+        return null;
+      }
+      return {
+        ...entry,
+        output_id: outputId,
+        ...(entry.artifactType && !entry.artifact_type ? { artifact_type: entry.artifactType } : {}),
+        ...(entry.mediaType && !entry.media_type ? { media_type: entry.mediaType } : {}),
+        ...(entry.persistAsArtifact !== undefined && entry.persist_as_artifact === undefined
+          ? { persist_as_artifact: Boolean(entry.persistAsArtifact) }
+          : {}),
+      };
+    })
+    .filter(Boolean);
+}
+
+export function buildExecutionRequestForComposer({ commandKind, targetId, args = {}, executionMode = "sync" }) {
+  if (commandKind !== "agent") {
+    return null;
+  }
+  const artifactRefs = normalizeComposerArtifactRefs(args.artifactRefs || args.artifact_refs);
+  const expectedOutputs = normalizeComposerExpectedOutputs(args.expectedOutputs || args.expected_outputs);
+  if (artifactRefs.length === 0 && expectedOutputs.length === 0) {
+    return null;
+  }
+  return {
+    request_type: "execute_agent",
+    agent_backend: String(targetId || "codex_cli").trim() || "codex_cli",
+    execution_mode: executionMode === "async" ? "async" : "sync",
+    ...(artifactRefs.length > 0 ? { artifact_refs: artifactRefs } : {}),
+    ...(expectedOutputs.length > 0 ? { expected_outputs: expectedOutputs } : {}),
+  };
+}
+
 function extractErrorDetail(error) {
   const rawMessage = String(error?.message || error || "").trim();
   if (!rawMessage) {
@@ -1770,7 +1836,10 @@ function ChatPanel({
   const [showExecutionComposer, setShowExecutionComposer] = useState(false);
   const [showArtifactLibrary, setShowArtifactLibrary] = useState(true);
   const [artifactSuggestionForComposer, setArtifactSuggestionForComposer] = useState(null);
+  const [artifactSuggestionsForComposer, setArtifactSuggestionsForComposer] = useState([]);
   const [artifactPreferredTargetIdForComposer, setArtifactPreferredTargetIdForComposer] = useState("");
+  const [artifactPreferredCommandKindForComposer, setArtifactPreferredCommandKindForComposer] = useState("");
+  const [artifactPreferredAgentBackendForComposer, setArtifactPreferredAgentBackendForComposer] = useState("");
   const [error, setError] = useState("");
   const [showScrollLatest, setShowScrollLatest] = useState(false);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
@@ -2127,9 +2196,12 @@ function ChatPanel({
                         onLoginNotebookLm={launchNotebookLmLogin}
                         loggingInToNotebookLm={loggingInToNotebookLm}
                         baseUrl={baseUrl}
-                        onUseArtifactInComposer={(artifact) => {
+                        onUseArtifactInComposer={(artifact, options = {}) => {
                           setArtifactSuggestionForComposer(artifact);
+                          setArtifactSuggestionsForComposer([]);
                           setArtifactPreferredTargetIdForComposer("");
+                          setArtifactPreferredCommandKindForComposer(String(options?.commandKind || "").trim());
+                          setArtifactPreferredAgentBackendForComposer(String(options?.agentBackend || "").trim());
                           setShowArtifactLibrary(true);
                           setShowExecutionComposer(true);
                         }}
@@ -2206,7 +2278,10 @@ function ChatPanel({
                 style={styles.secondaryButton}
                 onClick={() => {
                   setArtifactSuggestionForComposer(null);
+                  setArtifactSuggestionsForComposer([]);
                   setArtifactPreferredTargetIdForComposer("");
+                  setArtifactPreferredCommandKindForComposer("");
+                  setArtifactPreferredAgentBackendForComposer("");
                   setShowExecutionComposer(true);
                 }}
                 disabled={!appId}
@@ -2241,19 +2316,28 @@ function ChatPanel({
               skillInventory={skillInventory}
               artifactInventory={artifactInventory}
               initialArtifactSuggestion={artifactSuggestionForComposer}
+              initialArtifactSuggestions={artifactSuggestionsForComposer}
               initialTargetId={artifactPreferredTargetIdForComposer}
+              initialCommandKind={artifactPreferredCommandKindForComposer}
+              initialAgentBackend={artifactPreferredAgentBackendForComposer}
               selectedApprovedContent={
                 approvedContent.find((item) => item.approved_content_id === selectedApprovedContentId) || null
               }
               onSubmit={async (payload) => {
                 await onRunExecutionComposer?.(payload);
                 setArtifactSuggestionForComposer(null);
+                setArtifactSuggestionsForComposer([]);
                 setArtifactPreferredTargetIdForComposer("");
+                setArtifactPreferredCommandKindForComposer("");
+                setArtifactPreferredAgentBackendForComposer("");
                 setShowExecutionComposer(false);
               }}
               onClose={() => {
                 setArtifactSuggestionForComposer(null);
+                setArtifactSuggestionsForComposer([]);
                 setArtifactPreferredTargetIdForComposer("");
+                setArtifactPreferredCommandKindForComposer("");
+                setArtifactPreferredAgentBackendForComposer("");
                 setShowExecutionComposer(false);
               }}
               styles={styles}
@@ -2270,7 +2354,19 @@ function ChatPanel({
             baseUrl={baseUrl}
             onUseInNextStep={(artifact, options = {}) => {
               setArtifactSuggestionForComposer(artifact);
+              setArtifactSuggestionsForComposer([]);
               setArtifactPreferredTargetIdForComposer(String(options?.preferredTargetId || "").trim());
+              setArtifactPreferredCommandKindForComposer(String(options?.commandKind || "").trim());
+              setArtifactPreferredAgentBackendForComposer(String(options?.agentBackend || "").trim());
+              setShowExecutionComposer(true);
+            }}
+            onUseSelectedInNextStep={(artifacts, options = {}) => {
+              const selectedArtifacts = Array.isArray(artifacts) ? artifacts : [];
+              setArtifactSuggestionForComposer(selectedArtifacts[0] || null);
+              setArtifactSuggestionsForComposer(selectedArtifacts);
+              setArtifactPreferredTargetIdForComposer(String(options?.preferredTargetId || "").trim());
+              setArtifactPreferredCommandKindForComposer(String(options?.commandKind || "agent").trim());
+              setArtifactPreferredAgentBackendForComposer(String(options?.agentBackend || "openclaw_cli").trim());
               setShowExecutionComposer(true);
             }}
             onClose={() => setShowArtifactLibrary(false)}
@@ -2540,7 +2636,7 @@ export default function App() {
     };
   };
 
-  const sendQueryToSession = async (targetSessionId, rawQuery) => {
+  const sendQueryToSession = async (targetSessionId, rawQuery, options = {}) => {
     const targetThreadKey = buildThreadKey(selectedAppId, targetSessionId);
     const normalizedQuery = applyApprovedContentSelectionToExecQuery(
       rawQuery,
@@ -2564,6 +2660,7 @@ export default function App() {
       app_id: selectedAppId,
       user_query: normalizedQuery,
       template_version: 1,
+      ...(options.executionRequest ? { execution_request: options.executionRequest } : {}),
     };
     let data;
     try {
@@ -2602,7 +2699,13 @@ export default function App() {
       executionMode,
       approvedContentId: activeSelectedApprovedContentId,
     });
-    await sendQueryToSession(sessionId, rawQuery);
+    const executionRequest = buildExecutionRequestForComposer({
+      commandKind,
+      targetId,
+      args,
+      executionMode,
+    });
+    await sendQueryToSession(sessionId, rawQuery, { executionRequest });
   };
 
   const toggleMessageExportSelection = (messageId) => {

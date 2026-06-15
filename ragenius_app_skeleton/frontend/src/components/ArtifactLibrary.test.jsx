@@ -20,6 +20,71 @@ const styles = {
 };
 
 describe("ArtifactLibrary", () => {
+  it("multi-selects artifacts for composer reuse", () => {
+    const onUseSelectedInNextStep = vi.fn();
+    render(
+      <ArtifactLibrary
+        artifacts={[
+          {
+            artifact_id: "artifact_agent",
+            artifact_type: "agent_output",
+            display_name: "Agent Output.md",
+            capabilities: { can_reuse: true },
+            consumption: { default_mode: "inline_text", supported_modes: ["inline_text"] },
+          },
+          {
+            artifact_id: "artifact_chat",
+            artifact_type: "chat_export",
+            display_name: "Reviewed Chat.md",
+            capabilities: { can_reuse: true },
+            consumption: { default_mode: "inline_text", supported_modes: ["inline_text"] },
+          },
+        ]}
+        onUseSelectedInNextStep={onUseSelectedInNextStep}
+        styles={styles}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /use selected in composer \(0\)/i })).toBeDisabled();
+
+    fireEvent.click(screen.getByLabelText(/select agent output\.md/i));
+    fireEvent.click(screen.getByLabelText(/select reviewed chat\.md/i));
+    fireEvent.click(screen.getByRole("button", { name: /use selected in composer \(2\)/i }));
+
+    expect(onUseSelectedInNextStep).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({ artifact_id: "artifact_agent" }),
+        expect.objectContaining({ artifact_id: "artifact_chat" }),
+      ],
+      expect.objectContaining({ commandKind: "agent" }),
+    );
+  });
+
+  it("defaults single agent output reuse to Agent composer mode", () => {
+    const onUseInNextStep = vi.fn();
+    render(
+      <ArtifactLibrary
+        artifacts={[
+          {
+            artifact_id: "artifact_agent",
+            artifact_type: "agent_output",
+            display_name: "Agent Output.md",
+            capabilities: { can_reuse: true },
+          },
+        ]}
+        onUseInNextStep={onUseInNextStep}
+        styles={styles}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /reuse in composer/i }));
+
+    expect(onUseInNextStep).toHaveBeenCalledWith(
+      expect.objectContaining({ artifact_id: "artifact_agent" }),
+      expect.objectContaining({ commandKind: "agent", agentBackend: "openclaw_cli" }),
+    );
+  });
+
   it("filters artifacts and delegates reuse and confirmed delete actions for the selected artifact", async () => {
     const onUseInNextStep = vi.fn();
     const onDeleteArtifact = vi.fn().mockResolvedValue(undefined);

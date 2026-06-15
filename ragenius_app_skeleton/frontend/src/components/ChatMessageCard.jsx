@@ -181,6 +181,22 @@ function normalizeExecutionArtifacts(message) {
   return normalized;
 }
 
+function resolveAgentReuseContext(message) {
+  const retrievalSummary =
+    message?.retrievalSummary && typeof message.retrievalSummary === "object"
+      ? message.retrievalSummary
+      : {};
+  const command = String(retrievalSummary.command || "").trim().toLowerCase();
+  const targetId = String(retrievalSummary.target_id || "").trim();
+  if (command !== "openclaw" && command !== "codex" && targetId !== "openclaw_cli" && targetId !== "codex_cli") {
+    return {};
+  }
+  return {
+    commandKind: "agent",
+    agentBackend: targetId === "openclaw_cli" || command === "openclaw" ? "openclaw_cli" : "codex_cli",
+  };
+}
+
 export default function ChatMessageCard({
   message,
   index,
@@ -214,6 +230,8 @@ export default function ChatMessageCard({
   const isApprovalTurn = Boolean(message?.retrievalSummary?.approval_event);
   const exportSelectable = Boolean(selectable && onToggleSelectedForExport);
   const executionArtifacts = normalizeExecutionArtifacts(message);
+  const showExportSelectionAction = exportSelectable && (!isExecutionTurn || executionArtifacts.length === 0);
+  const agentReuseContext = resolveAgentReuseContext(message);
   const assistantTypeLabel =
     assistantType && typeof assistantType === "object" ? assistantType.label : assistantType;
   const assistantTypeStyle =
@@ -274,7 +292,7 @@ export default function ChatMessageCard({
         {isAssistant && primaryScopeSummary && <span style={styles.pill}>Scope: {primaryScopeSummary}</span>}
         {isAssistant && sourceSummary && <span style={styles.pill}>{sourceSummary}</span>}
         {isAssistant && retrievalBypassSummary && <span style={{ ...styles.pill, ...styles.statusWarn }}>{retrievalBypassSummary}</span>}
-        {selectedForExport && <span style={{ ...styles.pill, ...styles.statusOk }}>Selected for reuse</span>}
+        {showExportSelectionAction && selectedForExport && <span style={{ ...styles.pill, ...styles.statusOk }}>Selected for reuse</span>}
       </div>
       <div style={styles.messageBodyText}>{message.content}</div>
       {isAssistant && (
@@ -286,9 +304,11 @@ export default function ChatMessageCard({
               {executionArtifacts.map((artifact, artifactIndex) => {
                 const primaryPath = artifact.file_path || artifact.path || "";
                 const routeHref = resolveRouteHref(baseUrl, artifact.routes?.open || artifact.open_url);
+                const previewHref = resolveRouteHref(baseUrl, artifact.routes?.preview || artifact.preview_url);
                 const primaryHref = routeHref || toFileHref(primaryPath);
-                const openLabel = routeHref ? "Open Artifact" : "Open";
+                const openLabel = "Open Saved File";
                 const canReuseArtifact = artifact.capabilities?.can_reuse !== false && artifact.artifact_id;
+                const canPreviewArtifact = artifact.capabilities?.can_preview === true && previewHref;
                 return (
                   <div
                     key={`${artifact.artifact_id || artifact.display_name || "artifact"}-${artifactIndex}`}
@@ -314,15 +334,15 @@ export default function ChatMessageCard({
                         Saved file: {primaryPath}
                       </div>
                     )}
-                    {primaryHref && (
+                    {(primaryHref || canPreviewArtifact) && (
                       <div style={{ ...styles.actionRow, marginTop: 8 }}>
                         {canReuseArtifact && onUseArtifactInComposer && (
                           <button
                             type="button"
                             style={styles.inlineActionButton}
-                            onClick={() => onUseArtifactInComposer(artifact)}
+                            onClick={() => onUseArtifactInComposer(artifact, agentReuseContext)}
                           >
-                            Use in Execution Composer
+                            Reuse In Composer
                           </button>
                         )}
                         {onViewArtifactLibrary && (
@@ -331,16 +351,30 @@ export default function ChatMessageCard({
                             style={styles.inlineActionButton}
                             onClick={onViewArtifactLibrary}
                           >
-                            View in Artifact Library
+                            View In Artifact Library
                           </button>
                         )}
-                        <a
-                          href={primaryHref}
-                          style={styles.inlineActionButton}
-                          title={primaryPath}
-                        >
-                          {openLabel}
-                        </a>
+                        {canPreviewArtifact && (
+                          <a
+                            href={previewHref}
+                            style={styles.inlineActionButton}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Preview
+                          </a>
+                        )}
+                        {primaryHref && (
+                          <a
+                            href={primaryHref}
+                            style={styles.inlineActionButton}
+                            title={primaryPath}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {openLabel}
+                          </a>
+                        )}
                       </div>
                     )}
                   </div>
@@ -349,7 +383,7 @@ export default function ChatMessageCard({
             </div>
           )}
           <div style={styles.actionRow}>
-            {exportSelectable && (
+            {showExportSelectionAction && (
               <button type="button" style={styles.inlineActionButton} onClick={toggleExportSelection}>
                 {selectedForExport ? "Unselect Reuse" : "Select for Reuse"}
               </button>

@@ -7,6 +7,7 @@ import {
   applyApprovedContentSelectionToExecQuery,
   buildExecutionResultPreview,
   buildExecutionSubmitErrorTurn,
+  buildExecutionRequestForComposer,
   buildExecCommand,
   classifyAssistantTurn,
   resolveActiveAppDisplay,
@@ -32,9 +33,12 @@ function createDeferred() {
 
 function buildAppFetchMock({
   artifactResponse,
+  instructionPreview = { compiled_id: "compiled-test" },
   messages = [],
+  onRequest,
 } = {}) {
-  return vi.fn(async (url) => {
+  return vi.fn(async (url, options = {}) => {
+    onRequest?.(url, options);
     const normalizedUrl = String(url || "");
     if (normalizedUrl === "http://127.0.0.1:5000") {
       return { ok: true, text: async () => "" };
@@ -66,7 +70,7 @@ function buildAppFetchMock({
       return mockJsonResponse({
         instructions: null,
         instruction_understanding_status: {},
-        instruction_understanding_preview: {},
+        instruction_understanding_preview: instructionPreview,
       });
     }
     if (
@@ -78,6 +82,8 @@ function buildAppFetchMock({
         id: "app-1",
         name: "Bible Tutor",
         starter_questions: [],
+        instruction_understanding_status: {},
+        instruction_understanding_preview: instructionPreview,
       });
     }
     if (normalizedUrl.includes("/sessions/") && normalizedUrl.includes("/messages?")) {
@@ -298,6 +304,51 @@ describe("buildExecCommand", () => {
     });
 
     expect(command).toBe('@exec async openclaw "Reply with OK."');
+  });
+
+  it("builds structured execution_request metadata for agent composer submissions", () => {
+    const executionRequest = buildExecutionRequestForComposer({
+      commandKind: "agent",
+      targetId: "openclaw_cli",
+      executionMode: "async",
+      args: {
+        request: "Use selected artifacts.",
+        artifactRefs: [
+          {
+            artifact_id: "artifact_chat",
+            role: "source",
+            reuse_mode: "inline_text",
+          },
+        ],
+        expectedOutputs: [
+          {
+            output_id: "agent_output",
+            artifact_type: "agent_output",
+            persist_as_artifact: true,
+          },
+        ],
+      },
+    });
+
+    expect(executionRequest).toEqual({
+      request_type: "execute_agent",
+      agent_backend: "openclaw_cli",
+      execution_mode: "async",
+      artifact_refs: [
+        {
+          artifact_id: "artifact_chat",
+          role: "source",
+          reuse_mode: "inline_text",
+        },
+      ],
+      expected_outputs: [
+        {
+          output_id: "agent_output",
+          artifact_type: "agent_output",
+          persist_as_artifact: true,
+        },
+      ],
+    });
   });
 });
 
@@ -622,5 +673,134 @@ describe("App artifact fetch propagation", () => {
     fireEvent.click(selectForReuse);
 
     expect(screen.getByRole("button", { name: /create reuse artifact \(1\)/i })).toBeEnabled();
+  });
+
+  it("posts agent composer artifact refs and expected outputs as execution_request", async () => {
+    const requests = [];
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      onRequest: (url, options) => requests.push({ url: String(url || ""), options }),
+      artifactResponse: () => mockJsonResponse({
+        items: [
+          {
+            artifact_id: "artifact_chat",
+            display_name: "Reviewed Chat.md",
+            artifact_type: "chat_export",
+            mime_type: "text/markdown",
+            consumption: {
+              default_mode: "inline_text",
+              supported_modes: ["inline_text", "file_backed"],
+            },
+          },
+        ],
+      }),
+    }));
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /run tool or skill/i }));
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    fireEvent.change(screen.getByLabelText("Agent Backend"), { target: { value: "openclaw_cli" } });
+    fireEvent.click(screen.getAllByLabelText(/reviewed chat\.md/i)[0]);
+    fireEvent.change(screen.getByLabelText("Agent Request"), {
+      target: { value: "Use the selected artifact to write a study note." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    await waitFor(() => {
+      const chatPost = requests.find((request) => request.url.includes("/sessions/") && request.url.endsWith("/chat"));
+      expect(chatPost).toBeTruthy();
+      const body = JSON.parse(chatPost.options.body);
+      expect(body.user_query).toBe('@exec openclaw "Use the selected artifact to write a study note."');
+      expect(body.execution_request).toMatchObject({
+        request_type: "execute_agent",
+        agent_backend: "openclaw_cli",
+        execution_mode: "sync",
+        artifact_refs: [
+          {
+            artifact_id: "artifact_chat",
+            role: "source",
+            reuse_mode: "inline_text",
+          },
+        ],
+      });
+      expect(body.execution_request.expected_outputs[0]).toMatchObject({
+        output_id: "agent_output",
+        artifact_type: "agent_output",
+        persist_as_artifact: true,
+      });
+    });
+  });
+
+  it("opens Composer in Agent mode when reusing an agent output execution artifact", async () => {
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      artifactResponse: () => mockJsonResponse({
+        items: [
+          {
+            artifact_id: "artifact_agent",
+            display_name: "Agent Output - Study Notes.md",
+            artifact_type: "agent_output",
+            mime_type: "text/markdown",
+            consumption: {
+              default_mode: "inline_text",
+              supported_modes: ["inline_text", "file_backed"],
+            },
+            capabilities: {
+              can_reuse: true,
+              can_open: true,
+              can_preview: true,
+            },
+            routes: {
+              open: "/sessions/session-1/artifacts/artifact_agent/file",
+              preview: "/sessions/session-1/artifacts/artifact_agent/preview",
+            },
+          },
+        ],
+      }),
+      messages: [
+        {
+          id: "msg_agent_output",
+          role: "assistant",
+          content: "OpenClaw completed and saved a reusable output.",
+          retrieval_summary: {
+            execution_override: true,
+            command: "openclaw",
+            target_id: "openclaw_cli",
+            execution_status_result: {
+              status: "completed",
+              result: {
+                artifacts: [
+                  {
+                    artifact_id: "artifact_agent",
+                    artifact_type: "agent_output",
+                    display_name: "Agent Output - Study Notes.md",
+                    mime_type: "text/markdown",
+                    routes: {
+                      open: "/sessions/session-1/artifacts/artifact_agent/file",
+                      preview: "/sessions/session-1/artifacts/artifact_agent/preview",
+                    },
+                    capabilities: {
+                      can_reuse: true,
+                      can_open: true,
+                      can_preview: true,
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      ],
+    }));
+
+    render(<App />);
+
+    await screen.findByText(/openclaw completed and saved a reusable output/i);
+    fireEvent.click(screen.getAllByRole("button", { name: /reuse in composer/i })[0]);
+
+    expect(await screen.findByRole("heading", { name: /execution composer/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Mode")).toHaveValue("agent");
+    expect(screen.getByLabelText("Agent Backend")).toHaveValue("openclaw_cli");
+    expect(screen.getByText(/selected artifacts \(1\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/agent output - study notes\.md \(inline text\)/i)).toBeInTheDocument();
   });
 });

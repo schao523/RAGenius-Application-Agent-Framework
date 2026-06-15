@@ -164,6 +164,7 @@ export default function ArtifactLibrary({
   loading = false,
   error = "",
   onUseInNextStep,
+  onUseSelectedInNextStep,
   onDeleteArtifact,
   baseUrl,
   onClose,
@@ -172,6 +173,7 @@ export default function ArtifactLibrary({
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [selectedArtifactId, setSelectedArtifactId] = useState("");
+  const [selectedReuseArtifactIds, setSelectedReuseArtifactIds] = useState([]);
   const [pendingDeleteArtifactId, setPendingDeleteArtifactId] = useState("");
   const [deletingArtifactId, setDeletingArtifactId] = useState("");
   const [actionErrorByArtifactId, setActionErrorByArtifactId] = useState({});
@@ -215,6 +217,25 @@ export default function ArtifactLibrary({
         .includes(loweredQuery);
     });
   }, [normalizedArtifacts, query, typeFilter]);
+  const selectedReuseArtifacts = useMemo(() => {
+    const selectedIds = new Set(selectedReuseArtifactIds);
+    return normalizedArtifacts.filter((artifact) => selectedIds.has(artifact.artifact_id));
+  }, [normalizedArtifacts, selectedReuseArtifactIds]);
+  const toggleReuseArtifactSelection = (artifactId) => {
+    const normalizedId = String(artifactId || "").trim();
+    if (!normalizedId) {
+      return;
+    }
+    setSelectedReuseArtifactIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(normalizedId)) {
+        next.delete(normalizedId);
+      } else {
+        next.add(normalizedId);
+      }
+      return [...next];
+    });
+  };
   const selectedArtifact = filteredArtifacts.find((item) => item.artifact_id === selectedArtifactId)
     || normalizedArtifacts.find((item) => item.artifact_id === selectedArtifactId)
     || null;
@@ -264,6 +285,16 @@ export default function ArtifactLibrary({
         </div>
         <div style={styles.actionRow}>
           <div style={styles.small}>{`${filteredArtifacts.length} item${filteredArtifacts.length === 1 ? "" : "s"}`}</div>
+          {onUseSelectedInNextStep ? (
+            <button
+              type="button"
+              style={styles.secondaryButton}
+              disabled={selectedReuseArtifacts.length === 0}
+              onClick={() => onUseSelectedInNextStep(selectedReuseArtifacts, { commandKind: "agent" })}
+            >
+              {`Use Selected In Composer (${selectedReuseArtifacts.length})`}
+            </button>
+          ) : null}
           {onClose ? (
             <button
               type="button"
@@ -323,6 +354,7 @@ export default function ArtifactLibrary({
         <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
               {filteredArtifacts.map((artifact) => {
             const isSelected = selectedArtifactId === artifact.artifact_id;
+            const isSelectedForReuse = selectedReuseArtifactIds.includes(artifact.artifact_id);
             const isPendingDelete = pendingDeleteArtifactId === artifact.artifact_id;
             const isDeleting = deletingArtifactId === artifact.artifact_id;
             const actionError = String(actionErrorByArtifactId[artifact.artifact_id] || "").trim();
@@ -353,6 +385,15 @@ export default function ArtifactLibrary({
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
                   <div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${artifact.display_name}`}
+                          checked={isSelectedForReuse}
+                          disabled={artifact.capabilities?.can_reuse === false}
+                          onChange={() => toggleReuseArtifactSelection(artifact.artifact_id)}
+                        />
+                      </label>
                       <div style={{ fontWeight: 700, color: "#0f172a" }}>{artifact.display_name}</div>
                       {artifact.reviewed ? <span style={{ ...styles.pill, ...styles.statusOk }}>Reviewed</span> : null}
                       {artifact.consumption?.default_mode ? (
@@ -421,7 +462,12 @@ export default function ArtifactLibrary({
                         onClick={(event) => {
                           event.stopPropagation();
                           clearArtifactActionError(artifact.artifact_id);
-                          onUseInNextStep?.(artifact, {});
+                          onUseInNextStep?.(
+                            artifact,
+                            artifact.artifact_type === "agent_output"
+                              ? { commandKind: "agent", agentBackend: "openclaw_cli" }
+                              : {},
+                          );
                         }}
                       >
                         Reuse In Composer

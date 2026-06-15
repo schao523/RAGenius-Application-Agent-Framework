@@ -327,6 +327,33 @@ function resolveArtifactModeForField(artifact, requiredMode) {
   return String(artifact?.consumption?.default_mode || "").trim();
 }
 
+function buildAgentArtifactRef(artifact) {
+  const artifactId = String(artifact?.artifact_id || "").trim();
+  if (!artifactId) {
+    return null;
+  }
+  return {
+    artifact_id: artifactId,
+    role: "source",
+    reuse_mode: String(artifact?.consumption?.default_mode || "inline_text").trim() || "inline_text",
+  };
+}
+
+function buildDefaultAgentExpectedOutputs(enabled) {
+  if (!enabled) {
+    return [];
+  }
+  return [
+    {
+      output_id: "agent_output",
+      artifact_type: "agent_output",
+      media_type: "text/markdown",
+      persist_as_artifact: true,
+      required: false,
+    },
+  ];
+}
+
 function pickerFieldExistsInSchema(picker, properties) {
   const fieldName = String(picker?.field_name || "artifactIds").trim();
   return Boolean(fieldName && properties && Object.prototype.hasOwnProperty.call(properties, fieldName));
@@ -368,19 +395,42 @@ export default function ExecutionComposer({
   skillInventory,
   artifactInventory,
   initialArtifactSuggestion,
+  initialArtifactSuggestions,
   initialTargetId,
+  initialCommandKind,
+  initialAgentBackend,
   selectedApprovedContent,
   onSubmit,
   onClose,
   styles,
 }) {
-  const [commandKind, setCommandKind] = useState("tool");
+  const normalizedInitialCommandKind = ["tool", "skill", "agent"].includes(String(initialCommandKind || "").trim())
+    ? String(initialCommandKind || "").trim()
+    : "tool";
+  const normalizedInitialAgentBackend = String(initialAgentBackend || "").trim() === "openclaw_cli"
+    ? "openclaw_cli"
+    : "codex_cli";
+  const initialSuggestedArtifacts = useMemo(
+    () => [
+      ...(Array.isArray(initialArtifactSuggestions) ? initialArtifactSuggestions : []),
+      ...(initialArtifactSuggestion ? [initialArtifactSuggestion] : []),
+    ].filter(Boolean),
+    [initialArtifactSuggestion, initialArtifactSuggestions],
+  );
+  const initialAgentArtifactIds = Array.from(
+    new Set(initialSuggestedArtifacts.map((artifact) => String(artifact?.artifact_id || "").trim()).filter(Boolean)),
+  );
+  const [commandKind, setCommandKind] = useState(normalizedInitialCommandKind);
   const [targetId, setTargetId] = useState("");
   const [executionMode, setExecutionMode] = useState("sync");
   const [formState, setFormState] = useState({});
   const [agentRequest, setAgentRequest] = useState("");
-  const [agentBackend, setAgentBackend] = useState("codex_cli");
+  const [agentBackend, setAgentBackend] = useState(normalizedInitialAgentBackend);
   const [agentSkillHint, setAgentSkillHint] = useState("");
+  const [agentArtifactIds, setAgentArtifactIds] = useState(
+    normalizedInitialCommandKind === "agent" ? initialAgentArtifactIds : [],
+  );
+  const [persistAgentOutput, setPersistAgentOutput] = useState(true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showOptionalFields, setShowOptionalFields] = useState(false);
@@ -400,12 +450,14 @@ export default function ExecutionComposer({
       : null;
   const artifacts = useMemo(() => {
     const rows = [...inventoryArtifacts];
-    const suggestedArtifactId = String(suggestedArtifact?.artifact_id || "").trim();
-    if (suggestedArtifactId && !rows.some((item) => String(item.artifact_id || "").trim() === suggestedArtifactId)) {
-      rows.push(...normalizeArtifactInventory([suggestedArtifact]));
+    for (const initialArtifact of initialSuggestedArtifacts) {
+      const suggestedArtifactId = String(initialArtifact?.artifact_id || "").trim();
+      if (suggestedArtifactId && !rows.some((item) => String(item.artifact_id || "").trim() === suggestedArtifactId)) {
+        rows.push(...normalizeArtifactInventory([initialArtifact]));
+      }
     }
     return rows;
-  }, [inventoryArtifacts, suggestedArtifact]);
+  }, [inventoryArtifacts, initialSuggestedArtifacts]);
   const resolvedSuggestedArtifact = useMemo(() => {
     const suggestedArtifactId = String(suggestedArtifact?.artifact_id || "").trim();
     if (!suggestedArtifactId) {
@@ -517,6 +569,14 @@ export default function ExecutionComposer({
     }
     return evaluateArtifactCompatibility(resolvedSuggestedArtifact, artifactPicker);
   }, [artifactPicker, normalizedSuggestedArtifactId, resolvedSuggestedArtifact]);
+  const selectedAgentArtifacts = useMemo(() => {
+    const selectedIds = new Set(agentArtifactIds.map((artifactId) => String(artifactId || "").trim()).filter(Boolean));
+    return artifacts.filter((artifact) => selectedIds.has(String(artifact.artifact_id || "").trim()));
+  }, [agentArtifactIds, artifacts]);
+  const agentArtifactRefs = useMemo(
+    () => selectedAgentArtifacts.map(buildAgentArtifactRef).filter(Boolean),
+    [selectedAgentArtifacts],
+  );
 
   useEffect(() => {
     if (commandKind === "agent") {
@@ -526,6 +586,7 @@ export default function ExecutionComposer({
       setShowOptionalFields(false);
       return;
     }
+    setAgentArtifactIds([]);
     const preferredTargetId =
       commandKind === "tool" && initialTargetId && items.some((item) => String(item.tool_id || item.skill_id || "").trim() === String(initialTargetId).trim())
         ? String(initialTargetId).trim()
@@ -586,6 +647,124 @@ export default function ExecutionComposer({
 
   const setFieldValue = (key, value) => {
     setFormState((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const toggleAgentArtifactSelection = (artifactId) => {
+    const normalizedId = String(artifactId || "").trim();
+    if (!normalizedId) {
+      return;
+    }
+    setAgentArtifactIds((prev) => {
+      const current = new Set(prev.map((item) => String(item || "").trim()).filter(Boolean));
+      if (current.has(normalizedId)) {
+        current.delete(normalizedId);
+      } else {
+        current.add(normalizedId);
+      }
+      return [...current];
+    });
+  };
+
+  const removeAgentArtifactSelection = (artifactId) => {
+    const normalizedId = String(artifactId || "").trim();
+    if (!normalizedId) {
+      return;
+    }
+    setAgentArtifactIds((prev) => prev.filter((item) => String(item || "").trim() !== normalizedId));
+  };
+
+  const renderAgentArtifactSelector = () => {
+    const selectedIds = new Set(agentArtifactIds.map((artifactId) => String(artifactId || "").trim()).filter(Boolean));
+    return (
+      <div style={{ ...styles.compactNote, marginTop: 12, display: "grid", gap: 10 }}>
+        <div style={{ fontWeight: 700, color: "#334155" }}>Agent artifacts</div>
+        <div style={styles.small}>
+          Selected artifacts are sent as structured artifact refs. OpenClaw stages file-backed artifacts before invoking the agent.
+        </div>
+        {selectedAgentArtifacts.length > 0 ? (
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontWeight: 700, color: "#334155" }}>Selected artifacts ({selectedAgentArtifacts.length})</div>
+            {selectedAgentArtifacts.map((artifact) => {
+              const labelText = String(artifact.display_name || artifact.artifact_id || "Artifact");
+              return (
+                <div
+                  key={String(artifact.artifact_id)}
+                  style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
+                >
+                  <span>
+                    {labelText}
+                    {artifact?.consumption?.default_mode
+                      ? ` (${formatConsumptionMode(artifact.consumption.default_mode)})`
+                      : ""}
+                  </span>
+                  <button
+                    type="button"
+                    style={styles.inlineActionButton || styles.secondaryButton}
+                    onClick={() => removeAgentArtifactSelection(artifact.artifact_id)}
+                  >
+                    {`Remove ${labelText}`}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={styles.small}>No artifact selected.</div>
+        )}
+        {artifacts.length > 0 ? (
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ fontWeight: 700, color: "#334155" }}>Available artifacts</div>
+            {artifacts.map((artifact) => {
+              const artifactId = String(artifact.artifact_id || "").trim();
+              const labelText = String(artifact.display_name || artifactId || "Artifact");
+              const selectedForAgent = selectedIds.has(artifactId);
+              const metaParts = [
+                artifact.artifact_type ? String(artifact.artifact_type) : "",
+                artifact.mime_type ? String(artifact.mime_type) : "",
+                artifact?.consumption?.default_mode
+                  ? `used as ${formatConsumptionMode(artifact.consumption.default_mode)}`
+                  : "",
+              ].filter(Boolean);
+              return (
+                <label
+                  key={artifactId || labelText}
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    border: selectedForAgent ? "1px solid #0f8f9a" : "1px solid #bfd0e4",
+                    borderRadius: 999,
+                    padding: "10px 14px",
+                    background: selectedForAgent ? "#e8fbf7" : "#fff",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedForAgent}
+                    onChange={() => toggleAgentArtifactSelection(artifactId)}
+                  />
+                  <span style={{ fontWeight: selectedForAgent ? 700 : 600 }}>
+                    {labelText}
+                    {metaParts.length > 0 ? ` (${metaParts.join(" | ")})` : ""}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={styles.small}>No reusable artifacts are loaded for this session.</div>
+        )}
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={persistAgentOutput}
+            onChange={(event) => setPersistAgentOutput(event.target.checked)}
+          />
+          <span>Save agent output as reusable artifact</span>
+        </label>
+      </div>
+    );
   };
 
   const renderField = ([key, fieldSchema]) => {
@@ -945,6 +1124,8 @@ export default function ExecutionComposer({
             ...(agentBackend === "codex_cli" && String(agentSkillHint || "").trim()
               ? { skillHint: String(agentSkillHint || "").trim() }
               : {}),
+            ...(agentArtifactRefs.length > 0 ? { artifactRefs: agentArtifactRefs } : {}),
+            ...(persistAgentOutput ? { expectedOutputs: buildDefaultAgentExpectedOutputs(true) } : {}),
           },
         });
       } catch (submitError) {
@@ -1097,6 +1278,7 @@ export default function ExecutionComposer({
               placeholder='For example: "Use NotebookLM to create a Traditional Chinese study guide for Micah 2:1-11."'
             />
           </div>
+          {renderAgentArtifactSelector()}
         </>
       ) : selected ? (
         <>
