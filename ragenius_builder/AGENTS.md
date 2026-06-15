@@ -67,3 +67,23 @@ Preserve:
 - file-backed markdown instructions
 
 Do not move end-user chat workflows into builder.
+
+---
+
+## Instruction Model GUI
+
+Before changing the Builder Application Instructions configuration UI, read:
+
+- `ragenius_builder/docs/builder_gui_instruction_model_contract.md`
+- `ragenius_builder/docs/builder_gui_instruction_model_design.md`
+
+The Builder GUI may display the compiled instruction model for designer inspection, but it must stay consistent with the `understanding.json` artifact produced and used by `ragenius_app_skeleton`.
+
+Do not create a separate Builder-only interpretation of application instructions and present it as the runtime model.
+
+Keep the distinction clear:
+
+- Markdown preview shows what the designer wrote.
+- Runtime Model / Compiled Understanding shows what runtime compiled and uses.
+
+Opening the Builder instruction page must not silently recompile or mutate runtime state unless explicitly requested by the user through a compile action.

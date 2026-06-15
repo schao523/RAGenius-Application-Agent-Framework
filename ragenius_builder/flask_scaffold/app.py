@@ -20,6 +20,7 @@ from storage import (
     DEFAULT_APP_CONFIG_SCHEMA,
 )
 from execution_client import ExecutionSubsystemClient
+from instruction_model_adapter import InstructionModelAdapter
 from policy import get_template_family_policy
 from skill_normalization import AUTHOR_TOOL_ALIAS_MAP, EXPLICIT_REQUIRED_TOOL_TEMPLATE_MAP
 from rag_stub import (
@@ -44,6 +45,13 @@ _ingest_cancel_lock = threading.Lock()
 _ingest_cancel_doc_ids: set[str] = set()
 _INGEST_STALE_SECONDS = 15 * 60
 _SKILL_IMPORT_UPLOAD_ROOT = Path(__file__).resolve().parent / "storage" / "_skill_import_uploads"
+_DEFAULT_INSTRUCTION_MODEL_SNAPSHOT_ROOT = (
+    Path(__file__).resolve().parents[2]
+    / "ragenius_app_skeleton"
+    / "backend"
+    / ".state"
+    / "instruction_understanding_snapshots"
+)
 
 
 def validation_error(path: str, msg: str, code: str):
@@ -93,6 +101,15 @@ def _global_subsystem_settings_view():
         "retrieval_config": asdict(_current_retrieval_config()),
         "environment": env_values,
     }
+
+
+def _instruction_model_snapshot_root():
+    configured = (os.environ.get("RAGENIUS_INSTRUCTION_MODEL_SNAPSHOT_ROOT") or "").strip()
+    if configured:
+        return configured
+    if _DEFAULT_INSTRUCTION_MODEL_SNAPSHOT_ROOT.is_dir():
+        return _DEFAULT_INSTRUCTION_MODEL_SNAPSHOT_ROOT
+    return None
 
 
 def _tool_family(tool_id: str) -> str:
@@ -1763,6 +1780,16 @@ def api_get_instructions(app_id):
     if not instructions:
         return jsonify({"error": "not found"}), 404
     return jsonify(instructions)
+
+
+@app.route("/api/apps/<app_id>/instruction-model")
+def api_get_instruction_model(app_id):
+    if not store.get_application(app_id):
+        return jsonify({"error": "not found"}), 404
+    instructions = store.get_instructions(app_id) or {"content": "", "version": "", "uri": ""}
+    snapshot_root = _instruction_model_snapshot_root()
+    adapter = InstructionModelAdapter(snapshot_root=snapshot_root)
+    return jsonify(adapter.get_latest_instruction_model(app_id, instructions))
 
 
 @app.route("/api/apps/<app_id>/instructions", methods=["PATCH"])

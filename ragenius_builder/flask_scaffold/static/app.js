@@ -9,6 +9,233 @@
     render();
   }
 
+  const instructionPreviewPanel = document.getElementById('instruction-preview-panel');
+  if (instructionPreviewPanel) {
+    const tabs = Array.from(document.querySelectorAll('.instruction-preview-tab'));
+    const panels = Array.from(document.querySelectorAll('.instruction-preview-mode'));
+    const statusEl = document.getElementById('instruction-model-status');
+    const summaryEl = document.getElementById('instruction-model-summary');
+    const detailsEl = document.getElementById('instruction-model-details');
+    const rawEl = document.getElementById('instruction-model-raw');
+
+    const showMode = (mode) => {
+      tabs.forEach((tab) => {
+        const selected = tab.dataset.previewMode === mode;
+        tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+        tab.className = selected
+          ? 'instruction-preview-tab px-3 py-2 bg-blue-600 text-white'
+          : 'instruction-preview-tab px-3 py-2 bg-white text-gray-700';
+      });
+      panels.forEach((panel) => {
+        panel.classList.toggle('hidden', panel.dataset.previewPanel !== mode);
+      });
+    };
+
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => showMode(tab.dataset.previewMode || 'runtime'));
+    });
+
+    const setStatus = (text, tone = 'neutral') => {
+      if (!statusEl) return;
+      const toneClass = tone === 'error'
+        ? 'border-red-200 bg-red-50 text-red-800'
+        : (tone === 'warning'
+          ? 'border-amber-200 bg-amber-50 text-amber-800'
+          : 'border-gray-200 bg-gray-50 text-gray-700');
+      statusEl.className = `rounded border p-3 text-sm ${toneClass}`;
+      statusEl.textContent = text;
+    };
+
+    const summaryCard = (label, value) => {
+      const card = document.createElement('div');
+      card.className = 'rounded border border-gray-200 bg-white p-3';
+      const labelEl = document.createElement('div');
+      labelEl.className = 'text-xs font-semibold text-gray-500 uppercase tracking-wide';
+      labelEl.textContent = label;
+      const valueEl = document.createElement('div');
+      valueEl.className = 'mt-1 text-sm font-semibold text-gray-900 break-all';
+      valueEl.textContent = value === null || value === undefined || value === '' ? '-' : String(value);
+      card.appendChild(labelEl);
+      card.appendChild(valueEl);
+      return card;
+    };
+
+    const itemLabel = (item) => {
+      if (item && typeof item === 'object') {
+        return item.label || item.title || item.name || item.id || item.block_id || item.procedure_id || item.step_id || item.resource_id || JSON.stringify(item);
+      }
+      return String(item ?? '-');
+    };
+
+    const section = (title, items) => {
+      const wrapper = document.createElement('details');
+      wrapper.className = 'rounded border border-gray-200 bg-white p-3';
+      wrapper.open = false;
+      const summary = document.createElement('summary');
+      summary.className = 'cursor-pointer text-sm font-semibold text-gray-800';
+      summary.textContent = `${title} (${items.length})`;
+      wrapper.appendChild(summary);
+      const list = document.createElement('ul');
+      list.className = 'mt-2 space-y-1 text-sm text-gray-700';
+      items.slice(0, 25).forEach((item, index) => {
+        const row = document.createElement('li');
+        row.className = 'break-all';
+        row.textContent = itemLabel(item) || `item ${index + 1}`;
+        list.appendChild(row);
+      });
+      if (items.length > 25) {
+        const more = document.createElement('li');
+        more.className = 'text-gray-500';
+        more.textContent = `${items.length - 25} more item(s) available in Raw JSON.`;
+        list.appendChild(more);
+      }
+      wrapper.appendChild(list);
+      return wrapper;
+    };
+
+    const procedureSection = (procedures) => {
+      const wrapper = document.createElement('details');
+      wrapper.className = 'rounded border border-gray-200 bg-white p-3';
+      wrapper.open = true;
+      const summary = document.createElement('summary');
+      summary.className = 'cursor-pointer text-sm font-semibold text-gray-800';
+      summary.textContent = `Procedures (${procedures.length})`;
+      wrapper.appendChild(summary);
+
+      const container = document.createElement('div');
+      container.className = 'mt-3 space-y-3';
+      procedures.slice(0, 25).forEach((procedure) => {
+        const procBlock = document.createElement('div');
+        procBlock.className = 'rounded border border-gray-100 bg-gray-50 p-3';
+        const title = document.createElement('div');
+        title.className = 'text-sm font-semibold text-gray-900 break-all';
+        title.textContent = itemLabel(procedure);
+        procBlock.appendChild(title);
+
+        if (procedure.kind || procedure.id) {
+          const meta = document.createElement('div');
+          meta.className = 'mt-1 text-xs text-gray-500 break-all';
+          meta.textContent = [procedure.kind, procedure.id].filter(Boolean).join(' | ');
+          procBlock.appendChild(meta);
+        }
+
+        const steps = asArray(procedure.steps);
+        if (steps.length > 0) {
+          const stepList = document.createElement('ol');
+          stepList.className = 'mt-2 space-y-2 text-sm text-gray-700 list-decimal list-inside';
+          steps.forEach((step) => {
+            const stepRow = document.createElement('li');
+            stepRow.className = 'break-all';
+            const label = document.createElement('span');
+            label.className = 'font-medium text-gray-800';
+            label.textContent = itemLabel(step);
+            stepRow.appendChild(label);
+            if (step.body_text) {
+              const body = document.createElement('div');
+              body.className = 'ml-5 mt-1 whitespace-pre-wrap text-gray-600';
+              body.textContent = step.body_text;
+              stepRow.appendChild(body);
+            }
+            stepList.appendChild(stepRow);
+          });
+          procBlock.appendChild(stepList);
+        } else {
+          const empty = document.createElement('div');
+          empty.className = 'mt-2 text-sm text-amber-700';
+          empty.textContent = 'No procedure steps found for this procedure in the compiled model.';
+          procBlock.appendChild(empty);
+        }
+        container.appendChild(procBlock);
+      });
+      if (procedures.length > 25) {
+        const more = document.createElement('div');
+        more.className = 'text-sm text-gray-500';
+        more.textContent = `${procedures.length - 25} more procedure(s) available in Raw JSON.`;
+        container.appendChild(more);
+      }
+      wrapper.appendChild(container);
+      return wrapper;
+    };
+
+    const asArray = (value) => Array.isArray(value) ? value : [];
+    const runtimeModel = (payload) => {
+      const contract = payload && payload.compiled_contract && typeof payload.compiled_contract === 'object'
+        ? payload.compiled_contract
+        : {};
+      if (contract.instruction_runtime_model && typeof contract.instruction_runtime_model === 'object') {
+        return contract.instruction_runtime_model;
+      }
+      if (contract.hybrid_instruction_runtime_model && typeof contract.hybrid_instruction_runtime_model === 'object') {
+        return contract.hybrid_instruction_runtime_model;
+      }
+      return {};
+    };
+
+    const renderModel = (model) => {
+      const payload = model.payload || null;
+      const summary = model.summary || {};
+      if (rawEl) {
+        rawEl.textContent = payload ? JSON.stringify(payload, null, 2) : 'Runtime model JSON is not available.';
+      }
+      if (summaryEl) {
+        summaryEl.innerHTML = '';
+        [
+          ['Status', model.status],
+          ['Freshness', model.freshness],
+          ['Primary service mode', summary.primary_service_mode],
+          ['Default workflow', summary.default_workflow_id],
+          ['Service blocks', summary.service_block_count],
+          ['Procedures', summary.procedure_count],
+          ['Procedure steps', summary.procedure_step_count],
+          ['Resources', summary.resource_count],
+          ['Semantic attached', summary.semantic_attached],
+          ['Semantic valid', summary.semantic_valid],
+        ].forEach(([label, value]) => summaryEl.appendChild(summaryCard(label, value)));
+      }
+      if (detailsEl) {
+        const rt = runtimeModel(payload);
+        const displayModel = model.display_model || {};
+        detailsEl.innerHTML = '';
+        detailsEl.appendChild(section('Service Blocks And Workflows', asArray(displayModel.service_blocks).length > 0 ? asArray(displayModel.service_blocks) : asArray(rt.instruction_service_blocks)));
+        detailsEl.appendChild(procedureSection(asArray(displayModel.procedures)));
+        detailsEl.appendChild(section('Resources', asArray(displayModel.resources).length > 0 ? asArray(displayModel.resources) : asArray(rt.instruction_resources)));
+        detailsEl.appendChild(section('Dependency Groups', asArray(displayModel.dependency_groups)));
+        detailsEl.appendChild(section('Phase Resource Bindings', asArray(displayModel.phase_resource_bindings)));
+        detailsEl.appendChild(section('Policies', asArray(displayModel.policies).length > 0 ? asArray(displayModel.policies) : [
+          ...asArray(rt.global_policies),
+          ...asArray(rt.progression_rules),
+          ...asArray(rt.turn_constraints),
+          ...asArray(rt.response_policies),
+          ...asArray(rt.clarification_gate_rules),
+        ]));
+      }
+
+      if (model.status === 'error') {
+        setStatus(`Runtime model error: ${(model.errors || []).join('; ') || model.freshness_reason || 'unknown error'}`, 'error');
+      } else if (model.status === 'missing') {
+        setStatus(`Runtime model unavailable: ${model.freshness_reason || 'no compiled model was found'}`, 'warning');
+      } else if (model.freshness === 'stale') {
+        setStatus(`Runtime model loaded but stale: ${model.freshness_reason}`, 'warning');
+      } else {
+        setStatus(`Runtime model loaded. Freshness: ${model.freshness || 'unknown'}.`, 'neutral');
+      }
+    };
+
+    const url = instructionPreviewPanel.dataset.instructionModelUrl;
+    if (url) {
+      window.fetch(url, { headers: { Accept: 'application/json' } })
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        })
+        .then(renderModel)
+        .catch((err) => {
+          setStatus(`Runtime model unavailable: ${err.message}`, 'error');
+          if (rawEl) rawEl.textContent = 'Runtime model JSON is not available.';
+        });
+    }
+  }
+
   const jsonFields = ['config_settings', 'config_schema'];
   jsonFields.forEach((id) => {
     const field = document.getElementById(id);
