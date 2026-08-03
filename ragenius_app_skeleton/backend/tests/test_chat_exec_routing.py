@@ -112,7 +112,7 @@ def test_exec_skill_turn_submits_execution_intent(monkeypatch):
                 "result": {"status": "completed"},
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "completed"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -190,7 +190,7 @@ def test_exec_tool_turn_resolves_runtime_skill_and_submits_execution(monkeypatch
                 "result": {"status": "completed"},
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "completed"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -293,7 +293,7 @@ def test_exec_tool_turn_resolves_selected_artifacts_before_submit(monkeypatch):
                 "result": {"status": "completed"},
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "completed"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -477,8 +477,9 @@ def test_exec_tool_turn_maps_file_backed_artifact_field_to_file_path(monkeypatch
 
     assert response.status_code == 200
     submitted_input = captured["submit"]["input_payload"]
-    assert submitted_input["filePath"].endswith("storage\\artifacts\\app-1\\chat_export\\chat-export.md")
+    assert submitted_input["filePath"] == "artifact_export"
     assert submitted_input["artifactRefs"][0]["artifact_id"] == "artifact_export"
+    assert "file_path" not in submitted_input["artifactRefs"][0]
     assert submitted_input["artifactRefs"][0]["consumption"]["resolved_mode"] == "file_backed"
     assert submitted_input["artifact_reuse"]["fields"]["filePath"] == ["artifact_export"]
 
@@ -528,7 +529,7 @@ def test_exec_tool_turn_accepts_shorthand_tool_alias(monkeypatch):
                 "result": {"items": []},
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "completed"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -580,7 +581,7 @@ def test_exec_codex_turn_submits_agent_execution(monkeypatch):
                 },
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "completed"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -644,7 +645,7 @@ def test_exec_openclaw_turn_submits_agent_execution(monkeypatch):
                 },
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "completed"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -694,7 +695,7 @@ def test_exec_openclaw_turn_passes_structured_artifact_refs_and_expected_outputs
                 },
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "completed"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -890,10 +891,13 @@ def test_exec_codex_turn_surfaces_confirmation_required_summary(monkeypatch):
                     "risk_class": "agent_external_write",
                     "workspace_access": "none",
                     "network_access": "allowlisted",
+                    "confirmation_id": "confirmation_codex_123",
+                    "confirmation_expires_at": "2026-07-24T00:15:00.000Z",
+                    "confirmation_state": "pending",
                 },
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "pending_confirmation"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -911,6 +915,14 @@ def test_exec_codex_turn_surfaces_confirmation_required_summary(monkeypatch):
     payload = response.json()
     assert payload["execution_override"]["command"] == "codex"
     assert payload["session_lane_state"]["execution_lane"]["latest_execution_id"] == "execution_codex_pending_123"
+    assert (
+        payload["session_lane_state"]["execution_lane"]["latest_confirmation_id"]
+        == "confirmation_codex_123"
+    )
+    assert (
+        payload["session_lane_state"]["execution_lane"]["latest_confirmation_state"]
+        == "pending"
+    )
     assert "requires confirmation" in payload["content"].lower()
     assert "`external write`" in payload["content"].lower()
 
@@ -941,7 +953,7 @@ def test_exec_codex_turn_surfaces_blocked_policy_summary(monkeypatch):
                 "_http_status": 403,
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "failed"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -1265,7 +1277,8 @@ def test_list_session_artifacts_returns_execution_subsystem_inventory(monkeypatc
     assert payload["items"][0]["session_id"] == "session-1"
     assert payload["items"][0]["app_id"] == "app-1"
     assert payload["items"][0]["artifact_type_label"] == "Drive Export"
-    assert payload["items"][0]["file_path"].startswith("D:")
+    assert "file_path" not in payload["items"][0]
+    assert "path" not in payload["items"][0]
     assert payload["items"][0]["preview_url"] == "/sessions/session-1/artifacts/artifact_123/preview?app_id=app-1&user_id=user-1"
     assert payload["items"][0]["routes"]["preview"] == "/sessions/session-1/artifacts/artifact_123/preview?app_id=app-1&user_id=user-1"
     assert payload["items"][0]["consumption"]["default_mode"] == "binary_payload"
@@ -1277,13 +1290,13 @@ def test_list_session_artifacts_returns_execution_subsystem_inventory(monkeypatc
     assert payload["items"][0]["open_url"] == "/sessions/session-1/artifacts/artifact_123/file?app_id=app-1&user_id=user-1"
     assert payload["items"][0]["routes"]["open"] == "/sessions/session-1/artifacts/artifact_123/file?app_id=app-1&user_id=user-1"
     assert payload["items"][0]["capabilities"] == {
-        "can_open": False,
-        "can_preview": False,
+        "can_open": True,
+        "can_preview": True,
         "can_delete": True,
         "can_reuse": True,
     }
     assert payload["items"][0]["file_info"] == {
-        "has_file": False,
+        "has_file": True,
         "extension": ".pdf",
         "size_bytes": None,
     }
@@ -1327,6 +1340,52 @@ def test_list_session_artifacts_degrades_when_execution_subsystem_is_unavailable
     assert payload["warning"] == "Execution subsystem is unavailable."
 
 
+def test_list_session_artifacts_rejects_missing_session_before_inventory_call(monkeypatch):
+    _install_temp_repos(monkeypatch)
+
+    class FakeExecutionClient:
+        def get_artifact_inventory(self, **kwargs):
+            raise AssertionError("inventory must not be called for a missing session")
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+
+    response = client.get(
+        "/sessions/missing-session/artifacts",
+        params={"app_id": "app-1", "user_id": "user-1"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Session not found."
+
+
+def test_list_session_artifacts_rejects_mismatched_scope_before_inventory_call(monkeypatch):
+    session_repo, _ = _install_temp_repos(monkeypatch)
+    session_repo.get_or_create(
+        "session-1",
+        collection_id="app-1",
+        user_id="user-1",
+        config_version=1,
+        adapter_version=1,
+        template_version=1,
+    )
+
+    class FakeExecutionClient:
+        def get_artifact_inventory(self, **kwargs):
+            raise AssertionError("inventory must not be called for a mismatched session")
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+
+    response = client.get(
+        "/sessions/session-1/artifacts",
+        params={"app_id": "app-1", "user_id": "other-user"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Session not found."
+
+
 def test_exec_tools_inventory_degrades_when_execution_subsystem_is_unavailable(monkeypatch):
     _install_temp_repos(monkeypatch)
 
@@ -1349,7 +1408,7 @@ def test_exec_tools_inventory_degrades_when_execution_subsystem_is_unavailable(m
     assert response.json()["items"] == []
 
 
-def test_open_session_artifact_file_returns_file_response(monkeypatch):
+def test_open_session_artifact_file_proxies_execution_subsystem_bytes(monkeypatch):
     session_repo, _ = _install_temp_repos(monkeypatch)
     session_repo.get_or_create(
         "session-1",
@@ -1359,28 +1418,16 @@ def test_open_session_artifact_file_returns_file_response(monkeypatch):
         adapter_version=1,
         template_version=1,
     )
-    temp_root = Path(tempfile.gettempdir()) / "ragenius_app_tests" / uuid.uuid4().hex
-    temp_root.mkdir(parents=True, exist_ok=True)
-    artifact_file = temp_root / "Execution-Summary.pdf"
-    artifact_file.write_text("artifact-content", encoding="utf-8")
     captured = {}
 
     class FakeExecutionClient:
-        def get_artifact_inventory(self, **kwargs):
+        def get_artifact_file(self, **kwargs):
             captured.update(kwargs)
             return {
-                "items": [
-                    {
-                        "artifact_id": "artifact_123",
-                        "artifact_type": "google_drive_export",
-                        "display_name": "Execution Summary.pdf",
-                        "mime_type": "application/pdf",
-                        "status": "ready",
-                        "summary": "Google Drive export: Execution Summary.pdf",
-                        "path": str(temp_root / "artifact_123.json"),
-                        "file_path": str(artifact_file),
-                    }
-                ]
+                "ok": True,
+                "content": b"artifact-content",
+                "content_type": "application/pdf",
+                "content_disposition": 'attachment; filename="Execution Summary.pdf"',
             }
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -1393,11 +1440,16 @@ def test_open_session_artifact_file_returns_file_response(monkeypatch):
 
     assert response.status_code == 200
     assert response.content == b"artifact-content"
-    assert "Execution%20Summary.pdf" in response.headers.get("content-disposition", "")
-    assert captured["session_id"] == "session-1"
+    assert "Execution Summary.pdf" in response.headers.get("content-disposition", "")
+    assert captured == {
+        "app_id": "app-1",
+        "session_id": "session-1",
+        "artifact_id": "artifact_123",
+        "preview": False,
+    }
 
 
-def test_preview_session_artifact_file_returns_inline_file_response(monkeypatch):
+def test_preview_session_artifact_file_proxies_inline_bytes(monkeypatch):
     session_repo, _ = _install_temp_repos(monkeypatch)
     session_repo.get_or_create(
         "session-1",
@@ -1407,25 +1459,13 @@ def test_preview_session_artifact_file_returns_inline_file_response(monkeypatch)
         adapter_version=1,
         template_version=1,
     )
-    temp_root = Path(tempfile.gettempdir()) / "ragenius_app_tests" / uuid.uuid4().hex
-    temp_root.mkdir(parents=True, exist_ok=True)
-    artifact_file = temp_root / "preview.md"
-    artifact_file.write_text("# preview", encoding="utf-8")
-
     class FakeExecutionClient:
-        def get_artifact_inventory(self, **kwargs):
+        def get_artifact_file(self, **kwargs):
             return {
-                "items": [
-                    {
-                        "artifact_id": "artifact_123",
-                        "artifact_type": "chat_export",
-                        "display_name": "preview.md",
-                        "mime_type": "text/markdown",
-                        "status": "ready",
-                        "path": str(temp_root / "artifact_123.json"),
-                        "file_path": str(artifact_file),
-                    }
-                ]
+                "ok": True,
+                "content": b"# preview",
+                "content_type": "text/markdown",
+                "content_disposition": 'inline; filename="preview.md"',
             }
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -1440,7 +1480,7 @@ def test_preview_session_artifact_file_returns_inline_file_response(monkeypatch)
     assert "inline" in response.headers.get("content-disposition", "")
 
 
-def test_delete_session_artifact_removes_backing_files(monkeypatch):
+def test_delete_session_artifact_proxies_scoped_delete(monkeypatch):
     session_repo, _ = _install_temp_repos(monkeypatch)
     session_repo.get_or_create(
         "session-1",
@@ -1450,28 +1490,12 @@ def test_delete_session_artifact_removes_backing_files(monkeypatch):
         adapter_version=1,
         template_version=1,
     )
-    temp_root = Path(tempfile.gettempdir()) / "ragenius_app_tests" / uuid.uuid4().hex
-    temp_root.mkdir(parents=True, exist_ok=True)
-    metadata_file = temp_root / "artifact_123.json"
-    metadata_file.write_text("{}", encoding="utf-8")
-    artifact_file = temp_root / "preview.md"
-    artifact_file.write_text("# preview", encoding="utf-8")
+    captured = {}
 
     class FakeExecutionClient:
-        def get_artifact_inventory(self, **kwargs):
-            return {
-                "items": [
-                    {
-                        "artifact_id": "artifact_123",
-                        "artifact_type": "chat_export",
-                        "display_name": "preview.md",
-                        "mime_type": "text/markdown",
-                        "status": "ready",
-                        "path": str(metadata_file),
-                        "file_path": str(artifact_file),
-                    }
-                ]
-            }
+        def delete_artifact(self, **kwargs):
+            captured.update(kwargs)
+            return {"deleted": True, "artifact_id": "artifact_123"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
     client = TestClient(app)
@@ -1483,8 +1507,11 @@ def test_delete_session_artifact_removes_backing_files(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["deleted"] is True
-    assert not metadata_file.exists()
-    assert not artifact_file.exists()
+    assert captured == {
+        "app_id": "app-1",
+        "session_id": "session-1",
+        "artifact_id": "artifact_123",
+    }
 
 
 def test_exec_tools_inventory_returns_only_directly_executable_tools(monkeypatch):
@@ -1778,7 +1805,7 @@ def test_exec_tool_turn_normalizes_gmail_recipient_arrays(monkeypatch):
                 "result": {"required_confirmation": True},
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "pending_confirmation"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -1799,7 +1826,7 @@ def test_exec_tool_turn_normalizes_gmail_recipient_arrays(monkeypatch):
 
 
 def test_confirm_session_execution_returns_updated_status(monkeypatch):
-    session_repo, _ = _install_temp_repos(monkeypatch)
+    session_repo, chat_repo = _install_temp_repos(monkeypatch)
     session_repo.get_or_create(
         "session-1",
         collection_id="app-1",
@@ -1810,15 +1837,48 @@ def test_confirm_session_execution_returns_updated_status(monkeypatch):
     )
 
     class FakeExecutionClient:
-        def confirm_execution(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
+            return {
+                "execution_id": execution_id,
+                "status": "pending_confirmation",
+                "result": {
+                    "confirmation_id": "confirmation_123",
+                    "confirmation_state": "pending",
+                },
+            }
+
+        def confirm_execution(self, execution_id: str, **_scope):
             assert execution_id == "execution_123"
+            assert _scope["confirmation_id"] == "confirmation_123"
             return {
                 "execution_id": execution_id,
                 "status": "completed",
                 "result": {
                     "id": "draft_123",
                     "status": "draft_created",
+                    "artifacts": [
+                        {
+                            "artifact_id": "artifact_123",
+                            "artifact_type": "agent_output",
+                            "display_name": "report.md",
+                        }
+                    ],
                 },
+            }
+
+        def get_artifact_inventory(self, **_scope):
+            return {
+                "items": [
+                    {
+                        "artifact_id": "artifact_123",
+                        "artifact_type": "agent_output",
+                        "display_name": "report.md",
+                        "session_id": "session-1",
+                        "app_id": "app-1",
+                        "status": "ready",
+                        "file_path": __file__,
+                    }
+                ]
             }
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -1838,7 +1898,46 @@ def test_confirm_session_execution_returns_updated_status(monkeypatch):
     assert payload["execution_override"]["command"] == "confirm"
     assert payload["execution_override"]["execution_id"] == "execution_123"
     assert payload["execution_override"]["status_result"]["status"] == "completed"
+    artifact = payload["execution_override"]["status_result"]["result"]["artifacts"][0]
+    assert artifact["routes"]["open"].startswith(
+        "/sessions/session-1/artifacts/artifact_123/file"
+    )
+    assert artifact["capabilities"]["can_open"] is True
+    persisted = chat_repo.history("session-1")[-1]["retrievalSummary"]
+    assert persisted["execution_status_result"]["result"]["artifacts"][0][
+        "artifact_id"
+    ] == "artifact_123"
     assert payload["session_lane_state"]["execution_lane"]["latest_execution_id"] == "execution_123"
+
+
+def test_confirm_session_execution_rejects_mismatched_scope_before_confirm(monkeypatch):
+    session_repo, _ = _install_temp_repos(monkeypatch)
+    session_repo.get_or_create(
+        "session-1",
+        collection_id="app-1",
+        user_id="user-1",
+        config_version=1,
+        adapter_version=1,
+        template_version=1,
+    )
+
+    class FakeExecutionClient:
+        def confirm_execution(self, execution_id: str, **_scope):
+            raise AssertionError("confirmation must not run for a mismatched session")
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+
+    response = client.post(
+        "/sessions/session-1/executions/execution_123/confirm",
+        json={
+            "app_id": "app-1",
+            "user_id": "other-user",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Session not found."
 
 
 def test_export_session_messages_saves_selected_chat_content(monkeypatch):
@@ -1922,7 +2021,7 @@ def test_exec_async_video_turn_persists_background_job_state(monkeypatch):
                 },
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "completed"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -1984,7 +2083,7 @@ def test_exec_skill_turn_marks_notebooklm_login_required(monkeypatch):
                 },
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "completed"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -2033,7 +2132,7 @@ def test_exec_skill_without_approved_content_returns_400(monkeypatch):
         def submit_skill(self, **kwargs):
             raise AssertionError("submit_skill should not be called when approval is missing")
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "completed"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -2159,7 +2258,7 @@ def test_exec_skill_rejects_wrong_session_approved_content_id(monkeypatch):
 
 
 def test_exec_status_turn_does_not_invoke_normal_chat_pipeline(monkeypatch):
-    _install_temp_repos(monkeypatch)
+    _, chat_repo = _install_temp_repos(monkeypatch)
 
     def fail_run_chat_pipeline(*args, **kwargs):
         raise AssertionError("normal chat pipeline should not be used for @exec status")
@@ -2168,8 +2267,35 @@ def test_exec_status_turn_does_not_invoke_normal_chat_pipeline(monkeypatch):
         def submit_skill(self, **kwargs):
             raise AssertionError("submit_skill should not be called for @exec status")
 
-        def get_execution_status(self, execution_id: str):
-            return {"execution_id": execution_id, "status": "completed"}
+        def get_execution_status(self, execution_id: str, **_scope):
+            return {
+                "execution_id": execution_id,
+                "status": "completed",
+                "result": {
+                    "artifacts": [
+                        {
+                            "artifact_id": "artifact_123",
+                            "artifact_type": "agent_output",
+                            "display_name": "report.md",
+                        }
+                    ]
+                },
+            }
+
+        def get_artifact_inventory(self, **_scope):
+            return {
+                "items": [
+                    {
+                        "artifact_id": "artifact_123",
+                        "artifact_type": "agent_output",
+                        "display_name": "report.md",
+                        "session_id": "session-1",
+                        "app_id": "app-1",
+                        "status": "ready",
+                        "file_path": __file__,
+                    }
+                ]
+            }
 
     monkeypatch.setattr(app_main, "run_chat_pipeline", fail_run_chat_pipeline)
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
@@ -2186,7 +2312,15 @@ def test_exec_status_turn_does_not_invoke_normal_chat_pipeline(monkeypatch):
     payload = response.json()
     assert payload["execution_override"]["command"] == "status"
     assert payload["execution_override"]["status_result"]["execution_id"] == "execution_123"
+    artifact = payload["execution_override"]["status_result"]["result"]["artifacts"][0]
+    assert artifact["routes"]["open"].startswith(
+        "/sessions/session-1/artifacts/artifact_123/file"
+    )
     assert payload["content"] == "Execution status for `execution_123` is completed."
+    persisted = chat_repo.history("session-1")[-1]["retrievalSummary"]
+    assert persisted["execution_status_result"]["result"]["artifacts"][0][
+        "artifact_id"
+    ] == "artifact_123"
 
 
 def test_exec_status_turn_surfaces_execution_lookup_error(monkeypatch):
@@ -2199,7 +2333,7 @@ def test_exec_status_turn_surfaces_execution_lookup_error(monkeypatch):
         def submit_skill(self, **kwargs):
             raise AssertionError("submit_skill should not be called for @exec status")
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {
                 "error": {
                     "code": "EXECUTION_NOT_FOUND",
@@ -2287,7 +2421,7 @@ def test_exec_status_turn_polls_async_notebooklm_task_without_resubmission(monke
                 },
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {
                 "execution_id": execution_id,
                 "status": "completed",
@@ -2343,7 +2477,7 @@ def test_read_only_exec_skill_can_run_without_approved_content(monkeypatch):
                 "result": {"items": []},
             }
 
-        def get_execution_status(self, execution_id: str):
+        def get_execution_status(self, execution_id: str, **_scope):
             return {"execution_id": execution_id, "status": "completed"}
 
     monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())

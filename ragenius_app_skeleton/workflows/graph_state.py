@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, TypedDict
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GraphState(TypedDict, total=False):
@@ -88,6 +88,14 @@ class GraphState(TypedDict, total=False):
     # final output
     final_answer: Dict[str, Any]
     answer_generation_meta: Dict[str, Any]
+
+    # internal LLM context optimization state
+    _context_optimization_eligible: bool
+    _context_optimization_mode: str
+    _context_optimization_diagnostics: Dict[str, Any]
+    _turn_token_accounting: Dict[str, Any]
+    _task_model_diagnostics: Dict[str, Any]
+    _evidence_analysis_policy: Dict[str, Any]
 
     # runtime dependency injection hooks (for pipeline execution)
     _session_repo: Any
@@ -173,5 +181,11 @@ class GraphStateModel(BaseModel):
 
     final_answer: Optional[Dict[str, Any]] = None
     answer_generation_meta: Optional[Dict[str, Any]] = None
+    context_optimization_eligible: Optional[bool] = Field(default=None, alias="_context_optimization_eligible")
+    context_optimization_mode: Optional[str] = Field(default=None, alias="_context_optimization_mode")
+    context_optimization_diagnostics: Optional[Dict[str, Any]] = Field(default=None, alias="_context_optimization_diagnostics")
+    turn_token_accounting: Optional[Dict[str, Any]] = Field(default=None, alias="_turn_token_accounting")
+    task_model_diagnostics: Optional[Dict[str, Any]] = Field(default=None, alias="_task_model_diagnostics")
+    evidence_analysis_policy: Optional[Dict[str, Any]] = Field(default=None, alias="_evidence_analysis_policy")
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", populate_by_name=True)

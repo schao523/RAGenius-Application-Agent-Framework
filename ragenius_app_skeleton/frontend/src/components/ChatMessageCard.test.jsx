@@ -179,7 +179,7 @@ describe("ChatMessageCard", () => {
     expect(screen.getByText(/notebooklm notebooks \(2\)/i)).toBeInTheDocument();
   });
 
-  it("renders artifact details and an open link for execution turns with normalized artifacts", () => {
+  it("does not create file links from execution inventory paths", () => {
     render(
       <ChatMessageCard
         message={{
@@ -214,11 +214,8 @@ describe("ChatMessageCard", () => {
 
     expect(screen.getAllByText(/session-1-chat-export\.md/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/chat export from 1 selected message/i)).toBeInTheDocument();
-    const link = screen.getByRole("link", { name: /open saved file/i });
-    expect(link).toHaveAttribute(
-      "href",
-      "file:///D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/storage/artifacts/app-1/chat_export/artifact_123-session-1-chat-export.md",
-    );
+    expect(screen.queryByRole("link", { name: /open saved file/i })).toBeNull();
+    expect(screen.queryByText(/saved file:/i)).toBeNull();
   });
 
   it("renders artifact reuse actions for export confirmation turns with backend routes", () => {
@@ -275,7 +272,7 @@ describe("ChatMessageCard", () => {
     );
   });
 
-  it("falls back to nested execution result export paths when export_artifact is sparse", () => {
+  it("does not fall back to nested execution result filesystem paths", () => {
     render(
       <ChatMessageCard
         message={{
@@ -305,8 +302,8 @@ describe("ChatMessageCard", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: /open saved file/i })).toBeInTheDocument();
-    expect(screen.getByText(/saved file: d:\\github\\codex-ragenius-system/i)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /open saved file/i })).toBeNull();
+    expect(screen.queryByText(/saved file:/i)).toBeNull();
   });
 
   it("uses approval-specific actions for approval turns", () => {
@@ -462,5 +459,41 @@ describe("ChatMessageCard", () => {
       expect.objectContaining({ commandKind: "agent", agentBackend: "openclaw_cli" }),
     );
     expect(onViewArtifactLibrary).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not expose an unpersisted provider-relative output as an openable file", () => {
+    render(
+      <ChatMessageCard
+        message={{
+          id: "msg_codex_temporary_output",
+          role: "assistant",
+          content: "Codex completed and reported a temporary output.",
+          retrievalSummary: {
+            execution_override: true,
+            command: "codex",
+            target_id: "codex_cli",
+            execution_status_result: {
+              status: "completed",
+              result: {
+                artifacts: [{
+                  path: "outputs/study-report.md",
+                  media_type: "text/markdown",
+                }],
+              },
+            },
+          },
+        }}
+        index={5}
+        styles={styles}
+        baseUrl="http://127.0.0.1:8012"
+        onOpenInspector={() => {}}
+        onOpenSources={() => {}}
+        onRefreshExecutionStatus={() => {}}
+        onRetryExecution={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: /open saved file/i })).toBeNull();
+    expect(screen.queryByText(/outputs\/study-report\.md/i)).toBeNull();
   });
 });

@@ -15,6 +15,8 @@ from typing import Any, Callable, Dict, Optional
 
 import httpx
 
+from .llm_context_optimization import build_context_messages, normalize_tools
+
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,11 @@ USER_VISIBLE_TASKS = (
     "evidence_analysis",
     "config_extraction_fallback",
 )
+
+DEEPSEEK_MODEL_ALIASES = {
+    "deepseek-reasoner": "deepseek-v4-pro",
+    "deepseek-chat": "deepseek-v4-flash",
+}
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -110,6 +117,8 @@ def resolve_task_model(llm_settings: Dict[str, Any], task: str) -> Optional[Dict
 
     if not model_name:
         return None
+    if str(provider).strip().lower() == "deepseek":
+        model_name = DEEPSEEK_MODEL_ALIASES.get(str(model_name).strip().lower(), model_name)
 
     base_url = (
         llm_settings.get("base_url")
@@ -206,21 +215,11 @@ def _api_key_for_provider(provider: str) -> str | None:
 
 
 def _normalize_tools(tools: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
-    normalized: list[Dict[str, Any]] = []
-    for tool in tools:
-        if "type" in tool and "function" in tool:
-            normalized.append(tool)
-            continue
-        normalized.append({"type": "function", "function": tool})
-    return normalized
+    return normalize_tools(tools)
 
 
 def _build_messages(prompt: str, context: Dict[str, Any]) -> list[Dict[str, str]]:
-    context_blob = json.dumps(context, ensure_ascii=False, indent=2)
-    return [
-        {"role": "system", "content": prompt},
-        {"role": "user", "content": f"Context JSON:\n{context_blob}"},
-    ]
+    return build_context_messages(prompt, context)
 
 
 def _extract_balanced_json_object(text: str) -> str | None:

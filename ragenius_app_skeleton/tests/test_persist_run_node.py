@@ -108,10 +108,13 @@ class PersistRunNodeTests(unittest.TestCase):
 
         persist_run.run(state)
         session = self.session_repo.get("s-upload")
+        history = self.chat_repo.history("s-upload")
         self.assertEqual(session["workflow_progress"]["workflow_id"], "bible_study")
         self.assertEqual(session["runtime_state"]["session_execution_state"]["execution_status"], "guiding")
         self.assertEqual(session["runtime_state"]["intermediate_outputs"][0]["output_id"], "obs-notes")
         self.assertEqual(session["runtime_state"]["assembly_state"]["target_output"], "study_summary")
+        self.assertEqual(history[-1]["retrievalSummary"]["workflow_progress"]["workflow_id"], "bible_study")
+        self.assertEqual(history[-1]["retrievalSummary"]["workflow_progress"]["step_order"], 1)
 
     def test_persist_run_summary_exposes_execution_layer_fields(self):
         state = {
@@ -551,6 +554,98 @@ class PersistRunNodeTests(unittest.TestCase):
         self.assertEqual(summary["instruction_context_hints"], [])
         self.assertIsNone(summary["template_query"])
         self.assertEqual(summary["template_context_hints"], [])
+
+    def test_persist_run_refreshes_real_chat_summary_before_four_turn_window_drops_history(self):
+        prior_history = []
+        for index in range(4):
+            prior_history.extend(
+                [
+                    {"role": "user", "content": f"Question {index}?"},
+                    {"role": "assistant", "content": f"Answer {index}."},
+                ]
+            )
+        state = {
+            "session_id": "s-upload",
+            "turn_input_type": "text_query",
+            "user_query": "I prefer a short final answer. What is next?",
+            "chat_history": prior_history,
+            "session_execution_state": {"active_workflow": "study", "active_step_scope_id": "step-2"},
+            "final_answer": {
+                "content": "Continue to step 2.",
+                "citations": [{"docId": "doc-2"}],
+                "missing_infoTypes": [],
+            },
+            "_chat_repo": self.chat_repo,
+            "_session_repo": self.session_repo,
+        }
+
+        persist_run.run(state)
+
+        session = self.session_repo.get("s-upload")
+        chat_summary = session["runtime_state"]["session_execution_state"]["chat_summary"]
+        self.assertEqual(chat_summary["covered_message_count"], 10)
+        self.assertIn("Continue to step 2.", chat_summary["assistant_conclusions"])
+        self.assertEqual(chat_summary["active_workflow_state"]["active_step_scope_id"], "step-2")
+        self.assertIn("doc-2", chat_summary["recent_citation_ids"])
+
+    def test_persist_run_preserves_finalized_token_optimization_diagnostics(self):
+        state = {
+            "session_id": "s-upload",
+            "turn_input_type": "text_query",
+            "user_query": "Summarize the evidence.",
+            "_task_model_diagnostics": {
+                "configured_task_models": {"planner": {"model": "deepseek-chat"}},
+                "selected_task_models": {"planner": {"provider": "deepseek", "model": "deepseek-chat"}},
+            },
+            "_context_optimization_eligible": True,
+            "_context_optimization_mode": "compact",
+            "_context_optimization_diagnostics": {
+                "eligible": True,
+                "mode": "compact",
+                "calls": [
+                    {
+                        "task": "planner",
+                        "actual_full_tokens": 1200,
+                        "compact_candidate_tokens": 500,
+                        "actual_outbound_tokens": 500,
+                    }
+                ],
+            },
+            "_turn_token_accounting": {
+                "calls": [
+                    {
+                        "task": "planner",
+                        "actual_full_tokens": 1200,
+                        "compact_candidate_tokens": 500,
+                        "actual_outbound_tokens": 500,
+                    }
+                ],
+                "call_count": 1,
+                "turn_estimated_outbound_tokens": 500,
+                "turn_actual_full_tokens": 1200,
+                "turn_compact_candidate_tokens": 500,
+                "turn_estimated_tokens_saved": 700,
+                "turn_estimated_saving_percent": 58.33,
+            },
+            "final_answer": {
+                "content": "Evidence summary",
+                "citations": [],
+                "missing_infoTypes": [],
+            },
+            "_chat_repo": self.chat_repo,
+            "_session_repo": self.session_repo,
+        }
+
+        persist_run.run(state)
+
+        history = self.chat_repo.history("s-upload")
+        diagnostics = history[-1]["retrievalSummary"]["task_model_diagnostics"]
+        self.assertEqual(diagnostics["selected_task_models"]["planner"]["model"], "deepseek-chat")
+        self.assertEqual(diagnostics["context_optimization"]["mode"], "compact")
+        self.assertEqual(diagnostics["turn_token_accounting"]["call_count"], 1)
+        self.assertEqual(diagnostics["turn_token_accounting"]["turn_estimated_tokens_saved"], 700)
+        self.assertEqual(diagnostics["turn_token_accounting"]["budget_limit_tokens"], 25_000)
+        self.assertFalse(diagnostics["turn_token_accounting"]["budget_exceeded"])
 
 
 if __name__ == "__main__":

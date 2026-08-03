@@ -10,9 +10,52 @@ import {
   buildExecutionRequestForComposer,
   buildExecCommand,
   classifyAssistantTurn,
+  createSessionId,
+  mergeTaskModelDiagnostics,
   resolveActiveAppDisplay,
   resolveInstructionUnderstandingState,
 } from "./App";
+
+describe("createSessionId", () => {
+  it("creates UUID session identifiers", () => {
+    const sessionId = createSessionId();
+
+    expect(sessionId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  it("uses the supplied UUID source", () => {
+    expect(
+      createSessionId(() => "123e4567-e89b-42d3-a456-426614174000"),
+    ).toBe("123e4567-e89b-42d3-a456-426614174000");
+  });
+});
+
+describe("mergeTaskModelDiagnostics", () => {
+  it("uses top-level diagnostics when the retrieval summary omits them", () => {
+    const diagnostics = {
+      context_optimization: { mode: "diagnostic" },
+      turn_token_accounting: { call_count: 3 },
+    };
+
+    expect(mergeTaskModelDiagnostics({ answer_source: "llm" }, diagnostics)).toEqual({
+      answer_source: "llm",
+      task_model_diagnostics: diagnostics,
+    });
+  });
+
+  it("does not replace diagnostics already stored with the turn summary", () => {
+    const stored = { turn_token_accounting: { call_count: 2 } };
+
+    expect(
+      mergeTaskModelDiagnostics(
+        { task_model_diagnostics: stored },
+        { turn_token_accounting: { call_count: 9 } },
+      ).task_model_diagnostics,
+    ).toBe(stored);
+  });
+});
 
 function mockJsonResponse(payload, ok = true) {
   return Promise.resolve({
@@ -35,6 +78,7 @@ function buildAppFetchMock({
   artifactResponse,
   instructionPreview = { compiled_id: "compiled-test" },
   messages = [],
+  sessions = [],
   onRequest,
 } = {}) {
   return vi.fn(async (url, options = {}) => {
@@ -61,7 +105,7 @@ function buildAppFetchMock({
       return mockJsonResponse({ items: [] });
     }
     if (normalizedUrl.includes("/apps/app-1/sessions?")) {
-      return mockJsonResponse({ sessions: [] });
+      return mockJsonResponse({ sessions });
     }
     if (normalizedUrl.includes("/apps/app-1/documents")) {
       return mockJsonResponse({ documents: [] });
@@ -546,6 +590,79 @@ describe("buildExecutionResultPreview", () => {
     expect(preview).toBe("Codex confirmation required (external write)");
   });
 
+  it("renders authoritative Codex failed, partial, processing, and verified states", () => {
+    const message = (status, result) => ({
+      retrievalSummary: {
+        execution_override: true,
+        command: "codex",
+        execution_status_result: { status, result },
+      },
+    });
+
+    expect(buildExecutionResultPreview(message("failed", {
+      summary: "Required operation was not run.",
+      provider_metadata: { raw_exit_code: 0 },
+    }))).toBe("Codex failed: Required operation was not run.");
+    expect(buildExecutionResultPreview(message("partial", {
+      summary: "Source added; report not started.",
+    }))).toBe("Codex partially completed: Source added; report not started.");
+    expect(buildExecutionResultPreview(message("completed", {
+      summary: "Generation started; external output is still processing.",
+      operation_verification: [{ status: "processing", required: true }],
+    }))).toBe("Codex generation started: Generation started; external output is still processing.");
+    expect(buildExecutionResultPreview(message("completed", {
+      summary: "All required operations were independently verified.",
+      operation_verification: [{ status: "completed", level: "independently_verified" }],
+    }))).toBe("Codex completed: All required operations were independently verified.");
+  });
+
+  it("renders authoritative OpenClaw running, partial, and failed states", () => {
+    const baseMessage = {
+      retrievalSummary: {
+        execution_override: true,
+        command: "openclaw",
+      },
+    };
+
+    expect(
+      buildExecutionResultPreview({
+        ...baseMessage,
+        retrievalSummary: {
+          ...baseMessage.retrievalSummary,
+          execution_submit_result: { status: "running", result: {} },
+        },
+      }),
+    ).toBe("OpenClaw execution is running");
+    expect(
+      buildExecutionResultPreview({
+        ...baseMessage,
+        retrievalSummary: {
+          ...baseMessage.retrievalSummary,
+          execution_submit_result: {
+            status: "partial",
+            result: { summary: "Optional artifact persistence failed." },
+          },
+        },
+      }),
+    ).toBe(
+      "OpenClaw execution completed with warnings: Optional artifact persistence failed.",
+    );
+    expect(
+      buildExecutionResultPreview({
+        ...baseMessage,
+        retrievalSummary: {
+          ...baseMessage.retrievalSummary,
+          execution_submit_result: {
+            status: "failed",
+            result: {
+              diagnostics: { failure_message: "Required output was missing." },
+            },
+          },
+        },
+      }),
+    ).toBe("OpenClaw execution failed: Required output was missing.");
+  });
+
   it("builds a compact OpenClaw-agent preview from normalized result metadata", () => {
     const preview = buildExecutionResultPreview({
       retrievalSummary: {
@@ -579,7 +696,12 @@ describe("buildExecutionResultPreview", () => {
 
 describe("App artifact fetch propagation", () => {
   beforeEach(() => {
+    vi.stubGlobal("crypto", {
+      ...globalThis.crypto,
+      randomUUID: vi.fn(() => "session-1"),
+    });
     vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Persisted session" }],
       artifactResponse: () => Promise.resolve({
         ok: false,
         text: async () => "Artifact backend unavailable.",
@@ -589,6 +711,26 @@ describe("App artifact fetch propagation", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("does not request artifacts for a draft session that is not persisted yet", async () => {
+    const requests = [];
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [],
+      onRequest: (url) => requests.push(String(url)),
+      artifactResponse: () => {
+        throw new Error("artifact inventory must not be requested for a draft session");
+      },
+    }));
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: /artifact library/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(requests.some((url) => url.includes("/apps/app-1/sessions?"))).toBe(true);
+    });
+    expect(requests.some((url) => url.includes("/sessions/session-1/artifacts?"))).toBe(false);
+    expect(screen.getByText(/no artifacts have been saved in this session yet/i)).toBeInTheDocument();
   });
 
   it("shows the artifact fetch failure inside Artifact Library", async () => {
@@ -602,6 +744,7 @@ describe("App artifact fetch propagation", () => {
 
   it("shows execution subsystem artifact warnings from a successful response", async () => {
     vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Persisted session" }],
       artifactResponse: () => mockJsonResponse({
         items: [],
         warning: "Execution subsystem is unavailable.",
@@ -619,6 +762,7 @@ describe("App artifact fetch propagation", () => {
   it("shows the artifact loading state while the session artifact request is in flight", async () => {
     const deferredArtifacts = createDeferred();
     vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Persisted session" }],
       artifactResponse: () => deferredArtifacts.promise,
     }));
 
@@ -638,6 +782,7 @@ describe("App artifact fetch propagation", () => {
 
   it("shows the true empty-session state when artifacts load successfully with no items", async () => {
     vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Persisted session" }],
       artifactResponse: () => mockJsonResponse({ items: [] }),
     }));
 
@@ -651,6 +796,7 @@ describe("App artifact fetch propagation", () => {
 
   it("shows the artifact-first chat reuse labels in a populated session", async () => {
     vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Persisted session" }],
       artifactResponse: () => mockJsonResponse({ items: [] }),
       messages: [
         {
@@ -678,6 +824,7 @@ describe("App artifact fetch propagation", () => {
   it("posts agent composer artifact refs and expected outputs as execution_request", async () => {
     const requests = [];
     vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Persisted session" }],
       onRequest: (url, options) => requests.push({ url: String(url || ""), options }),
       artifactResponse: () => mockJsonResponse({
         items: [
@@ -733,6 +880,7 @@ describe("App artifact fetch propagation", () => {
 
   it("opens Composer in Agent mode when reusing an agent output execution artifact", async () => {
     vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Persisted session" }],
       artifactResponse: () => mockJsonResponse({
         items: [
           {

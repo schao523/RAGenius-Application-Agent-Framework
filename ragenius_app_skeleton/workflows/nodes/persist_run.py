@@ -9,6 +9,13 @@ Output contract:
 
 from __future__ import annotations
 
+import copy
+
+from backend.app.llm_context_optimization import (
+    build_or_refresh_chat_summary,
+    finalize_task_model_diagnostics,
+)
+
 from ..graph_state import GraphState
 
 
@@ -242,6 +249,7 @@ def _build_retrieval_summary(state: GraphState, final: dict) -> dict:
         if isinstance(state.get("session_execution_state"), dict)
         else {}
     )
+    workflow_progress = state.get("workflow_progress", {}) if isinstance(state.get("workflow_progress"), dict) else {}
     answer_generation_meta = (
         state.get("answer_generation_meta", {})
         if isinstance(state.get("answer_generation_meta"), dict)
@@ -441,7 +449,9 @@ def _build_retrieval_summary(state: GraphState, final: dict) -> dict:
         "presentation_mode": presentation_policy.get("mode"),
         "answer_source": answer_generation_meta.get("source"),
         "answer_llm_error": answer_generation_meta.get("llm_error"),
+        "task_model_diagnostics": finalize_task_model_diagnostics(state),
         "turn_execution_plan": turn_execution_plan,
+        "workflow_progress": workflow_progress,
         "session_execution_state": session_execution_state,
         "active_binding_ids": session_execution_state.get("active_binding_ids", [])
         if isinstance(session_execution_state, dict)
@@ -508,6 +518,19 @@ def run(state: GraphState) -> GraphState:
     chat_repo = state.get("_chat_repo")
     session_repo = state.get("_session_repo")
     turn_input_type = str(state.get("turn_input_type") or "").strip().lower()
+
+    prior_history = state.get("chat_history", []) if isinstance(state.get("chat_history"), list) else []
+    final_for_summary = state.get("final_answer", {}) if isinstance(state.get("final_answer"), dict) else {}
+    if turn_input_type == "text_query" and len(prior_history) + 2 > 8 and final_for_summary:
+        session_execution_state = copy.deepcopy(state.get("session_execution_state")) if isinstance(state.get("session_execution_state"), dict) else {}
+        session_execution_state["chat_summary"] = build_or_refresh_chat_summary(
+            existing_summary=session_execution_state.get("chat_summary") if isinstance(session_execution_state.get("chat_summary"), dict) else None,
+            prior_history=prior_history,
+            current_user_message=str(state.get("user_query") or ""),
+            current_answer=final_for_summary,
+            session_execution_state=session_execution_state,
+        )
+        state["session_execution_state"] = session_execution_state
 
     planner_row = None
     if planner_repo is not None and state.get("session_id") and state.get("user_query") and state.get("planner_output"):

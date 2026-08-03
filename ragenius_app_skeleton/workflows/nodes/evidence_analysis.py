@@ -10,6 +10,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from backend.openai_tools import get_openai_tools
+from backend.app.llm_context_optimization import (
+    compact_evidence_items,
+    deterministic_evidence_assessment,
+    evidence_analysis_mode,
+    optimize_context_for_state,
+)
 
 from ..graph_state import GraphState
 
@@ -96,7 +102,12 @@ def run(
     if llm_evidence_analysis is None:
         llm_evidence_analysis = state.get("_llm_evidence_analysis")
 
-    if llm_evidence_analysis is None:
+    mode = evidence_analysis_mode()
+    assessment = deterministic_evidence_assessment(info_types, evidence)
+    state["_evidence_analysis_policy"] = {"mode": mode, **assessment}
+    if mode == "llm_required" and llm_evidence_analysis is None:
+        state["_evidence_analysis_policy"]["fallback_reason"] = "evidence_analysis_model_unavailable"
+    if mode == "deterministic" or llm_evidence_analysis is None or (mode == "auto" and assessment["sufficient"]):
         state["evidence_analysis"] = _deterministic_analysis(info_types, evidence)
         return state
 
@@ -108,9 +119,24 @@ def run(
         "knowledge_evidence": evidence,
         "instruction_evidence": instruction_evidence if isinstance(instruction_evidence, list) else [],
     }
+    compact_context = {
+        "infoTypes": list(info_types),
+        "compressed_evidence": compact_evidence_items(evidence, limit=8, snippet_limit=500),
+        "knowledge_evidence": compact_evidence_items(evidence, limit=8, snippet_limit=500),
+        "instruction_evidence": compact_evidence_items(instruction_evidence, limit=8, snippet_limit=500),
+    }
+    optimized = optimize_context_for_state(
+        state,
+        task="evidence_analysis",
+        prompt=prompt,
+        tools=tools,
+        full_context=context,
+        compact_context=compact_context,
+    )
     try:
-        analysis = llm_evidence_analysis(prompt, tools, context)
+        analysis = llm_evidence_analysis(prompt, tools, optimized.context)
     except RuntimeError as exc:
+        state["_evidence_analysis_policy"]["fallback_reason"] = f"llm_error:{type(exc).__name__}"
         fallback = _deterministic_analysis(info_types, evidence)
         fallback["evidence_summary"] = list(fallback.get("evidence_summary", [])) + [f"llm_fallback:{exc}"]
         state["evidence_analysis"] = fallback

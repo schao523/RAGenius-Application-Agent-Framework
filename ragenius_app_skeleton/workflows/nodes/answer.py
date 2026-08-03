@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from backend.openai_tools import get_openai_tools
+from backend.app.llm_context_optimization import build_answer_context, optimize_context_for_state
 from backend.schemas import validate_final_answer
 
 from ..graph_state import GraphState
@@ -44,9 +45,20 @@ def _call_answer_llm(
     llm_answer: Callable[[str, list, Dict[str, Any]], Dict[str, Any]],
     prompt: str,
     context: Dict[str, Any],
+    state: GraphState,
+    *,
+    task: str = "answer_generation",
 ) -> Dict[str, Any]:
     tools = [t for t in get_openai_tools(include_optional=False) if t["name"] == "create_final_answer"]
-    output = llm_answer(prompt, tools, context)
+    optimized = optimize_context_for_state(
+        state,
+        task=task,
+        prompt=prompt,
+        tools=tools,
+        full_context=context,
+        compact_context=build_answer_context(context),
+    )
+    output = llm_answer(prompt, tools, optimized.context)
     if hasattr(output, "model_dump"):
         output = output.model_dump()
     elif hasattr(output, "dict"):
@@ -92,13 +104,19 @@ def _fallback_final_answer(context: Dict[str, Any]) -> Dict[str, Any]:
 
 def _provider_failure_final_answer(llm_error: str | None) -> Dict[str, Any] | None:
     normalized = str(llm_error or "")
-    if "LLM HTTP error 402" not in normalized:
-        return None
-    return {
-        "content": "目前回答模型暫時不可用，請稍後再試。",
-        "citations": [],
-        "missing_infoTypes": [],
-    }
+    if "LLM HTTP error 402" in normalized:
+        return {
+            "content": "目前回答模型暫時不可用，請稍後再試。",
+            "citations": [],
+            "missing_infoTypes": [],
+        }
+    if "LLM HTTP error 400" in normalized and "supported API model names" in normalized:
+        return {
+            "content": "The configured answer model is not supported by the current DeepSeek API endpoint. Please update the application model settings.",
+            "citations": [],
+            "missing_infoTypes": [],
+        }
+    return None
 
 
 def _direct_instruction_block_answer(context: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -145,6 +163,7 @@ def _direct_visible_output_answer(context: Dict[str, Any]) -> Dict[str, Any] | N
 def _direct_general_llm_answer(
     llm_answer: Callable[[str, list, Dict[str, Any]], Dict[str, Any]],
     context: Dict[str, Any],
+    state: GraphState,
 ) -> Dict[str, Any]:
     prompt = (
         "The user's turn is outside the scope of the selected application. "
@@ -155,7 +174,7 @@ def _direct_general_llm_answer(
         "user_query": context.get("user_query", ""),
         "chat_history": context.get("chat_history", []),
     }
-    return _call_answer_llm(llm_answer, prompt, direct_context)
+    return _call_answer_llm(llm_answer, prompt, direct_context, state)
 
 
 def run(
@@ -206,7 +225,7 @@ def run(
     if turn_intent == "general_out_of_scope_question":
         llm_error = None
         try:
-            final_answer = _direct_general_llm_answer(llm_answer, context)
+            final_answer = _direct_general_llm_answer(llm_answer, context, state)
             answer_source = "general_llm_direct"
         except Exception as exc:
             llm_error = f"{type(exc).__name__}: {exc}"
@@ -239,7 +258,7 @@ def run(
     answer_source = "llm"
     llm_error = None
     try:
-        final_answer = _call_answer_llm(llm_answer, answer_prompt, context)
+        final_answer = _call_answer_llm(llm_answer, answer_prompt, context, state)
     except Exception as exc:
         llm_error = f"{type(exc).__name__}: {exc}"
         logger.exception("Answer LLM call failed; using fallback path.")
@@ -264,7 +283,7 @@ def run(
         safe_context["missing_infoTypes"] = missing
         safe_context["previous_answer"] = final_answer
         try:
-            final_answer = _call_answer_llm(llm_answer, safe_prompt, safe_context)
+            final_answer = _call_answer_llm(llm_answer, safe_prompt, safe_context, state, task="safe_answer")
             answer_source = "llm_safe"
         except Exception as exc:
             llm_error = f"{type(exc).__name__}: {exc}"

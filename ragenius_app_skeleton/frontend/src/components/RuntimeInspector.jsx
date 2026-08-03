@@ -11,6 +11,61 @@ function renderNamedList(title, items) {
   );
 }
 
+function formatTokenCount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toLocaleString("en-US") : "Unavailable";
+}
+
+function formatSaving(accounting) {
+  const tokens = formatTokenCount(accounting.turn_estimated_tokens_saved);
+  const percent = Number(accounting.turn_estimated_saving_percent);
+  return `${tokens} tokens${Number.isFinite(percent) ? ` (${percent.toLocaleString("en-US")}%)` : ""}`;
+}
+
+function taskLabel(task) {
+  const labels = {
+    planner: "Planning",
+    planner_hybrid: "Hybrid planning",
+    evidence_analysis: "Evidence analysis",
+    answer_generation: "Answer generation",
+    safe_answer: "Safe answer generation",
+  };
+  return labels[task] || String(task || "DeepSeek call");
+}
+
+function resolveMessageWorkflowStatus(message) {
+  const storedStatus =
+    message?.workflowStatus && typeof message.workflowStatus === "object"
+      ? message.workflowStatus
+      : {};
+  if (Object.keys(storedStatus).length > 0) {
+    return storedStatus;
+  }
+
+  const progress =
+    message?.workflowProgress && typeof message.workflowProgress === "object"
+      ? message.workflowProgress
+      : {};
+  const executionState =
+    message?.sessionExecutionState && typeof message.sessionExecutionState === "object"
+      ? message.sessionExecutionState
+      : {};
+  const workflowTitle = progress.workflow_title || executionState.primary_scope_title || null;
+  const currentStepTitle = progress.step_title || executionState.active_step_title || null;
+  const currentStepOrder = progress.step_order ?? executionState.active_step_order ?? null;
+  if (!workflowTitle && !currentStepTitle && currentStepOrder === null) {
+    return {};
+  }
+  return {
+    workflow_id: progress.workflow_id || null,
+    workflow_title: workflowTitle,
+    current_step:
+      currentStepTitle || currentStepOrder !== null
+        ? { order: currentStepOrder, title: currentStepTitle }
+        : null,
+  };
+}
+
 export default function RuntimeInspector({
   open,
   tab,
@@ -27,11 +82,43 @@ export default function RuntimeInspector({
     return null;
   }
 
-  const retrievalSummary = message?.retrievalSummary || {};
+  const storedRetrievalSummary = message?.retrievalSummary || {};
+  const fallbackTaskModelDiagnostics =
+    message?.taskModelDiagnostics || message?.task_model_diagnostics || {};
+  const retrievalSummary =
+    (!storedRetrievalSummary.task_model_diagnostics
+      || Object.keys(storedRetrievalSummary.task_model_diagnostics).length === 0)
+    && fallbackTaskModelDiagnostics
+    && typeof fallbackTaskModelDiagnostics === "object"
+    && Object.keys(fallbackTaskModelDiagnostics).length > 0
+      ? { ...storedRetrievalSummary, task_model_diagnostics: fallbackTaskModelDiagnostics }
+      : storedRetrievalSummary;
   const citations = Array.isArray(message?.citations) ? message.citations : [];
   const turnExecutionPlan = message?.turnExecutionPlan || retrievalSummary.turn_execution_plan || {};
   const resourceRequests = Array.isArray(turnExecutionPlan.resource_requests) ? turnExecutionPlan.resource_requests : [];
   const actions = Array.isArray(turnExecutionPlan.actions) ? turnExecutionPlan.actions : [];
+  const messageWorkflowStatus = resolveMessageWorkflowStatus(message);
+  const selectedWorkflowStatus =
+    Object.keys(messageWorkflowStatus).length > 0 ? messageWorkflowStatus : (workflowStatus || {});
+  const taskModelDiagnostics =
+    retrievalSummary.task_model_diagnostics && typeof retrievalSummary.task_model_diagnostics === "object"
+      ? retrievalSummary.task_model_diagnostics
+      : {};
+  const contextOptimization =
+    taskModelDiagnostics.context_optimization && typeof taskModelDiagnostics.context_optimization === "object"
+      ? taskModelDiagnostics.context_optimization
+      : {};
+  const tokenAccounting =
+    taskModelDiagnostics.turn_token_accounting && typeof taskModelDiagnostics.turn_token_accounting === "object"
+      ? taskModelDiagnostics.turn_token_accounting
+      : {};
+  const tokenCalls = Array.isArray(tokenAccounting.calls)
+    ? tokenAccounting.calls
+    : (Array.isArray(contextOptimization.calls) ? contextOptimization.calls : []);
+  const hasTokenDiagnostics =
+    Object.keys(contextOptimization).length > 0 || Object.keys(tokenAccounting).length > 0;
+  const optimizationMode = String(contextOptimization.mode || "off").toLowerCase();
+  const optimizationEligible = contextOptimization.eligible !== false;
 
   const detailsTab = (
     <div style={styles.inspectorSection}>
@@ -47,6 +134,61 @@ export default function RuntimeInspector({
           <div><strong>Primary action:</strong> {humanizeActionType(retrievalSummary.primary_action_type || retrievalSummary.action_type)}</div>
           <div><strong>Retrieval bypassed:</strong> {retrievalSummary.retrieval_bypassed ? (retrievalSummary.retrieval_bypass_reason || "yes") : "no"}</div>
         </div>
+      </div>
+      <div style={styles.inspectorGroup}>
+        <div style={styles.inspectorGroupTitle}>Token Optimization</div>
+        <div style={styles.inspectorKeyValue}>
+          {!hasTokenDiagnostics && (
+            <div>Token optimization diagnostics were not recorded for this turn.</div>
+          )}
+          {hasTokenDiagnostics && (
+            <>
+            <div><strong>Mode:</strong> {optimizationMode.charAt(0).toUpperCase() + optimizationMode.slice(1)}</div>
+            <div><strong>DeepSeek calls:</strong> {tokenAccounting.call_count ?? tokenCalls.length}</div>
+            {!optimizationEligible && <div>This turn was not eligible for context optimization.</div>}
+            {optimizationEligible && optimizationMode === "diagnostic" && (
+              <>
+                <div><strong>Actually sent:</strong> {formatTokenCount(tokenAccounting.turn_estimated_outbound_tokens)} tokens</div>
+                <div><strong>Compact candidate:</strong> {formatTokenCount(tokenAccounting.turn_compact_candidate_tokens)} tokens</div>
+                <div><strong>Potential saving:</strong> {formatSaving(tokenAccounting)}</div>
+              </>
+            )}
+            {optimizationEligible && optimizationMode === "compact" && (
+              <>
+                <div><strong>Estimated outbound:</strong> {formatTokenCount(tokenAccounting.turn_estimated_outbound_tokens)} tokens</div>
+                <div><strong>Estimated saved:</strong> {formatSaving(tokenAccounting)}</div>
+              </>
+            )}
+            {optimizationEligible && optimizationMode === "off" && (
+              <div>Context optimization was disabled for this turn.</div>
+            )}
+            {tokenAccounting.budget_limit_tokens != null && (
+              <div>
+                <strong>Turn budget:</strong> {formatTokenCount(tokenAccounting.budget_limit_tokens)} tokens
+                {tokenAccounting.budget_exceeded ? " (exceeded)" : ""}
+              </div>
+            )}
+            </>
+          )}
+        </div>
+        {tokenCalls.length > 0 && (
+          <details style={{ marginTop: 10 }}>
+            <summary>Call breakdown</summary>
+            <ul style={styles.sourceList}>
+              {tokenCalls.map((call, index) => (
+                <li key={`${call.task || "call"}-${index}`}>
+                  <strong>{taskLabel(call.task)}</strong>
+                  <div>
+                    Sent {formatTokenCount(call.actual_outbound_tokens)} tokens
+                    {call.estimated_tokens_saved != null
+                      ? ` | Candidate saving ${formatTokenCount(call.estimated_tokens_saved)} tokens`
+                      : ""}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </div>
       {actions.length > 0 && (
         <div style={styles.inspectorGroup}>
@@ -114,11 +256,11 @@ export default function RuntimeInspector({
       <div style={styles.inspectorGroup}>
         <div style={styles.inspectorGroupTitle}>Workflow state</div>
         <div style={styles.inspectorKeyValue}>
-          {workflowStatus?.workflow_title && (
-            <div><strong>Workflow:</strong> {workflowStatus.workflow_title}</div>
+          {selectedWorkflowStatus?.workflow_title && (
+            <div><strong>Workflow:</strong> {selectedWorkflowStatus.workflow_title}</div>
           )}
-          {workflowStatus?.current_step?.title && (
-            <div><strong>Current step:</strong> {workflowStatus.current_step.title}</div>
+          {selectedWorkflowStatus?.current_step?.title && (
+            <div><strong>Current step:</strong> {selectedWorkflowStatus.current_step.title}</div>
           )}
           {message?.sessionExecutionState?.execution_status && (
             <div><strong>Execution status:</strong> {humanizeActionType(message.sessionExecutionState.execution_status)}</div>

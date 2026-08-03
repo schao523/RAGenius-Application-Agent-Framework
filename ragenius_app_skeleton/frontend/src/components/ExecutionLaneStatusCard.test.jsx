@@ -74,6 +74,61 @@ describe("ExecutionLaneStatusCard", () => {
     expect(screen.getByText(/approve a revision, then use the execution composer/i)).toBeInTheDocument();
   });
 
+  it("labels a normalized processing operation as generation started", () => {
+    render(
+      <ExecutionLaneStatusCard
+        selectedApprovedContent={null}
+        sessionLaneState={{
+          execution_lane: {
+            latest_execution_id: "execution_123",
+            latest_execution_request_skill_id: "codex_cli:notebooklm",
+            latest_status_result: {
+              status: "completed",
+              result: {
+                summary: "Generation started; external output is still processing.",
+                operation_verification: [{
+                  operation_id: "notebooklm_report_generate",
+                  status: "processing",
+                  level: "provider_reported",
+                }],
+              },
+            },
+          },
+        }}
+        styles={styles}
+      />,
+    );
+
+    expect(screen.getByText(/status: generation started/i)).toBeInTheDocument();
+    expect(screen.queryByText(/status: completed/i)).toBeNull();
+  });
+
+  it("renders queued separately from running", () => {
+    const { rerender } = render(
+      <ExecutionLaneStatusCard
+        selectedApprovedContent={null}
+        sessionLaneState={{ execution_lane: {
+          latest_execution_id: "execution_queued",
+          latest_status_result: { status: "queued" },
+        } }}
+        styles={styles}
+      />,
+    );
+    expect(screen.getByText(/status: queued/i)).toBeInTheDocument();
+
+    rerender(
+      <ExecutionLaneStatusCard
+        selectedApprovedContent={null}
+        sessionLaneState={{ execution_lane: {
+          latest_execution_id: "execution_running",
+          latest_status_result: { status: "running" },
+        } }}
+        styles={styles}
+      />,
+    );
+    expect(screen.getByText(/status: running/i)).toBeInTheDocument();
+  });
+
   it("allows opening details and refreshing the latest execution status when an execution id exists", () => {
     const onRefreshStatus = vi.fn();
     const onOpenComposer = vi.fn();

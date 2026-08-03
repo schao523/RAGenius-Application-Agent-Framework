@@ -67,6 +67,36 @@ class LlmRuntimeCompatibilityTests(unittest.TestCase):
         self.assertEqual(config["model"], "planner-model")
         self.assertEqual(config["temperature"], 0.1)
 
+    def test_resolve_task_model_normalizes_legacy_deepseek_model_aliases(self):
+        cases = (
+            ("deepseek-reasoner", "deepseek-v4-pro"),
+            ("deepseek-chat", "deepseek-v4-flash"),
+        )
+
+        for configured_model, expected_model in cases:
+            with self.subTest(configured_model=configured_model):
+                config = resolve_task_model(
+                    {
+                        "provider": "deepseek",
+                        "models": {"answer_generation": configured_model},
+                    },
+                    "answer_generation",
+                )
+                self.assertIsNotNone(config)
+                self.assertEqual(config["model"], expected_model)
+
+    def test_resolve_task_model_does_not_rewrite_other_providers(self):
+        config = resolve_task_model(
+            {
+                "provider": "openai",
+                "models": {"answer_generation": "deepseek-chat"},
+            },
+            "answer_generation",
+        )
+
+        self.assertIsNotNone(config)
+        self.assertEqual(config["model"], "deepseek-chat")
+
     def test_builder_default_settings_include_instruction_understanding_task_models(self):
         models = DEFAULT_APP_CONFIG_SETTINGS["llm"]["models"]
         temperatures = DEFAULT_APP_CONFIG_SETTINGS["llm"]["temperature"]

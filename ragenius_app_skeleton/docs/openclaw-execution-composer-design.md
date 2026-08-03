@@ -2,6 +2,13 @@
 
 Date: 2026-06-14
 
+## Shared Agent Design Reference
+
+`docs/superpowers/specs/2026-08-03-agent-execution-lifecycle-evidence-design.md`
+defines shared queued/running behavior, normalized evidence, trusted artifact
+actions, and app transport requirements for Codex and OpenClaw. This document
+remains authoritative for OpenClaw Composer routing and presentation details.
+
 ## Goal
 
 Add OpenClaw as a selectable agent backend in `ragenius_app_skeleton` without moving provider execution logic into the app.
@@ -11,6 +18,64 @@ Add OpenClaw as a selectable agent backend in `ragenius_app_skeleton` without mo
 The app remains the user-facing execution surface. Execution Composer lets the user choose an agent backend, `App.jsx` serializes that choice into an `@exec` command, the backend router parses it, and `execution_subsystem_client.py` submits an explicit `agent_backend` to `ragenius_execution_subsystem`.
 
 The app does not invoke OpenClaw directly.
+
+## Execution Security And Lifecycle Design
+
+This section is normative for the hardening implementation.
+
+### Trust Boundary
+
+The browser talks to `ragenius_app_skeleton`; it must not call
+`ragenius_execution_subsystem` directly in production. The app backend verifies
+that the authenticated user owns the stored app/session, then sends only the
+execution scope over an authenticated service-to-service channel:
+
+```python
+execution_scope = {
+    "app_id": app_id,
+    "session_id": session_id,
+}
+```
+
+The execution client must include this scope for submission, status, logs, and
+confirmation. User identity remains app-owned and is not persisted by the MVP
+execution subsystem.
+
+### Confirmation UX And Backend State
+
+The initial request does not send `require_confirmation = true` as approval. A
+`pending_confirmation` response includes a server-issued `confirmation_id`,
+reason, policy class, and expiry. The app backend stores that data in the session
+execution lane and exposes only the information needed to render confirmation.
+
+When the user approves, the frontend calls the app backend. The app backend then
+submits the stored `confirmation_id`, `decision = "approve"`, and authenticated
+execution scope to the execution subsystem. It must not synthesize confirmation
+ids or replay the original request with an approval boolean.
+
+Disable the confirmation action after submission. If a retry receives an
+existing `running` or terminal state, render that state instead of starting a new
+execution.
+
+### Status Rendering
+
+Execution cards use only the normalized top-level status:
+
+- `pending_confirmation`: show confirmation action
+- `running`: show in-progress state and status refresh
+- `completed`: show successful result and persisted artifacts
+- `partial`: show result plus warnings and any successfully persisted artifacts
+- `failed`: show failure summary and inspector action
+- `blocked`: show policy denial
+
+The app must not infer success from HTTP `200`, raw OpenClaw output, or a nested
+provider status.
+
+### Dry Run
+
+If Composer exposes dry run, label it as a preview. A dry-run result may show
+backend, policy, required confirmation, selected artifacts, and expected outputs,
+but must not be added to the Artifact Library as if execution occurred.
 
 ## Files to Modify
 
@@ -97,11 +162,10 @@ If direct artifact selection is exposed for OpenClaw, Composer must submit:
     artifactRefs: [
       {
         artifact_id: "art_001",
-        artifact_version_id: "v1",
         role: "source",
-        reuse_mode: "transform",
+        reuse_mode: "file_backed",
         display_name: "source.pdf",
-        media_type: "application/pdf"
+        mime_type: "application/pdf"
       }
     ]
   }
@@ -193,6 +257,10 @@ def submit_agent(..., agent_backend: str = "codex_cli", ...):
 ```
 
 The client should not infer OpenClaw from request text.
+
+Add scoped client methods for status, logs, and confirmation. These methods must
+always receive the authenticated execution scope and must never issue an
+execution-id-only request.
 
 ## Main Backend Flow
 
@@ -292,21 +360,22 @@ Artifact ref shape:
 ```js
 {
   artifact_id: "art_001",
-  artifact_version_id: "v1",
   role: "source",
-  reuse_mode: "read",
+  reuse_mode: "file_backed",
   display_name: "source.md",
-  media_type: "text/markdown"
+  mime_type: "text/markdown"
 }
 ```
 
-Allowed OpenClaw Phase 1 `reuse_mode` values:
+Allowed provider-neutral `reuse_mode` values:
 
-- `read`
-- `transform`
-- `reference_only`
+- `inline_text`
+- `file_backed`
+- `binary_payload`
+- `metadata_only`
 
-`append` should not be offered in the GUI for OpenClaw until the execution subsystem supports safe copy-on-write output handling.
+Transform intent belongs in the user request and provider-neutral
+`expected_outputs`, not in an OpenClaw-specific reuse mode.
 
 ## Tests
 
@@ -332,6 +401,13 @@ Backend tests:
 - OpenClaw agent run includes approved content context when selected approved content exists.
 - OpenClaw agent run records `latest_agent_backend = "openclaw_cli"`.
 - OpenClaw route does not serialize provider workspace paths.
+- app backend validates authenticated session ownership before execution operations.
+- status and logs include app/session scope.
+- confirmation uses the stored server-issued confirmation id, not a public
+  approval flag.
+- repeated confirmation renders existing state without duplicating execution.
+- `partial` and `failed` render from top-level status without parsing raw output.
+- dry-run results do not create user artifact actions.
 
 ## Non-Goals
 
@@ -343,12 +419,11 @@ Backend tests:
 
 ## Implementation Order
 
-1. Add parser tests for `@exec openclaw`.
-2. Extend `ExecRouteDecision` with optional `agent_backend`.
-3. Implement OpenClaw parser branch.
-4. Update execution client to accept `agent_backend`.
-5. Generalize backend handler from Codex-only to agent-backend-aware.
-6. Add frontend tests for agent backend selection.
-7. Add Composer backend selector.
-8. Update `buildExecCommand` for OpenClaw.
-9. Verify Codex, tool, skill, status, and confirmation flows still pass.
+The original OpenClaw Composer work is complete. Apply hardening in this order:
+
+1. Propagate app/session scope through the authenticated execution client.
+2. Scope status, logs, and confirmation requests.
+3. Replace approval-boolean replay with server-issued confirmation state.
+4. Render `running`, `partial`, and provider-propagated `failed` statuses.
+5. Add dry-run presentation without artifact actions.
+6. Run Codex, OpenClaw, tool, skill, status, and confirmation regressions.

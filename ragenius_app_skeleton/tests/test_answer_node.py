@@ -324,6 +324,21 @@ class AnswerNodeTests(unittest.TestCase):
         self.assertEqual(out["answer_generation_meta"]["source"], "fallback_provider_error")
         self.assertIn("目前回答模型暫時不可用", out["final_answer"]["content"])
 
+    def test_unsupported_model_fallback_reports_configuration_error(self):
+        state = base_state()
+
+        def llm(_prompt, _tools, _context):
+            raise RuntimeError(
+                'LLM HTTP error 400: {"error":{"message":'
+                '"The supported API model names are deepseek-v4-pro or deepseek-v4-flash, '
+                'but you passed deepseek-chat."}}'
+            )
+
+        out = answer.run(state, llm_answer=llm)
+        self.assertEqual(out["answer_generation_meta"]["source"], "fallback_provider_error")
+        self.assertIn("configured answer model is not supported", out["final_answer"]["content"])
+        self.assertEqual(out["final_answer"]["citations"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

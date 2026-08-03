@@ -11,8 +11,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
+TEST_RUNTIME_ROOT = Path(__file__).resolve().parent / "_tmp" / "builder_chat_runtime"
+TEST_RUNTIME_STATE_DB = TEST_RUNTIME_ROOT / "runtime_state.db"
+TEST_RUNTIME_UPLOADS_DIR = TEST_RUNTIME_ROOT / "session_uploads"
+os.environ["RAGENIUS_APP_STATE_DB"] = str(TEST_RUNTIME_STATE_DB)
+os.environ["RAGENIUS_APP_UPLOADS_DIR"] = str(TEST_RUNTIME_UPLOADS_DIR)
+
 import backend.app.main as backend_main
+from backend.app.chat_repos import ChatRepo, SessionRepo
 from backend.app.rag_runtime import reset_rag_store
+
+# main may already be imported during full-suite collection, so replace its
+# process-global repositories before importing their aliases below.
+backend_main.session_repo = SessionRepo(TEST_RUNTIME_STATE_DB)
+backend_main.chat_repo = ChatRepo(TEST_RUNTIME_STATE_DB)
+
 from backend.app.main import (
     app,
     chat_repo,
@@ -128,6 +141,14 @@ class BuilderChatIntegrationTests(unittest.TestCase):
         self.tmp_root = Path(__file__).resolve().parent / "_tmp" / "builder_chat" / str(uuid.uuid4())
         self.tmp_root.mkdir(parents=True, exist_ok=True)
 
+    def test_runtime_state_is_isolated_from_user_session_storage(self):
+        self.assertEqual(session_repo._db.db_path, TEST_RUNTIME_STATE_DB.resolve())
+        self.assertEqual(session_repo._db.uploads_dir, TEST_RUNTIME_UPLOADS_DIR.resolve())
+        self.assertNotEqual(
+            session_repo._db.db_path,
+            (Path(__file__).resolve().parents[1] / "backend" / ".state" / "runtime_state.db").resolve(),
+        )
+
     def tearDown(self):
         if self.tmp_root.exists():
             for path in sorted(self.tmp_root.glob("**/*"), reverse=True):
@@ -208,6 +229,9 @@ class BuilderChatIntegrationTests(unittest.TestCase):
                     "template_version": 1,
                 },
             )
+            messages = self.client.get(
+                "/sessions/s-builder-doc/messages?app_id=app-1&user_id=u1"
+            )
 
         self.assertEqual(chat.status_code, 200)
         body = chat.json()
@@ -222,6 +246,19 @@ class BuilderChatIntegrationTests(unittest.TestCase):
         self.assertIn("template_retrieved_count", body["retrieval_summary"])
         self.assertIn("template_titles", body["retrieval_summary"])
         self.assertIn("output_artifact_targets", body["retrieval_summary"])
+        live_diagnostics = body["retrieval_summary"]["task_model_diagnostics"]
+        self.assertGreaterEqual(live_diagnostics["turn_token_accounting"]["call_count"], 1)
+        self.assertTrue(live_diagnostics["context_optimization"]["calls"])
+
+        self.assertEqual(messages.status_code, 200)
+        persisted_assistant = [
+            message for message in messages.json()["messages"] if message.get("role") == "assistant"
+        ][-1]
+        persisted_diagnostics = persisted_assistant["retrievalSummary"]["task_model_diagnostics"]
+        self.assertEqual(
+            persisted_diagnostics["turn_token_accounting"],
+            live_diagnostics["turn_token_accounting"],
+        )
 
     def test_chat_route_surfaces_bundled_direct_markdown_sources_in_retrieval_summary(self):
         db_path, _ = _create_builder_db(str(self.tmp_root))
@@ -1151,6 +1188,51 @@ class BuilderChatIntegrationTests(unittest.TestCase):
         self.assertEqual(workflow_status["workflow_id"], "bible_study")
         self.assertEqual(workflow_status["current_step"]["order"], 2)
         self.assertEqual(workflow_status["current_step"]["title"], "Identify Relationships")
+
+    def test_session_messages_preserve_distinct_workflow_status_for_each_assistant_turn(self):
+        db_path, _ = _create_builder_db(str(self.tmp_root))
+
+        with mock.patch.dict(os.environ, {"RAGENIUS_BUILDER_DB": db_path}, clear=False):
+            session_repo.get_or_create(
+                "s-turn-history",
+                collection_id="app-1",
+                user_id="u1",
+                config_version=1,
+                adapter_version=1,
+                template_version=1,
+            )
+            for order, title in ((1, "Observation"), (2, "Identify Relationships")):
+                chat_repo.append(
+                    "s-turn-history",
+                    "assistant",
+                    f"Turn {order}",
+                    retrieval_summary={
+                        "workflow_progress": {
+                            "workflow_id": "bible_study",
+                            "workflow_title": "Bible Study",
+                            "step_order": order,
+                            "step_title": title,
+                        },
+                        "session_execution_state": {
+                            "execution_status": "guiding",
+                            "primary_scope_id": "workflow:bible_study",
+                            "primary_scope_type": "workflow",
+                            "primary_scope_title": "Bible Study",
+                            "active_step_scope_id": f"step:bible_study:{order}",
+                            "active_step_order": order,
+                            "active_step_title": title,
+                        },
+                    },
+                )
+
+            messages_response = self.client.get("/sessions/s-turn-history/messages?app_id=app-1&user_id=u1")
+
+        self.assertEqual(messages_response.status_code, 200)
+        messages = messages_response.json()["messages"]
+        self.assertEqual(messages[0]["workflow_status"]["current_step"]["order"], 1)
+        self.assertEqual(messages[0]["workflow_status"]["current_step"]["title"], "Observation")
+        self.assertEqual(messages[1]["workflow_status"]["current_step"]["order"], 2)
+        self.assertEqual(messages[1]["workflow_status"]["current_step"]["title"], "Identify Relationships")
 
     def test_session_messages_workflow_status_surfaces_active_followup_module_scope(self):
         db_path, _ = _create_builder_db(str(self.tmp_root))

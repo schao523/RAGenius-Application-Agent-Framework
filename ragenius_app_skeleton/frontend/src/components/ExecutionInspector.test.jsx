@@ -118,6 +118,70 @@ describe("ExecutionInspector", () => {
     expect(screen.getByText(/notebooklm/i)).toBeInTheDocument();
   });
 
+  it("renders normalized Codex authorization, staged inputs, and operation evidence", () => {
+    render(
+      <ExecutionInspector
+        open
+        tab="summary"
+        onChangeTab={vi.fn()}
+        onClose={vi.fn()}
+        message={{
+          retrievalSummary: {
+            execution_override: true,
+            command: "codex",
+            execution_status_result: {
+              execution_id: "execution_verified_1",
+              status: "completed",
+              result: {
+                backend: "codex_cli",
+                summary: "Generation started; external output is still processing.",
+                provider_metadata: {
+                  confirmation_state: "confirmed",
+                  permission_scope: "agent.external_write",
+                  policy_fingerprint: "abcdef1234567890abcdef1234567890",
+                  turn_status: "completed",
+                  command_count: 3,
+                  successful_command_count: 3,
+                  final_json_status: "parsed",
+                },
+                staged_inputs: [{
+                  artifact_id: "artifact_123",
+                  role: "source",
+                  reuse_mode: "inline_text",
+                  workspace_relative_path: "inputs/artifact_123-Approved.md",
+                  sha256: "b".repeat(64),
+                }],
+                operation_verification: [{
+                  operation_id: "notebooklm_report_generate",
+                  operation: "generate report",
+                  status: "processing",
+                  level: "provider_reported",
+                  external_id: "job_456",
+                }],
+                diagnostics: {
+                  failure_code: "",
+                },
+              },
+            },
+          },
+        }}
+        sessionLaneState={{ execution_lane: {} }}
+        styles={styles}
+      />,
+    );
+
+    expect(screen.getByText(/authorization and policy/i)).toBeInTheDocument();
+    expect(screen.getByText(/confirmed/i)).toBeInTheDocument();
+    expect(screen.getByText(/agent.external_write/i)).toBeInTheDocument();
+    expect(screen.getByText(/abcdef123456/i)).toBeInTheDocument();
+    expect(screen.getByText(/inputs\/artifact_123-Approved\.md/i)).toBeInTheDocument();
+    expect(screen.getByText(/notebooklm_report_generate/i)).toBeInTheDocument();
+    expect(screen.getByText(/provider_reported/i)).toBeInTheDocument();
+    expect(screen.getByText(/job_456/i)).toBeInTheDocument();
+    expect(screen.queryByText(/confirmation_123/i)).toBeNull();
+    expect(screen.queryByText(/storage[\\/]artifacts/i)).toBeNull();
+  });
+
   it("renders OpenClaw normalized output and verification metadata", () => {
     render(
       <ExecutionInspector

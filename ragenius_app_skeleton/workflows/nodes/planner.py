@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Protocol
 
 from backend.openai_tools import get_openai_tools
+from backend.app.llm_context_optimization import build_planner_context, compact_hybrid_decision_packet, optimize_context_for_state
 from backend.schemas import validate_planner_output
 
 from ..graph_state import GraphState
@@ -151,7 +152,15 @@ def _call_planner(
         "adapter_json": state.get("adapter_json", {}),
         "template_registry": state.get("template_registry", {}),
     }
-    return llm_planner(prompt, tools, context)
+    optimized = optimize_context_for_state(
+        state,
+        task="planner",
+        prompt=prompt,
+        tools=tools,
+        full_context=context,
+        compact_context=build_planner_context(state),
+    )
+    return llm_planner(prompt, tools, optimized.context)
 
 
 def _stringify_instruction_summary_item(item: Any) -> str | None:
@@ -298,6 +307,7 @@ def _build_hybrid_turn_decision_packet(state: GraphState) -> dict[str, Any]:
 def _call_hybrid_planner_shadow(
     llm_planner_hybrid: Callable[[str, list, Dict[str, Any]], Dict[str, Any]],
     packet: Dict[str, Any],
+    state: GraphState,
 ) -> Dict[str, Any]:
     prompt = "\n\n".join(
         [
@@ -306,7 +316,16 @@ def _call_hybrid_planner_shadow(
             "Return JSON only using the provided tool schema.",
         ]
     )
-    return llm_planner_hybrid(prompt, [HYBRID_PLANNER_TOOL], {"decision_packet": packet})
+    tools = [HYBRID_PLANNER_TOOL]
+    optimized = optimize_context_for_state(
+        state,
+        task="planner_hybrid",
+        prompt=prompt,
+        tools=tools,
+        full_context={"decision_packet": packet},
+        compact_context={"decision_packet": compact_hybrid_decision_packet(packet)},
+    )
+    return llm_planner_hybrid(prompt, tools, optimized.context)
 
 
 def _enforce_app_scoped_retrieval(state: GraphState, planner_output: Dict[str, Any]) -> Dict[str, Any]:
@@ -5793,7 +5812,7 @@ def run(
         state["hybrid_planner_decision_packet"] = hybrid_packet
         if callable(llm_planner_hybrid):
             try:
-                state["hybrid_planner_shadow_output"] = _call_hybrid_planner_shadow(llm_planner_hybrid, hybrid_packet)
+                state["hybrid_planner_shadow_output"] = _call_hybrid_planner_shadow(llm_planner_hybrid, hybrid_packet, state)
             except Exception:
                 state["hybrid_planner_shadow_output"] = {}
     pre_routing = _classify_pre_routing_turn(state, planner_output)

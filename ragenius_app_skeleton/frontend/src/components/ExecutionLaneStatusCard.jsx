@@ -15,6 +15,25 @@ function resolveLatestExecutionPayload(executionLaneState) {
   return executionLaneState?.latest_status_result || executionLaneState?.latest_execution_result || {};
 }
 
+function resolveDisplayExecutionStatus(executionPayload, fallbackStatus) {
+  const result = executionPayload?.result && typeof executionPayload.result === "object"
+    ? executionPayload.result
+    : {};
+  const operations = Array.isArray(result.operation_verification)
+    ? result.operation_verification
+    : [];
+  if (operations.some((item) => ["accepted", "processing"].includes(String(item?.status || "").toLowerCase()))) {
+    return "Generation started";
+  }
+  if (String(fallbackStatus || "").toLowerCase() === "queued") {
+    return "Queued";
+  }
+  if (String(fallbackStatus || "").toLowerCase() === "running") {
+    return "Running";
+  }
+  return fallbackStatus;
+}
+
 function resolveExecutionPaths(executionPayload) {
   const metadataPaths = Array.isArray(executionPayload?.execution_metadata?.execution_paths)
     ? executionPayload.execution_metadata.execution_paths
@@ -79,6 +98,7 @@ export default function ExecutionLaneStatusCard({
       : null;
   const latestStatus = resolveExecutionStatus(executionLane);
   const latestExecutionPayload = resolveLatestExecutionPayload(executionLane);
+  const displayStatus = resolveDisplayExecutionStatus(latestExecutionPayload, latestStatus);
   const executionPaths = resolveExecutionPaths(latestExecutionPayload);
   const executionPathLabel = executionPaths.length > 0 ? executionPaths.join(", ") : "Unknown";
   const fallbackSummary = resolveFallbackSummary(latestExecutionPayload);
@@ -164,7 +184,7 @@ export default function ExecutionLaneStatusCard({
           <div style={styles.row}>
             <span style={styles.pill}>Revision: {approvedRevisionLabel || "None"}</span>
             <span style={styles.pill}>Last exec: {latestSkillId || "None"}</span>
-            <span style={styles.pill}>Status: {latestStatus || "Not submitted"}</span>
+            <span style={styles.pill}>Status: {displayStatus || "Not submitted"}</span>
             {latestExecutionMode && <span style={styles.pill}>Mode: {latestExecutionMode}</span>}
             {latestExecutionMode === "async" && latestAsyncTaskStatus && (
               <span style={styles.pill}>Task: {latestAsyncTaskStatus}</span>

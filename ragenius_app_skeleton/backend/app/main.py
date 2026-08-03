@@ -13,7 +13,8 @@ from typing import Any, Dict
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from .builder_runtime import derive_builder_adapter_json, derive_builder_config_json
@@ -194,6 +195,32 @@ def _session_lane_state(runtime_state: Dict[str, Any] | None) -> Dict[str, Any]:
     lane_state["execution_lane"] = execution_lane if isinstance(execution_lane, dict) else {}
     state["session_lane_state"] = lane_state
     return lane_state
+
+
+def _record_confirmation_lane_state(
+    lane_state: Dict[str, Any],
+    *,
+    result_payload: Dict[str, Any],
+) -> None:
+    execution_lane = lane_state.get("execution_lane", {})
+    if not isinstance(execution_lane, dict):
+        return
+    result = result_payload.get("result", {})
+    result = result if isinstance(result, dict) else {}
+    confirmation_id = str(result.get("confirmation_id") or "").strip()
+    if confirmation_id:
+        execution_lane["latest_confirmation_id"] = confirmation_id
+        execution_lane["latest_confirmation_expires_at"] = result.get(
+            "confirmation_expires_at"
+        )
+        execution_lane["latest_confirmation_state"] = str(
+            result.get("confirmation_state") or "pending"
+        )
+        return
+
+    status = str(result_payload.get("status") or "").strip().lower()
+    if status in {"completed", "failed", "blocked", "partial"}:
+        execution_lane["latest_confirmation_state"] = status
 
 
 def _runtime_tool_inventory_items() -> list[dict[str, Any]]:
@@ -556,8 +583,8 @@ def _normalize_artifact_inventory_items(items: list[dict[str, Any]]) -> list[dic
         if not isinstance(item, dict):
             continue
         row = dict(item)
-        row["path"] = _absolutize_local_path(str(item.get("path") or "").strip()) or item.get("path")
-        row["file_path"] = _absolutize_local_path(str(item.get("file_path") or "").strip()) or item.get("file_path")
+        row.pop("path", None)
+        row.pop("file_path", None)
         consumption = item.get("consumption")
         if isinstance(consumption, dict):
             row["consumption"] = {
@@ -661,21 +688,11 @@ def _artifact_source_label(item: dict[str, Any]) -> str | None:
 
 
 def _artifact_file_info(item: dict[str, Any]) -> dict[str, Any]:
-    candidate_path = str(item.get("file_path") or item.get("path") or "").strip()
-    extension = Path(candidate_path).suffix.lower() if candidate_path else ""
-    has_file = False
+    display_name = str(item.get("display_name") or "").strip()
+    extension = Path(display_name).suffix.lower() if display_name else ""
     size_bytes = item.get("size_bytes")
-    if candidate_path:
-        resolved = Path(candidate_path).resolve()
-        if resolved.exists() and resolved.is_file():
-            has_file = True
-            if size_bytes is None:
-                try:
-                    size_bytes = resolved.stat().st_size
-                except OSError:
-                    size_bytes = None
     return {
-        "has_file": has_file,
+        "has_file": bool(str(item.get("artifact_id") or "").strip()),
         "extension": extension or None,
         "size_bytes": size_bytes if isinstance(size_bytes, int) else None,
     }
@@ -746,8 +763,6 @@ def _normalize_session_artifact_item(
         },
         "debug": {
             "artifact_id": artifact_id,
-            "file_path": str(item.get("file_path") or "").strip() or None,
-            "metadata_path": str(item.get("path") or "").strip() or None,
         },
     }
 
@@ -921,8 +936,6 @@ def _build_execution_artifact_ref(
         "display_name": str(artifact.get("display_name") or artifact_id).strip() or artifact_id,
         "artifact_type": str(artifact.get("artifact_type") or "").strip() or None,
         "mime_type": str(artifact.get("mime_type") or "").strip() or None,
-        "file_path": str(artifact.get("file_path") or "").strip() or None,
-        "metadata_path": str(artifact.get("path") or "").strip() or None,
         "consumption": {
             "default_mode": consumption.get("default_mode"),
             "supported_modes": list(consumption.get("supported_modes") or []),
@@ -944,14 +957,7 @@ def _mapped_artifact_field_value(
         for ref in artifact_refs:
             resolved_mode = str(ref.get("consumption", {}).get("resolved_mode") or "").strip()
             if resolved_mode == "file_backed":
-                file_path = str(ref.get("file_path") or "").strip()
-                if not file_path:
-                    artifact_id = str(ref.get("artifact_id") or "").strip()
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Artifact `{artifact_id}` does not have a reusable file payload.",
-                    )
-                values.append(file_path)
+                values.append(str(ref.get("artifact_id") or "").strip())
             else:
                 values.append(str(ref.get("artifact_id") or "").strip())
     values = [value for value in values if value]
@@ -1337,6 +1343,14 @@ def _agent_exec_summary_text(
             f"{provider_label} agent request{skill_text} requires confirmation before proceeding "
             f"because it is classified as `{risk_label}`."
         )
+    if status == "queued":
+        execution_id = str(submit_result.get("execution_id") or "").strip()
+        suffix = f" Execution id: {execution_id}." if execution_id else ""
+        return f"{provider_label} agent request is queued.{suffix}"
+    if status == "running":
+        execution_id = str(submit_result.get("execution_id") or "").strip()
+        suffix = f" Execution id: {execution_id}." if execution_id else ""
+        return f"{provider_label} agent request is running.{suffix}"
 
     error_payload = submit_result.get("error")
     if isinstance(error_payload, dict):
@@ -1348,6 +1362,21 @@ def _agent_exec_summary_text(
 
     result_payload = submit_result.get("result")
     result_payload = result_payload if isinstance(result_payload, dict) else {}
+    if status in {"partial", "failed"}:
+        summary = str(result_payload.get("summary") or "").strip()
+        diagnostics = result_payload.get("diagnostics")
+        diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+        failure_message = str(diagnostics.get("failure_message") or "").strip()
+        detail = summary or failure_message
+        if status == "partial":
+            return (
+                f"{provider_label} agent request completed with warnings."
+                f"{f' {detail}' if detail else ''}"
+            )
+        return (
+            f"{provider_label} agent request failed."
+            f"{f' {detail}' if detail else ''}"
+        )
     user_summary_text = _render_user_summary(result_payload)
     if user_summary_text:
         return user_summary_text
@@ -1460,7 +1489,11 @@ def _handle_exec_status_turn(
     if route.error:
         raise HTTPException(status_code=400, detail=route.error)
     execution_id = str(route.execution_id or "").strip()
-    result = execution_client.get_execution_status(execution_id)
+    result = execution_client.get_execution_status(
+        execution_id,
+        app_id=payload.app_id,
+        session_id=session_id,
+    )
     runtime_state = session_repo.get_runtime_state(session_id)
     lane_state = _session_lane_state(runtime_state)
     polled_result = _maybe_poll_async_provider_task(
@@ -1471,8 +1504,15 @@ def _handle_exec_status_turn(
     )
     if polled_result is not None:
         result = polled_result
+    result = _enrich_execution_result_artifacts(
+        session_id=session_id,
+        app_id=payload.app_id,
+        user_id=payload.user_id,
+        submit_result=result,
+    )
     lane_state["execution_lane"]["latest_execution_id"] = execution_id
     lane_state["execution_lane"]["latest_status_result"] = result
+    _record_confirmation_lane_state(lane_state, result_payload=result)
     _refresh_async_lane_state_from_status(lane_state, status_result=result)
     runtime_state["session_lane_state"] = lane_state
     session_repo.set_runtime_state(session_id, runtime_state)
@@ -1499,7 +1539,12 @@ def _handle_exec_status_turn(
         session_id,
         "assistant",
         summary_text,
-        retrieval_summary={"execution_override": True, "command": "status", "execution_id": execution_id},
+        retrieval_summary={
+            "execution_override": True,
+            "command": "status",
+            "execution_id": execution_id,
+            "execution_status_result": result,
+        },
     )
     return {
         "content": summary_text,
@@ -1665,6 +1710,7 @@ def _execute_exec_skill_target(
     lane_state["execution_lane"]["latest_execution_request_skill_id"] = skill_id
     lane_state["execution_lane"]["latest_execution_request_query"] = payload.user_query
     lane_state["execution_lane"]["latest_execution_result"] = submit_result
+    _record_confirmation_lane_state(lane_state, result_payload=submit_result)
     _record_login_requirement(lane_state, result_payload=submit_result)
     _record_async_lane_state(
         lane_state,
@@ -1763,6 +1809,7 @@ def _handle_exec_agent_turn(
         artifact_refs=artifact_refs,
         expected_outputs=expected_outputs,
         context_payload=context_payload,
+        execution_mode=str(route.execution_mode or "sync").strip() or "sync",
     )
     submit_result = _enrich_execution_result_artifacts(
         session_id=session_id,
@@ -1780,6 +1827,7 @@ def _handle_exec_agent_turn(
     )
     lane_state["execution_lane"]["latest_execution_request_query"] = payload.user_query
     lane_state["execution_lane"]["latest_execution_result"] = submit_result
+    _record_confirmation_lane_state(lane_state, result_payload=submit_result)
     lane_state["execution_lane"]["latest_execution_mode"] = str(route.execution_mode or "sync").strip() or "sync"
     lane_state["execution_lane"]["latest_agent_backend"] = agent_backend
     _record_login_requirement(lane_state, result_payload=submit_result)
@@ -2403,6 +2451,43 @@ def _workflow_status_payload(
     }
 
 
+def _message_workflow_status_payload(app_id: str, message: Dict[str, Any]) -> Dict[str, Any]:
+    if str(message.get("role") or "").strip() != "assistant":
+        return {}
+    summary = message.get("retrievalSummary")
+    if not isinstance(summary, dict):
+        summary = message.get("retrieval_summary")
+    summary = summary if isinstance(summary, dict) else {}
+    workflow_progress = summary.get("workflow_progress", {})
+    session_execution_state = summary.get("session_execution_state", {})
+    return _workflow_status_payload(
+        app_id,
+        workflow_progress if isinstance(workflow_progress, dict) else {},
+        runtime_state={
+            "session_execution_state": session_execution_state
+            if isinstance(session_execution_state, dict)
+            else {}
+        },
+        message_history=[message],
+    )
+
+
+def _require_session_scope(
+    session_id: str,
+    *,
+    app_id: str,
+    user_id: str,
+) -> Dict[str, Any]:
+    session = session_repo.get(session_id)
+    if (
+        session is None
+        or session.get("collection_id") != app_id
+        or session.get("user_id") != user_id
+    ):
+        raise HTTPException(status_code=404, detail="Session not found.")
+    return session
+
+
 def _advance_workflow_progress(app_id: str, workflow_progress: Dict[str, Any] | None) -> Dict[str, Any]:
     progress = dict(workflow_progress or {})
     workflow_id = str(progress.get("workflow_id") or "").strip()
@@ -2741,7 +2826,12 @@ async def chat(session_id: str, payload: ChatRequest):
 
     route = parse_exec_turn(payload.user_query)
     if route.is_exec_turn:
-        return _handle_exec_turn(session_id=session_id, payload=payload, route=route)
+        return await run_in_threadpool(
+            _handle_exec_turn,
+            session_id=session_id,
+            payload=payload,
+            route=route,
+        )
     return _handle_normal_chat_turn(
         session_id=session_id,
         payload=payload,
@@ -2757,7 +2847,16 @@ async def get_session_messages(session_id: str, app_id: str, user_id: str):
         return {"session_id": session_id, "messages": [], "workflow_status": {}}
     if session["collection_id"] != app_id or session["user_id"] != user_id:
         raise HTTPException(status_code=400, detail="Session identity mismatch.")
-    history = chat_repo.history(session_id)
+    stored_history = chat_repo.history(session_id)
+    history = [
+        {
+            **message,
+            "workflow_status": _message_workflow_status_payload(app_id, message),
+        }
+        if str(message.get("role") or "").strip() == "assistant"
+        else message
+        for message in stored_history
+    ]
     context = _load_builder_readonly_context(app_id)
     return {
         "session_id": session_id,
@@ -2786,9 +2885,7 @@ async def list_session_artifacts(
     artifact_type: str | None = None,
     eligible_for: str | None = None,
 ):
-    session = session_repo.get(session_id)
-    if session is not None and (session["collection_id"] != app_id or session["user_id"] != user_id):
-        raise HTTPException(status_code=400, detail="Session identity mismatch.")
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
     payload = execution_client.get_artifact_inventory(
         app_id=app_id,
         session_id=session_id,
@@ -2828,23 +2925,20 @@ async def preview_session_artifact_file(
     app_id: str,
     user_id: str,
 ):
-    session = session_repo.get(session_id)
-    if session is not None and (session["collection_id"] != app_id or session["user_id"] != user_id):
-        raise HTTPException(status_code=400, detail="Session identity mismatch.")
-    artifact = _resolve_session_artifact(app_id=app_id, session_id=session_id, artifact_id=artifact_id)
-    if artifact is None:
-        raise HTTPException(status_code=404, detail="Artifact not found.")
-    if not _artifact_is_previewable(artifact):
-        raise HTTPException(status_code=400, detail="Artifact preview is not available for this type.")
-    candidate_path = str(artifact.get("file_path") or artifact.get("path") or "").strip()
-    if not candidate_path:
-        raise HTTPException(status_code=404, detail="Artifact file is not available.")
-    file_path = Path(candidate_path).resolve()
-    if not file_path.exists() or not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Artifact file was not found on disk.")
-    filename = str(artifact.get("display_name") or file_path.name).strip() or file_path.name
-    media_type = str(artifact.get("mime_type") or "").strip() or None
-    return FileResponse(path=file_path, filename=filename, media_type=media_type, content_disposition_type="inline")
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    result = await run_in_threadpool(
+        execution_client.get_artifact_file,
+        app_id=app_id,
+        session_id=session_id,
+        artifact_id=artifact_id,
+        preview=True,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=int(result.get("_http_status") or 502), detail="Artifact file is unavailable.")
+    headers = {}
+    if result.get("content_disposition"):
+        headers["Content-Disposition"] = str(result["content_disposition"])
+    return Response(content=result.get("content") or b"", media_type=result.get("content_type"), headers=headers)
 
 
 @app.get("/sessions/{session_id}/artifacts/{artifact_id}/file")
@@ -2854,21 +2948,20 @@ async def open_session_artifact_file(
     app_id: str,
     user_id: str,
 ):
-    session = session_repo.get(session_id)
-    if session is not None and (session["collection_id"] != app_id or session["user_id"] != user_id):
-        raise HTTPException(status_code=400, detail="Session identity mismatch.")
-    artifact = _resolve_session_artifact(app_id=app_id, session_id=session_id, artifact_id=artifact_id)
-    if artifact is None:
-        raise HTTPException(status_code=404, detail="Artifact not found.")
-    candidate_path = str(artifact.get("file_path") or artifact.get("path") or "").strip()
-    if not candidate_path:
-        raise HTTPException(status_code=404, detail="Artifact file is not available.")
-    file_path = Path(candidate_path).resolve()
-    if not file_path.exists() or not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Artifact file was not found on disk.")
-    filename = str(artifact.get("display_name") or file_path.name).strip() or file_path.name
-    media_type = str(artifact.get("mime_type") or "").strip() or None
-    return FileResponse(path=file_path, filename=filename, media_type=media_type)
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    result = await run_in_threadpool(
+        execution_client.get_artifact_file,
+        app_id=app_id,
+        session_id=session_id,
+        artifact_id=artifact_id,
+        preview=False,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=int(result.get("_http_status") or 502), detail="Artifact file is unavailable.")
+    headers = {}
+    if result.get("content_disposition"):
+        headers["Content-Disposition"] = str(result["content_disposition"])
+    return Response(content=result.get("content") or b"", media_type=result.get("content_type"), headers=headers)
 
 
 @app.delete("/sessions/{session_id}/artifacts/{artifact_id}")
@@ -2878,22 +2971,16 @@ async def delete_session_artifact(
     app_id: str,
     user_id: str,
 ):
-    session = session_repo.get(session_id)
-    if session is not None and (session["collection_id"] != app_id or session["user_id"] != user_id):
-        raise HTTPException(status_code=400, detail="Session identity mismatch.")
-    artifact = _resolve_session_artifact(app_id=app_id, session_id=session_id, artifact_id=artifact_id)
-    if artifact is None:
-        raise HTTPException(status_code=404, detail="Artifact not found.")
-    deleted_paths: list[str] = []
-    for raw_path in (artifact.get("file_path"), artifact.get("path")):
-        candidate_path = str(raw_path or "").strip()
-        if not candidate_path:
-            continue
-        resolved = Path(candidate_path).resolve()
-        if resolved.exists():
-            resolved.unlink()
-            deleted_paths.append(str(resolved))
-    return {"deleted": True, "artifact_id": artifact_id, "deleted_paths": deleted_paths}
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    result = await run_in_threadpool(
+        execution_client.delete_artifact,
+        app_id=app_id,
+        session_id=session_id,
+        artifact_id=artifact_id,
+    )
+    if isinstance(result.get("error"), dict):
+        raise HTTPException(status_code=int(result.get("_http_status") or 502), detail="Artifact could not be deleted.")
+    return {"deleted": True, "artifact_id": artifact_id}
 
 
 @app.get("/exec/tools")
@@ -2923,11 +3010,11 @@ async def list_approved_content(session_id: str, app_id: str, user_id: str):
 
 @app.post("/sessions/{session_id}/approved-content")
 async def create_session_approved_content(session_id: str, payload: ApprovedContentCreateRequest):
-    session = session_repo.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if session["collection_id"] != payload.app_id or session["user_id"] != payload.user_id:
-        raise HTTPException(status_code=400, detail="Session identity mismatch.")
+    _require_session_scope(
+        session_id,
+        app_id=payload.app_id,
+        user_id=payload.user_id,
+    )
     snapshot = None
     if payload.content_text and str(payload.content_text).strip():
         snapshot = create_approved_snapshot(
@@ -3051,7 +3138,6 @@ async def create_session_approved_content(session_id: str, payload: ApprovedCont
                     "sourceMessageIds": source_message_ids,
                     "contentHash": snapshot_content_hash,
                 },
-                require_confirmation=False,
             )
             artifact_payload = reviewed_artifact_result.get("result") if isinstance(reviewed_artifact_result, dict) else {}
             artifact_payload = artifact_payload if isinstance(artifact_payload, dict) else {}
@@ -3237,11 +3323,11 @@ async def upload_session_artifact(
 
 @app.post("/sessions/{session_id}/exports")
 async def export_session_messages(session_id: str, payload: SessionExportRequest):
-    session = session_repo.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if session["collection_id"] != payload.app_id or session["user_id"] != payload.user_id:
-        raise HTTPException(status_code=400, detail="Session identity mismatch.")
+    session = _require_session_scope(
+        session_id,
+        app_id=payload.app_id,
+        user_id=payload.user_id,
+    )
     normalized_ids = [str(message_id or "").strip() for message_id in payload.message_ids]
     normalized_ids = [message_id for message_id in normalized_ids if message_id]
     if not normalized_ids:
@@ -3294,7 +3380,6 @@ async def export_session_messages(session_id: str, payload: SessionExportRequest
             "sourceMessageIds": selected_source_message_ids,
             "contentHash": selected_content_hash,
         },
-        require_confirmation=False,
     )
     export_payload = export_result.get("result")
     export_payload = export_payload if isinstance(export_payload, dict) else {}
@@ -3378,26 +3463,100 @@ async def advance_session_workflow(session_id: str, payload: SessionWorkflowActi
     }
 
 
-@app.post("/sessions/{session_id}/executions/{execution_id}/confirm")
-async def confirm_session_execution(session_id: str, execution_id: str, payload: SessionExecutionConfirmRequest):
-    session = session_repo.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if session["collection_id"] != payload.app_id or session["user_id"] != payload.user_id:
-        raise HTTPException(status_code=400, detail="Session identity mismatch.")
-
-    result = execution_client.confirm_execution(execution_id)
+@app.get("/sessions/{session_id}/executions/{execution_id}")
+async def get_session_execution_status(
+    session_id: str,
+    execution_id: str,
+    app_id: str,
+    user_id: str,
+):
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    result = await run_in_threadpool(
+        execution_client.get_execution_status,
+        execution_id,
+        app_id=app_id,
+        session_id=session_id,
+    )
     runtime_state = session_repo.get_runtime_state(session_id)
     lane_state = _session_lane_state(runtime_state)
     lane_state["execution_lane"]["latest_execution_id"] = execution_id
     lane_state["execution_lane"]["latest_status_result"] = result
+    _record_confirmation_lane_state(lane_state, result_payload=result)
+    _refresh_async_lane_state_from_status(lane_state, status_result=result)
+    runtime_state["session_lane_state"] = lane_state
+    session_repo.set_runtime_state(session_id, runtime_state)
+    return {"status_result": result, "session_lane_state": lane_state}
+
+
+@app.post("/sessions/{session_id}/executions/{execution_id}/confirm")
+async def confirm_session_execution(session_id: str, execution_id: str, payload: SessionExecutionConfirmRequest):
+    _require_session_scope(
+        session_id,
+        app_id=payload.app_id,
+        user_id=payload.user_id,
+    )
+
+    runtime_state = session_repo.get_runtime_state(session_id)
+    lane_state = _session_lane_state(runtime_state)
+    execution_lane = lane_state["execution_lane"]
+    confirmation_id = ""
+    if str(execution_lane.get("latest_execution_id") or "").strip() == execution_id:
+        confirmation_id = str(
+            execution_lane.get("latest_confirmation_id") or ""
+        ).strip()
+    if not confirmation_id:
+        status_result = execution_client.get_execution_status(
+            execution_id,
+            app_id=payload.app_id,
+            session_id=session_id,
+        )
+        _record_confirmation_lane_state(
+            lane_state,
+            result_payload=status_result,
+        )
+        confirmation_id = str(
+            execution_lane.get("latest_confirmation_id") or ""
+        ).strip()
+    if not confirmation_id:
+        raise HTTPException(
+            status_code=409,
+            detail="No pending server-issued confirmation is available.",
+        )
+
+    result = await run_in_threadpool(
+        execution_client.confirm_execution,
+        execution_id,
+        app_id=payload.app_id,
+        confirmation_id=confirmation_id,
+        session_id=session_id,
+    )
+    result = _enrich_execution_result_artifacts(
+        session_id=session_id,
+        app_id=payload.app_id,
+        user_id=payload.user_id,
+        submit_result=result,
+    )
+    lane_state["execution_lane"]["latest_execution_id"] = execution_id
+    lane_state["execution_lane"]["latest_status_result"] = result
     lane_state["execution_lane"]["latest_execution_result"] = result
+    _record_confirmation_lane_state(lane_state, result_payload=result)
     _record_login_requirement(lane_state, result_payload=result)
     _refresh_async_lane_state_from_status(lane_state, status_result=result)
     runtime_state["session_lane_state"] = lane_state
     session_repo.set_runtime_state(session_id, runtime_state)
 
     summary_text = _execution_confirmation_summary_text(execution_id, result)
+    chat_repo.append(
+        session_id,
+        "assistant",
+        summary_text,
+        retrieval_summary={
+            "execution_override": True,
+            "command": "confirm",
+            "execution_id": execution_id,
+            "execution_status_result": result,
+        },
+    )
     return {
         "content": summary_text,
         "citations": [],

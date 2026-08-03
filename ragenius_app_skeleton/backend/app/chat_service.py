@@ -11,6 +11,11 @@ except ModuleNotFoundError:  # pragma: no cover
 
 from .chat_repos import ChatRepo, RetrievalRepo, SessionRepo
 from .llm_runtime import build_task_binding, configured_task_models, maybe_build_task_callable
+from .llm_context_optimization import (
+    context_optimization_mode,
+    finalize_task_model_diagnostics,
+    normal_query_optimization_eligible,
+)
 from .planner_repo import InMemoryPlannerRepo
 
 _GRAPH = None
@@ -687,6 +692,10 @@ def run_chat_pipeline(
 ) -> Dict[str, Any]:
     """Run the LangGraph user-query pipeline and persist artifacts."""
     state = dict(state)
+    state["_context_optimization_eligible"] = normal_query_optimization_eligible(state)
+    state["_context_optimization_mode"] = context_optimization_mode()
+    state["_context_optimization_diagnostics"] = {"calls": []}
+    state["_turn_token_accounting"] = {"calls": [], "call_count": 0, "turn_estimated_outbound_tokens": 0}
     state["_session_repo"] = session_repo
     state["_chat_repo"] = chat_repo
     state["_planner_repo"] = planner_repo
@@ -733,7 +742,9 @@ def run_chat_pipeline(
         state["_retrieve_fn"] = retrieve_fn
 
     result = _graph().invoke(state)
-    result["task_model_diagnostics"] = state.get("_task_model_diagnostics", {})
+    diagnostic_state = {**state, **result}
+    task_model_diagnostics = finalize_task_model_diagnostics(diagnostic_state)
+    result["task_model_diagnostics"] = task_model_diagnostics
     final_answer = result.get("final_answer")
     if not isinstance(final_answer, dict):
         raise RuntimeError("Pipeline did not produce final_answer.")

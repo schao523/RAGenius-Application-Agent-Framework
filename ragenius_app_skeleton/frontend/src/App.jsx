@@ -1012,8 +1012,8 @@ function formatStatusPill(status) {
   return { label: status || "unknown", style: { ...styles.pill, ...styles.statusWarn } };
 }
 
-function createSessionId() {
-  return `session-${Date.now()}`;
+export function createSessionId(randomUUID = () => globalThis.crypto.randomUUID()) {
+  return randomUUID();
 }
 
 function buildThreadKey(appId, sessionId) {
@@ -1306,15 +1306,39 @@ function normalizeSessionLaneState(value) {
   return value;
 }
 
+export function mergeTaskModelDiagnostics(retrievalSummary, taskModelDiagnostics) {
+  const summary =
+    retrievalSummary && typeof retrievalSummary === "object" ? retrievalSummary : {};
+  if (
+    summary.task_model_diagnostics
+    && typeof summary.task_model_diagnostics === "object"
+    && Object.keys(summary.task_model_diagnostics).length > 0
+  ) {
+    return summary;
+  }
+  if (
+    taskModelDiagnostics
+    && typeof taskModelDiagnostics === "object"
+    && Object.keys(taskModelDiagnostics).length > 0
+  ) {
+    return { ...summary, task_model_diagnostics: taskModelDiagnostics };
+  }
+  return summary;
+}
+
 function normalizeBackendMessages(rows) {
   if (!Array.isArray(rows)) {
     return [];
   }
   return rows.map((row) => {
-    const retrievalSummary =
+    const storedSummary =
       row.retrievalSummary && typeof row.retrievalSummary === "object"
         ? row.retrievalSummary
         : (row.retrieval_summary && typeof row.retrieval_summary === "object" ? row.retrieval_summary : {});
+    const retrievalSummary = mergeTaskModelDiagnostics(
+      storedSummary,
+      row.task_model_diagnostics || row.taskModelDiagnostics,
+    );
     return {
       id: row.id || null,
       role: row.role,
@@ -1329,6 +1353,12 @@ function normalizeBackendMessages(rows) {
           ? row.workflow_progress
           : (retrievalSummary.workflow_progress && typeof retrievalSummary.workflow_progress === "object"
               ? retrievalSummary.workflow_progress
+              : {}),
+      workflowStatus:
+        row.workflow_status && typeof row.workflow_status === "object"
+          ? row.workflow_status
+          : (retrievalSummary.workflow_status && typeof retrievalSummary.workflow_status === "object"
+              ? retrievalSummary.workflow_status
               : {}),
       turnExecutionPlan:
         row.turn_execution_plan && typeof row.turn_execution_plan === "object"
@@ -1425,9 +1455,73 @@ export function buildExecutionResultPreview(message) {
   }
   const submitResult = executionPayloadFromMessage(message);
   const command = String(retrievalSummary.command || "").trim().toLowerCase();
+  const lifecycleStatus = String(submitResult.status || "").trim().toLowerCase();
+  const lifecycleResult =
+    submitResult.result && typeof submitResult.result === "object"
+      ? submitResult.result
+      : {};
   if (command === "codex") {
-    const status = String(submitResult.status || "").trim().toLowerCase();
-    const result = submitResult.result && typeof submitResult.result === "object" ? submitResult.result : {};
+    const summary = String(lifecycleResult.summary || "").trim();
+    const diagnostics =
+      lifecycleResult.diagnostics && typeof lifecycleResult.diagnostics === "object"
+        ? lifecycleResult.diagnostics
+        : {};
+    const detail = summary || String(diagnostics.failure_message || "").trim();
+    if (lifecycleStatus === "pending_confirmation") {
+      const riskClass = String(lifecycleResult.risk_class || "").trim().replace(/^agent_/, "").replace(/_/g, " ");
+      return `Codex confirmation required${riskClass ? ` (${riskClass})` : ""}`;
+    }
+    if (lifecycleStatus === "running") {
+      return "Codex execution is running";
+    }
+    if (lifecycleStatus === "failed") {
+      return `Codex failed${detail ? `: ${shortenPreview(detail, 180)}` : ""}`;
+    }
+    if (lifecycleStatus === "partial") {
+      return `Codex partially completed${detail ? `: ${shortenPreview(detail, 180)}` : ""}`;
+    }
+    if (lifecycleStatus === "completed") {
+      const operations = Array.isArray(lifecycleResult.operation_verification)
+        ? lifecycleResult.operation_verification
+        : [];
+      const isProcessing = operations.some((item) =>
+        ["accepted", "processing"].includes(String(item?.status || "").toLowerCase()),
+      );
+      if (isProcessing) {
+        return `Codex generation started${detail ? `: ${shortenPreview(detail, 180)}` : ""}`;
+      }
+      const isNormalized =
+        operations.length > 0
+        || Boolean(lifecycleResult.provider_metadata)
+        || Boolean(summary);
+      if (isNormalized && detail) {
+        return `Codex completed: ${shortenPreview(detail, 180)}`;
+      }
+    }
+  }
+  if (
+    command === "openclaw" &&
+    ["pending_confirmation", "running", "partial", "failed"].includes(lifecycleStatus)
+  ) {
+    const providerLabel = "OpenClaw";
+    if (lifecycleStatus === "pending_confirmation") {
+      const riskClass = String(lifecycleResult.risk_class || "").trim().replace(/^agent_/, "").replace(/_/g, " ");
+      return `${providerLabel} confirmation required${riskClass ? ` (${riskClass})` : ""}`;
+    }
+    if (lifecycleStatus === "running") {
+      return `${providerLabel} execution is running`;
+    }
+    const summary = String(lifecycleResult.summary || "").trim();
+    const diagnostics =
+      lifecycleResult.diagnostics && typeof lifecycleResult.diagnostics === "object"
+        ? lifecycleResult.diagnostics
+        : {};
+    const detail = summary || String(diagnostics.failure_message || "").trim();
+    return `${providerLabel} execution ${lifecycleStatus === "partial" ? "completed with warnings" : "failed"}${detail ? `: ${shortenPreview(detail, 180)}` : ""}`;
+  }
+  if (command === "codex") {
+    const status = lifecycleStatus;
+    const result = lifecycleResult;
     const userSummary = result.user_summary && typeof result.user_summary === "object" ? result.user_summary : {};
     const skills = Array.isArray(result.activated_skills)
       ? result.activated_skills.map((item) => String(item || "").trim()).filter(Boolean)
@@ -1436,10 +1530,6 @@ export function buildExecutionResultPreview(message) {
     const toolSummary = Array.isArray(result.tool_summary)
       ? result.tool_summary.map((item) => String(item || "").trim()).filter(Boolean)
       : [];
-    if (status === "pending_confirmation") {
-      const riskClass = String(result.risk_class || "").trim().replace(/^agent_/, "").replace(/_/g, " ");
-      return `Codex confirmation required${riskClass ? ` (${riskClass})` : ""}`;
-    }
     if (submitResult.error) {
       return "";
     }
@@ -2381,7 +2471,11 @@ function ChatPanel({
           onChangeTab={setInspectorTab}
           onClose={() => setIsInspectorOpen(false)}
           message={inspectedMessage}
-          sessionLaneState={sessionLaneState}
+          sessionLaneState={
+            inspectedMessageIndex < 0 || inspectedMessageIndex === latestAssistantIndex
+              ? sessionLaneState
+              : null
+          }
           styles={styles}
         />
       ) : (
@@ -2391,7 +2485,11 @@ function ChatPanel({
           onChangeTab={setInspectorTab}
           onClose={() => setIsInspectorOpen(false)}
           message={inspectedMessage}
-          workflowStatus={workflowStatus}
+          workflowStatus={
+            inspectedMessageIndex < 0 || inspectedMessageIndex === latestAssistantIndex
+              ? workflowStatus
+              : null
+          }
           styles={styles}
           humanizeActionType={humanizeActionType}
           humanizePresentationMode={humanizePresentationMode}
@@ -2451,6 +2549,13 @@ export default function App() {
     || activeApprovedContent[activeApprovedContent.length - 1]?.approved_content_id
     || "";
   const activeSessionLaneState = sessionLaneStateBySession[activeThreadKey] || {};
+  const activeExecutionLane = activeSessionLaneState.execution_lane || {};
+  const activeExecutionId = activeExecutionLane.latest_execution_id || "";
+  const activeExecutionStatus = String(
+    activeExecutionLane.latest_status_result?.status
+    || activeExecutionLane.latest_execution_result?.status
+    || "",
+  ).toLowerCase();
   const activeSessionUploads = sessionUploadsBySession[activeThreadKey] || [];
   const activeSelectedExportMessageIds = selectedExportMessageIdsBySession[activeThreadKey] || [];
   const currentSession = sessions.find((session) => session.id === sessionId) || null;
@@ -2605,9 +2710,12 @@ export default function App() {
   };
 
   const appendAssistantMessage = (data) => {
-    const baseSummary = data.retrieval_summary && typeof data.retrieval_summary === "object"
-      ? { ...data.retrieval_summary }
-      : {};
+    const baseSummary = mergeTaskModelDiagnostics(
+      data.retrieval_summary && typeof data.retrieval_summary === "object"
+        ? { ...data.retrieval_summary }
+        : {},
+      data.task_model_diagnostics || data.taskModelDiagnostics,
+    );
     if (data.execution_override && typeof data.execution_override === "object") {
       baseSummary.execution_override = true;
       baseSummary.command = data.execution_override.command;
@@ -2805,6 +2913,7 @@ export default function App() {
       ...prev,
       [activeThreadKey]: normalizeSessionLaneState(data.session_lane_state),
     }));
+    await loadArtifactInventory(selectedAppId, sessionId, userId);
     await loadSessions(selectedAppId, userId, includeArchivedSessions);
   };
 
@@ -3107,8 +3216,14 @@ export default function App() {
   }, [baseUrl, selectedAppId]);
 
   useEffect(() => {
+    if (!currentSession) {
+      setExecArtifactInventoryLoading(false);
+      setExecArtifactInventoryError("");
+      setExecArtifactInventory([]);
+      return;
+    }
     loadArtifactInventory(selectedAppId, sessionId, userId);
-  }, [baseUrl, selectedAppId, sessionId, userId]);
+  }, [baseUrl, selectedAppId, sessionId, userId, currentSession?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3142,6 +3257,57 @@ export default function App() {
   useEffect(() => {
     setSessionTitleDraft(currentSession?.title || "");
   }, [currentSession?.title, sessionId]);
+
+  useEffect(() => {
+    if (
+      !["queued", "running"].includes(activeExecutionStatus)
+      || !activeExecutionId
+      || !selectedAppId
+      || !sessionId
+      || !userId
+    ) {
+      return undefined;
+    }
+    let cancelled = false;
+    let timeout;
+    const poll = async () => {
+      try {
+        const data = await fetchJson(
+          `${baseUrl}/sessions/${sessionId}/executions/${encodeURIComponent(activeExecutionId)}`
+          + `?app_id=${encodeURIComponent(selectedAppId)}&user_id=${encodeURIComponent(userId)}`,
+        );
+        if (!cancelled) {
+          setSessionLaneStateBySession((prev) => ({
+            ...prev,
+            [activeThreadKey]: normalizeSessionLaneState(data.session_lane_state),
+          }));
+          const nextStatus = String(data.status_result?.status || "").toLowerCase();
+          if (!["queued", "running"].includes(nextStatus)) {
+            void loadArtifactInventory(selectedAppId, sessionId, userId);
+          } else {
+            timeout = window.setTimeout(poll, 1200);
+          }
+        }
+      } catch (pollError) {
+        if (!cancelled) {
+          setAppError(String(pollError?.message || pollError));
+        }
+      }
+    };
+    timeout = window.setTimeout(poll, 1200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [
+    activeExecutionId,
+    activeExecutionStatus,
+    activeThreadKey,
+    baseUrl,
+    selectedAppId,
+    sessionId,
+    userId,
+  ]);
 
   useEffect(() => {
     const loadThread = async () => {

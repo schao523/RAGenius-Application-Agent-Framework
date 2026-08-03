@@ -1,13 +1,5 @@
 import React from "react";
 
-function toFileHref(value) {
-  const normalized = String(value || "").trim();
-  if (!normalized) {
-    return "";
-  }
-  return `file:///${normalized.replace(/\\/g, "/")}`;
-}
-
 function resolveRouteHref(baseUrl, routePath) {
   const normalizedBaseUrl = String(baseUrl || "").trim();
   const normalizedRoutePath = String(routePath || "").trim();
@@ -50,8 +42,6 @@ function normalizeExecutionArtifacts(message) {
       artifact_type: String(item.artifact_type || "").trim(),
       display_name: displayName,
       summary: String(item.summary || "").trim(),
-      file_path: String(item.file_path || "").trim(),
-      path: String(item.path || "").trim(),
       open_url: String(item.open_url || "").trim(),
       preview_url: String(item.preview_url || "").trim(),
       routes:
@@ -69,9 +59,12 @@ function normalizeExecutionArtifacts(message) {
               can_reuse: item.capabilities.can_reuse !== false,
             }
           : {
-              can_open: true,
+              can_open: Boolean(
+                item.open_url
+                || item?.routes?.open
+              ),
               can_preview: false,
-              can_reuse: true,
+              can_reuse: Boolean(artifactId),
             },
       created_at: String(item.created_at || "").trim(),
       mime_type: String(item.mime_type || "").trim(),
@@ -91,19 +84,11 @@ function normalizeExecutionArtifacts(message) {
     const displayName = String(
       exportArtifact.display_name || exportArtifact.name || "Export"
     ).trim();
-    const filePath = String(
-      exportArtifact.file_path || executionResult.file_path || ""
-    ).trim();
-    const metadataPath = String(
-      exportArtifact.metadata_path || exportArtifact.path || executionResult.path || ""
-    ).trim();
     normalized.push({
       artifact_id: artifactId,
       artifact_type: String(exportArtifact.artifact_type || executionResult.artifact_type || "chat_export").trim(),
       display_name: displayName,
       summary: String(exportArtifact.summary || "").trim(),
-      file_path: filePath,
-      path: metadataPath,
       open_url: String(exportArtifact.open_url || "").trim(),
       preview_url: String(exportArtifact.preview_url || "").trim(),
       routes:
@@ -141,15 +126,11 @@ function normalizeExecutionArtifacts(message) {
     const displayName = String(
       reviewedArtifact.display_name || reviewedArtifact.name || artifactId || "Reviewed chat artifact"
     ).trim();
-    const filePath = String(reviewedArtifact.file_path || "").trim();
-    const metadataPath = String(reviewedArtifact.metadata_path || reviewedArtifact.path || "").trim();
     normalized.push({
       artifact_id: artifactId,
       artifact_type: String(reviewedArtifact.artifact_type || "chat_export").trim(),
       display_name: displayName,
       summary: String(reviewedArtifact.summary || "Reviewed chat content saved for reuse.").trim(),
-      file_path: filePath,
-      path: metadataPath,
       open_url: String(reviewedArtifact.open_url || "").trim(),
       preview_url: String(reviewedArtifact.preview_url || "").trim(),
       routes:
@@ -302,10 +283,9 @@ export default function ChatMessageCard({
           {executionArtifacts.length > 0 && (
             <div style={{ ...styles.compactNote, display: "grid", gap: 8 }}>
               {executionArtifacts.map((artifact, artifactIndex) => {
-                const primaryPath = artifact.file_path || artifact.path || "";
                 const routeHref = resolveRouteHref(baseUrl, artifact.routes?.open || artifact.open_url);
                 const previewHref = resolveRouteHref(baseUrl, artifact.routes?.preview || artifact.preview_url);
-                const primaryHref = routeHref || toFileHref(primaryPath);
+                const primaryHref = routeHref;
                 const openLabel = "Open Saved File";
                 const canReuseArtifact = artifact.capabilities?.can_reuse !== false && artifact.artifact_id;
                 const canPreviewArtifact = artifact.capabilities?.can_preview === true && previewHref;
@@ -329,12 +309,7 @@ export default function ChatMessageCard({
                     {artifact.summary && (
                       <div style={{ marginTop: 4, fontSize: 13, color: "#1e293b" }}>{artifact.summary}</div>
                     )}
-                    {primaryPath && (
-                      <div style={{ marginTop: 4, fontSize: 12, color: "#475569" }}>
-                        Saved file: {primaryPath}
-                      </div>
-                    )}
-                    {(primaryHref || canPreviewArtifact) && (
+                    {(primaryHref || canPreviewArtifact || canReuseArtifact || onViewArtifactLibrary) && (
                       <div style={{ ...styles.actionRow, marginTop: 8 }}>
                         {canReuseArtifact && onUseArtifactInComposer && (
                           <button
@@ -368,7 +343,6 @@ export default function ChatMessageCard({
                           <a
                             href={primaryHref}
                             style={styles.inlineActionButton}
-                            title={primaryPath}
                             target="_blank"
                             rel="noreferrer"
                           >

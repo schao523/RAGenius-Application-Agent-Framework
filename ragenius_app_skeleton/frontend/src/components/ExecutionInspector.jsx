@@ -188,6 +188,16 @@ export default function ExecutionInspector({
   const verificationResults = Array.isArray(agentResult.verification_results)
     ? agentResult.verification_results
     : [];
+  const stagedInputs = Array.isArray(agentResult.staged_inputs)
+    ? agentResult.staged_inputs
+    : [];
+  const operationVerification = Array.isArray(agentResult.operation_verification)
+    ? agentResult.operation_verification
+    : [];
+  const agentDiagnostics =
+    agentResult.diagnostics && typeof agentResult.diagnostics === "object"
+      ? agentResult.diagnostics
+      : {};
   const executionArtifacts = normalizeExecutionArtifacts(executionPayload);
   const artifactReuseSummary = normalizeArtifactReuseSummary(mappedInput, executionArtifacts);
   const selectedExecutionId = String(
@@ -228,6 +238,65 @@ export default function ExecutionInspector({
           {renderKeyValue("Network access", agentResult.network_access)}
         </div>
       </div>
+      {isCodexAgent && (
+        <>
+          <div style={styles.inspectorGroup}>
+            <div style={styles.inspectorGroupTitle}>Authorization and policy</div>
+            <div style={styles.inspectorKeyValue}>
+              {renderKeyValue("Confirmation state", providerMetadata.confirmation_state)}
+              {renderKeyValue("Permission scope", providerMetadata.permission_scope)}
+              {renderKeyValue(
+                "Policy fingerprint",
+                providerMetadata.policy_fingerprint
+                  ? String(providerMetadata.policy_fingerprint).slice(0, 12)
+                  : "",
+              )}
+            </div>
+          </div>
+          <div style={styles.inspectorGroup}>
+            <div style={styles.inspectorGroupTitle}>Staged inputs</div>
+            {renderList(
+              stagedInputs,
+              "No staged Codex inputs.",
+              styles,
+              (item, index) => (
+                <li key={`${String(item?.artifact_id || "input")}-${index}`}>
+                  <strong>{String(item?.artifact_id || "Artifact")}</strong>
+                  <div>{[item?.role, item?.reuse_mode].filter(Boolean).join(" | ")}</div>
+                  <div>{String(item?.workspace_relative_path || "Metadata only")}</div>
+                  {item?.sha256 ? <div>{`SHA-256: ${String(item.sha256).slice(0, 12)}`}</div> : null}
+                </li>
+              ),
+            )}
+          </div>
+          <div style={styles.inspectorGroup}>
+            <div style={styles.inspectorGroupTitle}>Operation verification</div>
+            {renderList(
+              operationVerification,
+              "No Codex operation evidence.",
+              styles,
+              (item, index) => (
+                <li key={`${String(item?.operation_id || "operation")}-${index}`}>
+                  <strong>{String(item?.operation_id || item?.operation || "Operation")}</strong>
+                  <div>{[item?.status, item?.level].filter(Boolean).join(" | ")}</div>
+                  {item?.external_id ? <div>{`External ID: ${String(item.external_id)}`}</div> : null}
+                  {item?.evidence ? <div>{String(item.evidence)}</div> : null}
+                </li>
+              ),
+            )}
+          </div>
+          <div style={styles.inspectorGroup}>
+            <div style={styles.inspectorGroupTitle}>Codex diagnostics</div>
+            <div style={styles.inspectorKeyValue}>
+              {renderKeyValue("Turn status", providerMetadata.turn_status)}
+              {renderKeyValue("Commands", providerMetadata.command_count)}
+              {renderKeyValue("Successful commands", providerMetadata.successful_command_count)}
+              {renderKeyValue("Final JSON", providerMetadata.final_json_status)}
+              {renderKeyValue("Failure code", agentDiagnostics.failure_code)}
+            </div>
+          </div>
+        </>
+      )}
       {executionPayload?.logs_summary && (
         <div style={styles.inspectorGroup}>
           <div style={styles.inspectorGroupTitle}>Logs summary</div>
