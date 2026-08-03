@@ -9,7 +9,8 @@ RAGenius is a multi-application RAG platform.
 Core components:
 
 - rag_subsystem/       Protected ingestion + retrieval engine
-- ragenius_app/       End-user application(s)
+- ragenius_app_skeleton/ Active Builder-backed end-user runtime
+- ragenius_app/       Legacy/reference app scaffold and specification source
 - ragenius_builder/   Admin / Builder control plane
 - shared/ = reusable modules
 
@@ -17,14 +18,16 @@ The Builder creates and manages isolated knowledge applications.
 
 ---
 
-## First-Class Applications
+## Application Status
 
-Both folders are production apps:
+The production applications are:
 
-- ragenius_app
+- ragenius_app_skeleton
 - ragenius_builder
 
-Do not treat Builder as secondary.
+Do not treat Builder as secondary. `ragenius_app` remains independently
+runnable for legacy/reference purposes, but it is not used by the integrated
+runtime and must not receive new integrated runtime behavior.
 
 ---
 
@@ -40,7 +43,7 @@ Use ragenius_builder for:
 - search admin tools
 - external lookup APIs
 
-Use ragenius_app for:
+Use ragenius_app_skeleton for:
 
 - chat 
 - user workflows
@@ -60,9 +63,11 @@ Use rag_subsystem for:
 
 Do not duplicate retrieval logic outside `rag_subsystem`.
 
-Do not put admin workflows into `ragenius_app`.
+Do not put admin workflows into `ragenius_app_skeleton`.
 
 Do not place end-user chat flows into `ragenius_builder`. 
+
+Do not add new integrated runtime flows to `ragenius_app`.
 
 
 
@@ -122,5 +127,4 @@ Prefer:
 - backward compatibility
 
 Avoid unnecessary rewrites.
-
 
