@@ -514,8 +514,9 @@ export async function registerToolRoutes(app: FastifyInstance): Promise<void> {
     return {
       items: items.map((item) => {
         const spec = getArtifactConsumerSpec(String(item.artifact_type || "").trim());
+        const { path: _path, file_path: _filePath, ...publicItem } = item;
         return {
-          ...item,
+          ...publicItem,
           ...(spec
             ? {
                 consumption: {

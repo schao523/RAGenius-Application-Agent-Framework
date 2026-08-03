@@ -10,10 +10,12 @@ import type {
 } from "../../db/prisma.js";
 import type {
   ExecutionLogEntry,
+  ExecutionScope,
   ListRecentExecutionsInput,
   ExecutionRecord,
   ExecutionStore,
   SaveExecutionRecordInput
+  ,TransitionExecutionInput
 } from "./execution-store.js";
 import { persistedSkillIdForRequest } from "./execution-store.js";
 
@@ -131,9 +133,13 @@ export class PrismaExecutionStore implements ExecutionStore {
     });
   }
 
-  async get(executionId: string): Promise<ExecutionRecord | null> {
-    const row = await this.prisma.execution.findUnique({
-      where: { id: executionId }
+  async get(scope: ExecutionScope): Promise<ExecutionRecord | null> {
+    const row = await this.prisma.execution.findFirst({
+      where: {
+        appId: scope.appId,
+        id: scope.executionId,
+        sessionId: scope.sessionId
+      }
     });
 
     if (!row) {
@@ -143,9 +149,54 @@ export class PrismaExecutionStore implements ExecutionStore {
     return this.toExecutionRecord(row);
   }
 
-  async getLogs(executionId: string): Promise<ExecutionLogEntry[]> {
+  async transition(input: TransitionExecutionInput): Promise<boolean> {
+    if (!this.prisma.execution.updateMany) {
+      throw new Error("Prisma execution transitions are not configured.");
+    }
+    const update = await this.prisma.execution.updateMany({
+      where: {
+        id: input.scope.executionId,
+        appId: input.scope.appId,
+        sessionId: input.scope.sessionId,
+        status: { in: input.from }
+      },
+      data: {
+        status: input.result.status,
+        resultType: input.result.result_type,
+        result: input.result.result,
+        executionProvenance: input.result.execution_provenance,
+        executionMetadata: input.result.execution_metadata,
+        files: input.result.files,
+        errors: input.result.errors,
+        logsSummary: input.result.logs_summary,
+        ...(input.result.status === "running" ? { startedAt: new Date() } : {}),
+        ...(["completed", "failed", "partial", "blocked"].includes(input.result.status)
+          ? { completedAt: new Date() }
+          : {})
+      }
+    });
+    if (update.count !== 1) {
+      return false;
+    }
+    await this.prisma.executionLog.createMany({
+      data: [{
+        executionId: input.scope.executionId,
+        level: input.result.status === "failed" ? "error" : "info",
+        eventType: "status_transition",
+        message: input.result.logs_summary,
+        summary: null
+      }]
+    });
+    return true;
+  }
+
+  async getLogs(scope: ExecutionScope): Promise<ExecutionLogEntry[]> {
+    if (!(await this.get(scope))) {
+      return [];
+    }
+
     const rows = await this.prisma.executionLog.findMany({
-      where: { executionId },
+      where: { executionId: scope.executionId },
       orderBy: { createdAt: "asc" }
     });
 
@@ -157,9 +208,13 @@ export class PrismaExecutionStore implements ExecutionStore {
     }));
   }
 
-  async getRequest(executionId: string): Promise<ExecutionRequest | null> {
-    const row = await this.prisma.execution.findUnique({
-      where: { id: executionId }
+  async getRequest(scope: ExecutionScope): Promise<ExecutionRequest | null> {
+    const row = await this.prisma.execution.findFirst({
+      where: {
+        appId: scope.appId,
+        id: scope.executionId,
+        sessionId: scope.sessionId
+      }
     });
 
     return (row?.requestPayload as ExecutionRequest | null) ?? null;
@@ -168,11 +223,20 @@ export class PrismaExecutionStore implements ExecutionStore {
   async listRecent(input: ListRecentExecutionsInput): Promise<ExecutionRecord[]> {
     const rows = await this.prisma.execution.findMany({
       orderBy: { updatedAt: "desc" },
-      take: Math.max(input.limit * 5, input.limit, 20)
+      take: Math.max(input.limit * 5, input.limit, 20),
+      where: {
+        appId: input.appId,
+        sessionId: input.sessionId
+      }
     });
 
     return rows
       .map((row) => this.toExecutionRecord(row))
+      .filter(
+        (record) =>
+          record.app_id === input.appId &&
+          record.session_id === input.sessionId
+      )
       .filter((record) => {
         if (
           input.usedFallback !== undefined &&
@@ -189,5 +253,15 @@ export class PrismaExecutionStore implements ExecutionStore {
         return true;
       })
       .slice(0, input.limit);
+  }
+
+  async listByStatuses(
+    statuses: NormalizedExecutionResult["status"][]
+  ): Promise<ExecutionRecord[]> {
+    const rows = await this.prisma.execution.findMany({
+      orderBy: { updatedAt: "asc" },
+      where: { status: { in: statuses } }
+    });
+    return rows.map((row) => this.toExecutionRecord(row));
   }
 }

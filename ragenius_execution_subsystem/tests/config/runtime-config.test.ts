@@ -10,6 +10,37 @@ import {
 } from "../../src/config/runtime-config.js";
 
 describe("runtime config", () => {
+  it("uses bounded safe Codex workspace defaults and accepts explicit overrides", () => {
+    const defaults = buildRuntimeConfig(getEnv({
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public"
+    }));
+
+    assert.equal(defaults.providers.codexCli.runRoot, "storage/codex-runs");
+    assert.equal(defaults.providers.codexCli.runRetentionHours, 24);
+    assert.equal(defaults.providers.codexCli.maxOutputBytes, 16384);
+    assert.equal(defaults.providers.codexCli.sandboxMode, "workspace-write");
+
+    const configured = buildRuntimeConfig(getEnv({
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public",
+      CODEX_RUN_ROOT: "D:/runtime/codex-runs",
+      CODEX_RUN_RETENTION_HOURS: "12",
+      CODEX_MAX_OUTPUT_BYTES: "8192",
+      CODEX_CLI_SANDBOX_MODE: "read-only"
+    }));
+
+    assert.equal(configured.providers.codexCli.runRoot, "D:/runtime/codex-runs");
+    assert.equal(configured.providers.codexCli.runRetentionHours, 12);
+    assert.equal(configured.providers.codexCli.maxOutputBytes, 8192);
+    assert.equal(configured.providers.codexCli.sandboxMode, "read-only");
+  });
+
+  it("rejects unsafe Codex sandbox modes", () => {
+    assert.throws(() => getEnv({
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public",
+      CODEX_CLI_SANDBOX_MODE: "danger-full-access"
+    }));
+  });
+
   it("builds provider, tool, and MCP runtime config from env", () => {
     const sourceEnv = {
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public",
@@ -36,6 +67,9 @@ describe("runtime config", () => {
       NOTEBOOKLM_GENERATION_WAIT_FOR_COMPLETION: "true",
       NOTEBOOKLM_GENERATION_PERSIST_ARTIFACTS: "true",
       MCP_LOCAL_BROWSER_TOKEN: "mcp-secret",
+      RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED: "true",
+      RAGENIUS_EXECUTION_SERVICE_ID: "ragenius_app_backend",
+      RAGENIUS_EXECUTION_SERVICE_TOKEN: "service-secret",
       ADAPTERS_JSON: JSON.stringify([
         {
           id: "content_transform_adapter",
@@ -61,6 +95,11 @@ describe("runtime config", () => {
     const runtimeConfig = buildRuntimeConfig(getEnv(sourceEnv), sourceEnv);
 
     assert.equal(runtimeConfig.builder.baseUrl, "http://127.0.0.1:8011");
+    assert.deepEqual(runtimeConfig.serviceAuth, {
+      required: true,
+      serviceId: "ragenius_app_backend",
+      token: "service-secret"
+    });
     assert.equal(runtimeConfig.network.httpProxy, "http://proxy.local:8080");
     assert.equal(runtimeConfig.fileTools.allowedRoots.length, 2);
     assert.deepEqual(runtimeConfig.fileTools.mutationRoots, [
@@ -168,6 +207,8 @@ describe("runtime config", () => {
         BUILDER_BASE_URL: "http://127.0.0.1:8011",
         HTTPS_PROXY: "http://proxy.local:8080",
         NODE_EXTRA_CA_CERTS: "C:\\certs\\root.pem",
+        RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED: "true",
+        RAGENIUS_EXECUTION_SERVICE_TOKEN: "service-secret",
         MCP_SERVERS_JSON: JSON.stringify([
         {
           id: "local-browser",
@@ -193,6 +234,14 @@ describe("runtime config", () => {
     assert.equal(diagnostics.mcp.providers[0]?.authConfigured, false);
     assert.equal(diagnostics.mcp.providers[0]?.allowlistedTools, 1);
     assert.equal(diagnostics.providers.arxiv.enabled, true);
+    assert.deepEqual(diagnostics.serviceAuth, {
+      configured: true,
+      required: true
+    });
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(diagnostics.serviceAuth, "token"),
+      false
+    );
   });
 
   it("builds default fallback policy for current MCP-backed Gmail and Drive tools", () => {
@@ -239,6 +288,21 @@ describe("runtime config", () => {
     assert.throws(
       () => validateRuntimeConfig(runtimeConfig),
       /invalid discard proxy target/i
+    );
+  });
+
+  it("fails fast when required service authentication has no token", () => {
+    const runtimeConfig = buildRuntimeConfig(
+      getEnv({
+        DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public",
+        MCP_SERVERS_JSON: "[]",
+        RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED: "true"
+      })
+    );
+
+    assert.throws(
+      () => validateRuntimeConfig(runtimeConfig),
+      /no service token is configured/i
     );
   });
 });

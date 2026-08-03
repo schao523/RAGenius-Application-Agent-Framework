@@ -1,4 +1,6 @@
-import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+
+import { runSupervisedProcess } from "../../../scripts/agent_process_supervisor.js";
 
 export type OpenClawCliBridgeConfig = {
   wslDistro: string;
@@ -38,6 +40,7 @@ export async function executeOpenClawCliBridge(input: {
   const args = [
     "-d",
     input.config.wslDistro,
+    "--exec",
     input.config.command,
     "agent",
     "--agent",
@@ -48,10 +51,9 @@ export async function executeOpenClawCliBridge(input: {
     input.prompt,
     "--json"
   ];
-  const spawnProcess = input.spawnProcess ?? spawnWithTimeout;
-  const raw = await spawnProcess("wsl", args, {
-    timeoutMs: input.config.timeoutMs
-  });
+  const raw = input.spawnProcess
+    ? await input.spawnProcess("wsl", args, { timeoutMs: input.config.timeoutMs })
+    : await spawnOpenClawWithSupervision(input.config, args);
   const stdout = truncateTail(raw.stdout, input.config.maxStdoutBytes);
   const stderr = truncateTail(raw.stderr, input.config.maxStderrBytes);
   const parsed = parseJson(stdout.value);
@@ -68,49 +70,108 @@ export async function executeOpenClawCliBridge(input: {
   };
 }
 
-async function spawnWithTimeout(
-  command: string,
-  args: string[],
-  options: { timeoutMs: number }
+export function buildOpenClawSupervisedWslArgs(input: {
+  wslDistro: string;
+  processGroupFile: string;
+  agentArgs: string[];
+}): string[] {
+  return [
+    "-d",
+    input.wslDistro,
+    "--exec",
+    "setsid",
+    "--wait",
+    "sh",
+    "-c",
+    'umask 077; printf "%s" "$$" > "$1"; shift; exec "$@"',
+    "ragenius-openclaw-supervisor",
+    input.processGroupFile,
+    ...input.agentArgs
+  ];
+}
+
+export function extractOpenClawExecArgs(directWslArgs: string[]): string[] {
+  const execIndex = directWslArgs.indexOf("--exec");
+  if (execIndex < 0 || execIndex + 1 >= directWslArgs.length) {
+    throw new Error("OpenClaw WSL arguments do not contain an executable.");
+  }
+  return directWslArgs.slice(execIndex + 1);
+}
+
+async function runWslLifecycleCommand(
+  wslDistro: string,
+  args: string[]
 ): Promise<OpenClawSpawnResult> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let timedOut = false;
-    let settled = false;
-
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-      setTimeout(() => {
-        if (!settled) {
-          child.kill("SIGKILL");
-        }
-      }, 5000).unref();
-    }, options.timeoutMs);
-
-    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      settled = true;
-      reject(error);
-    });
-    child.on("close", (exitCode) => {
-      clearTimeout(timeout);
-      settled = true;
-      resolve({
-        exitCode,
-        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-        stderr: Buffer.concat(stderrChunks).toString("utf8"),
-        timedOut
-      });
-    });
+  const result = await runSupervisedProcess({
+    command: "wsl",
+    args: ["-d", wslDistro, "--exec", ...args],
+    timeoutMs: 5_000,
+    killGraceMs: 1_000,
+    maxStdoutBytes: 1024,
+    maxStderrBytes: 4096
   });
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    timedOut: result.timedOut
+  };
+}
+
+async function spawnOpenClawWithSupervision(
+  config: OpenClawCliBridgeConfig,
+  directWslArgs: string[]
+): Promise<OpenClawSpawnResult> {
+  const agentArgs = extractOpenClawExecArgs(directWslArgs);
+  const marker = createHash("sha256")
+    .update(agentArgs.join("\u0000"))
+    .digest("hex")
+    .slice(0, 24);
+  const processGroupFile = `/tmp/ragenius-openclaw-${marker}.pgid`;
+  const result = await runSupervisedProcess({
+    command: "wsl",
+    args: buildOpenClawSupervisedWslArgs({
+      wslDistro: config.wslDistro,
+      processGroupFile,
+      agentArgs
+    }),
+    timeoutMs: config.timeoutMs,
+    maxStdoutBytes: config.maxStdoutBytes,
+    maxStderrBytes: config.maxStderrBytes,
+    beforeTerminate: async () => {
+      const pidResult = await runWslLifecycleCommand(config.wslDistro, [
+        "cat",
+        "--",
+        processGroupFile
+      ]);
+      const processGroupId = pidResult.stdout.trim();
+      if (!/^\d+$/.test(processGroupId)) {
+        throw new Error("OpenClaw process-group marker was unavailable.");
+      }
+      await runWslLifecycleCommand(config.wslDistro, [
+        "kill",
+        "-TERM",
+        "--",
+        `-${processGroupId}`
+      ]);
+    }
+  });
+  try {
+    await runWslLifecycleCommand(config.wslDistro, [
+      "rm",
+      "-f",
+      "--",
+      processGroupFile
+    ]);
+  } catch {
+    // The run result remains authoritative if marker cleanup is unavailable.
+  }
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    timedOut: result.timedOut
+  };
 }
 
 function truncateTail(value: string, maxBytes: number): {

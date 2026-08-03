@@ -1,9 +1,27 @@
 import type { ExecuteAgentRequest } from "../../api/schemas/execution-request.schema.js";
 import type { ArtifactStore } from "../tools/providers/artifact-store.js";
-import type {
-  OpenClawExpectedOutput,
-  OpenClawVerificationResult
-} from "./openclaw-cli-types.js";
+export type AgentOutputPersistenceSpec = {
+  output_id: string;
+  display_name: string;
+  media_type: string;
+  purpose?: "answer" | "artifact" | "diagnostic";
+  required?: boolean;
+  persist_as_artifact?: boolean;
+  artifact_type?: "agent_output";
+  artifact_role?: "final" | "intermediate" | "debug";
+};
+
+export type VerifiedAgentOutput = {
+  output_id?: string;
+  workspace_relative_path: string;
+  workspace_absolute_path: string;
+  required?: boolean;
+  exists?: boolean;
+  verified?: boolean;
+  media_type?: string;
+  size_bytes?: number;
+  sha256?: string;
+};
 
 export type PersistedAgentOutputArtifact = {
   artifact_id: string;
@@ -25,8 +43,8 @@ export class AgentOutputArtifactPersister {
   async persist(input: {
     request: ExecuteAgentRequest;
     executionId: string;
-    output: OpenClawExpectedOutput;
-    verification: OpenClawVerificationResult;
+    output: AgentOutputPersistenceSpec;
+    verification: VerifiedAgentOutput;
   }): Promise<PersistedAgentOutputArtifact> {
     const bytes = await this.dependencies.readOutputBytes(
       input.verification.workspace_absolute_path
@@ -64,7 +82,9 @@ export class AgentOutputArtifactPersister {
         providerOrigin: input.request.agent_backend,
         mimeType: input.output.media_type,
         summary: `Agent output from ${input.request.agent_backend}`,
-        ...(isTextOutput ? { fileTextContent: bytes.toString("utf-8") } : {})
+        ...(isTextOutput
+          ? { fileTextContent: bytes.toString("utf-8") }
+          : { fileBytes: bytes })
       }
     );
 

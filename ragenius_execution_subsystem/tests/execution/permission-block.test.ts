@@ -132,9 +132,9 @@ describe("permission block placeholder", () => {
     const executionId = createResponse.json().execution_id;
     const confirmResponse = await app.inject({
       method: "POST",
-      url: `/v1/executions/${executionId}/confirm`,
+      url: `/v1/executions/${executionId}/confirm?app_id=app_001&session_id=sess_001`,
       payload: {
-        approved: true
+        confirmation_id: createResponse.json().result.confirmation_id
       }
     });
 
@@ -144,7 +144,7 @@ describe("permission block placeholder", () => {
 
     const lookupResponse = await app.inject({
       method: "GET",
-      url: `/v1/executions/${executionId}`
+      url: `/v1/executions/${executionId}?app_id=app_001&session_id=sess_001`
     });
 
     assert.equal(lookupResponse.statusCode, 200);

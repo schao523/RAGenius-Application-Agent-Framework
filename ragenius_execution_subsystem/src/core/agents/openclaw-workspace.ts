@@ -16,6 +16,22 @@ export type OpenClawFileInspection = {
   sha256?: string;
 };
 
+export type OpenClawWslCommand = {
+  args: string[];
+  allowNonZeroExit?: boolean;
+  stdin?: string;
+};
+
+export type OpenClawWslCommandResult = {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+};
+
+export type OpenClawWslRunner = (
+  input: OpenClawWslCommand
+) => Promise<OpenClawWslCommandResult>;
+
 export type OpenClawInspectFile = (
   workspaceAbsolutePath: string
 ) => Promise<OpenClawFileInspection>;
@@ -69,6 +85,69 @@ export function assertSafeWorkspaceRelativePath(value: string): string {
 export function buildWorkspaceAbsolutePath(root: string, relativePath: string): string {
   const safeRelativePath = assertSafeWorkspaceRelativePath(relativePath);
   return `${root.replace(/\/+$/, "")}/${safeRelativePath}`;
+}
+
+export function buildOpenClawRunWorkspaceRoot(
+  workspaceRoot: string,
+  executionId: string
+): string {
+  const normalizedExecutionId = executionId.trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(normalizedExecutionId)) {
+    throw new Error(`Unsafe OpenClaw execution id: ${executionId}`);
+  }
+  return buildWorkspaceAbsolutePath(
+    workspaceRoot,
+    `runs/${normalizedExecutionId}`
+  );
+}
+
+export function assertResolvedPathContained(
+  allowedWorkspaceRoot: string,
+  resolvedPath: string
+): string {
+  const allowedRoot = allowedWorkspaceRoot.replace(/\/+$/, "");
+  const normalizedResolvedPath = resolvedPath.replace(/\/+$/, "");
+  if (
+    normalizedResolvedPath !== allowedRoot &&
+    !normalizedResolvedPath.startsWith(`${allowedRoot}/`)
+  ) {
+    throw new Error("OpenClaw workspace file resolves outside the current run.");
+  }
+  return normalizedResolvedPath;
+}
+
+export function buildOpenClawRunCleanupScript(input: {
+  workspaceRoot: string;
+  currentExecutionId: string;
+  retentionHours: number;
+}): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(input.currentExecutionId)) {
+    throw new Error(`Unsafe OpenClaw execution id: ${input.currentExecutionId}`);
+  }
+  if (!Number.isInteger(input.retentionHours) || input.retentionHours <= 0) {
+    throw new Error("OpenClaw run retention hours must be a positive integer.");
+  }
+  const runsRoot = shellQuoteWorkspaceAbsolutePath(
+    buildWorkspaceAbsolutePath(input.workspaceRoot, "runs")
+  );
+  const ageMinutes = input.retentionHours * 60;
+  return [
+    "set -euo pipefail",
+    `mkdir -p ${runsRoot}`,
+    `find ${runsRoot} -mindepth 1 -maxdepth 1 -type d -mmin +${ageMinutes} ! -name '${input.currentExecutionId}' -exec rm -rf -- {} +`
+  ].join("; ");
+}
+
+export async function cleanupOpenClawRunWorkspacesViaWsl(input: {
+  wslDistro: string;
+  workspaceRoot: string;
+  currentExecutionId: string;
+  retentionHours: number;
+}): Promise<void> {
+  await spawnWslText({
+    wslDistro: input.wslDistro,
+    args: ["bash", "-c", buildOpenClawRunCleanupScript(input)]
+  });
 }
 
 export async function verifyOpenClawOutputs(
@@ -130,6 +209,7 @@ export async function verifyOpenClawOutputs(
           required: output.required,
           exists: true,
           verified: true,
+          verification_status: "verified",
           ...(typeof inspected.size_bytes === "number"
             ? { size_bytes: inspected.size_bytes }
             : {}),
@@ -243,19 +323,46 @@ export async function transferOpenClawInputViaWsl(input: {
   wslDistro: string;
   base64Chunks: string[];
   workspaceAbsolutePath: string;
+  allowedWorkspaceRoot?: string;
   expectedSizeBytes: number;
   expectedSha256: string;
+  runWsl?: OpenClawWslRunner;
 }): Promise<OpenClawFileInspection> {
-  const script = buildOpenClawStageInputScript(input.workspaceAbsolutePath);
-  await spawnWslText({
-    wslDistro: input.wslDistro,
-    args: ["bash", "-c", script],
+  const workspaceAbsolutePath = assertSafeWorkspaceAbsolutePath(
+    input.workspaceAbsolutePath
+  );
+  const targetParent = path.posix.dirname(workspaceAbsolutePath);
+  const runWsl = input.runWsl ?? createOpenClawWslRunner(input.wslDistro);
+
+  await runWsl({ args: ["mkdir", "-p", "--", targetParent] });
+  if (input.allowedWorkspaceRoot) {
+    const resolvedParent = await runWsl({
+      args: ["readlink", "-f", "--", targetParent]
+    });
+    const canonicalParent = resolvedParent.stdout.trim();
+    if (!canonicalParent) {
+      throw new Error("OpenClaw staging parent could not be canonicalized.");
+    }
+    assertResolvedPathContained(input.allowedWorkspaceRoot, canonicalParent);
+  }
+
+  await runWsl({
+    args: [
+      "python3",
+      "-c",
+      "import base64,sys; open(sys.argv[1], 'wb').write(base64.b64decode(sys.stdin.buffer.read(), validate=True))",
+      workspaceAbsolutePath
+    ],
     stdin: input.base64Chunks.join("")
   });
 
   return inspectOpenClawWorkspaceFileViaWsl({
     wslDistro: input.wslDistro,
-    workspaceAbsolutePath: input.workspaceAbsolutePath
+    workspaceAbsolutePath,
+    ...(input.allowedWorkspaceRoot
+      ? { allowedWorkspaceRoot: input.allowedWorkspaceRoot }
+      : {}),
+    runWsl
   });
 }
 
@@ -270,17 +377,6 @@ export async function readOpenClawWorkspaceFileViaWsl(input: {
   return Buffer.from(result.stdout.trim(), "base64");
 }
 
-export function buildOpenClawStageInputScript(
-  workspaceAbsolutePath: string
-): string {
-  const safePath = shellQuoteWorkspaceAbsolutePath(workspaceAbsolutePath);
-  return [
-    "set -euo pipefail",
-    `mkdir -p "$(dirname ${safePath})"`,
-    `base64 -d > ${safePath}`
-  ].join("; ");
-}
-
 export function buildOpenClawReadFileScript(workspaceAbsolutePath: string): string {
   const safePath = shellQuoteWorkspaceAbsolutePath(workspaceAbsolutePath);
   return [
@@ -292,21 +388,30 @@ export function buildOpenClawReadFileScript(workspaceAbsolutePath: string): stri
 export async function inspectOpenClawWorkspaceFileViaWsl(input: {
   wslDistro: string;
   workspaceAbsolutePath: string;
+  allowedWorkspaceRoot?: string;
+  runWsl?: OpenClawWslRunner;
 }): Promise<OpenClawFileInspection> {
-  const exists = await spawnWslText({
-    wslDistro: input.wslDistro,
+  const runWsl = input.runWsl ?? createOpenClawWslRunner(input.wslDistro);
+  const exists = await runWsl({
     args: ["test", "-f", input.workspaceAbsolutePath],
     allowNonZeroExit: true
   });
   if (exists.exitCode !== 0) {
     return { exists: false };
   }
-  const size = await spawnWslText({
-    wslDistro: input.wslDistro,
+  if (input.allowedWorkspaceRoot) {
+    const resolved = await runWsl({
+      args: ["readlink", "-f", "--", input.workspaceAbsolutePath]
+    });
+    assertResolvedPathContained(
+      input.allowedWorkspaceRoot,
+      resolved.stdout.trim()
+    );
+  }
+  const size = await runWsl({
     args: ["wc", "-c", input.workspaceAbsolutePath]
   });
-  const hash = await spawnWslText({
-    wslDistro: input.wslDistro,
+  const hash = await runWsl({
     args: ["sha256sum", input.workspaceAbsolutePath]
   });
   const sizeBytes = Number.parseInt(size.stdout.trim().split(/\s+/)[0] ?? "", 10);
@@ -335,6 +440,7 @@ function failedVerification(input: {
     required: input.output.required,
     exists: input.inspected?.exists ?? false,
     verified: false,
+    verification_status: "failed",
     ...(typeof input.inspected?.size_bytes === "number"
       ? { size_bytes: input.inspected.size_bytes }
       : {}),
@@ -357,14 +463,25 @@ function chunkString(value: string, chunkSize: number): string[] {
   return chunks;
 }
 
+export function buildOpenClawWslExecArgs(
+  wslDistro: string,
+  args: string[]
+): string[] {
+  return ["-d", wslDistro, "--exec", ...args];
+}
+
+function createOpenClawWslRunner(wslDistro: string): OpenClawWslRunner {
+  return (input) => spawnWslText({ wslDistro, ...input });
+}
+
 async function spawnWslText(input: {
   wslDistro: string;
   args: string[];
   allowNonZeroExit?: boolean;
   stdin?: string;
-}): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+}): Promise<OpenClawWslCommandResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn("wsl", ["-d", input.wslDistro, ...input.args], {
+    const child = spawn("wsl", buildOpenClawWslExecArgs(input.wslDistro, input.args), {
       windowsHide: true,
       stdio: [typeof input.stdin === "string" ? "pipe" : "ignore", "pipe", "pipe"]
     });
@@ -417,10 +534,15 @@ function sanitizeWorkspaceFileName(value: string): string {
   return baseName.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").trim() || "artifact";
 }
 
-function shellQuoteWorkspaceAbsolutePath(value: string): string {
+function assertSafeWorkspaceAbsolutePath(value: string): string {
   const normalized = String(value || "").trim();
   if (!normalized || !normalized.startsWith("/") || normalized.includes("\0")) {
     throw new Error(`Unsafe OpenClaw workspace-absolute path: ${value}`);
   }
+  return normalized;
+}
+
+function shellQuoteWorkspaceAbsolutePath(value: string): string {
+  const normalized = assertSafeWorkspaceAbsolutePath(value);
   return `'${normalized.replace(/'/g, "'\\''")}'`;
 }

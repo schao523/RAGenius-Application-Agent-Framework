@@ -52,9 +52,14 @@ describe("execution store", () => {
       }
     });
 
-    const record = await store.get("execution_001");
-    const logs = await store.getLogs("execution_001");
-    const storedRequest = await store.getRequest("execution_001");
+    const scope = {
+      appId: "app_001",
+      executionId: "execution_001",
+      sessionId: "sess_001"
+    };
+    const record = await store.get(scope);
+    const logs = await store.getLogs(scope);
+    const storedRequest = await store.getRequest(scope);
 
     assert.equal(record?.execution_id, "execution_001");
     assert.equal(record?.app_id, "app_001");
@@ -66,6 +71,15 @@ describe("execution store", () => {
     assert.equal(storedRequest?.session_id, "sess_001");
     assert.equal(logs.length, 1);
     assert.equal(logs[0]?.message, "Skill completed.");
+    assert.equal(await store.get({ ...scope, appId: "app_002" }), null);
+    assert.deepEqual(
+      await store.getLogs({ ...scope, sessionId: "sess_002" }),
+      []
+    );
+    assert.equal(
+      await store.getRequest({ ...scope, sessionId: "sess_002" }),
+      null
+    );
   });
 
   it("lists recent execution records with fallback filters", async () => {
@@ -144,11 +158,15 @@ describe("execution store", () => {
     });
 
     const fallbackOnly = await store.listRecent({
+      appId: "app_001",
       limit: 10,
+      sessionId: "sess_001",
       usedFallback: true
     });
     const mcpOnly = await store.listRecent({
+      appId: "app_001",
       limit: 10,
+      sessionId: "sess_002",
       executionPath: "mcp"
     });
 

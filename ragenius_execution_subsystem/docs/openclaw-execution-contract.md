@@ -2,6 +2,14 @@
 
 Date: 2026-06-14
 
+## Shared Agent Lifecycle Reference
+
+`docs/agent-execution-lifecycle-evidence-contract.md` is authoritative for
+provider-neutral lifecycle, evidence levels, process termination, provider-state
+policy, artifact projection, diagnostics, and artifact byte serving. This
+contract remains authoritative for OpenClaw-specific invocation and result
+translation.
+
 Observed behavior source:
 
 - [openclaw-cli-test-results-2026-06-13.md](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/openclaw-cli-test-results-2026-06-13.md)
@@ -62,6 +70,53 @@ OpenClaw must not be modeled as:
 - a generic shell escape
 - an MCP provider in Phase 1
 - an implicitly trusted backend
+
+## Execution Scope And Ownership
+
+Every persisted execution is owned by an immutable scope:
+
+```ts
+type ExecutionAccessScope = {
+  app_id: string;
+  session_id: string;
+};
+```
+
+The execution subsystem must persist this scope at submission and require an
+exact scoped match for status, logs, confirmation, request replay, and result
+retrieval. Store methods must accept the scope rather than loading by execution
+id and checking after data has been returned. Scope mismatch returns `404`.
+
+The app backend owns user authentication and verifies that the session belongs
+to the authenticated user before submission or follow-up operations. The
+execution subsystem authenticates the app service and treats raw app/session
+values from an unauthenticated caller, or an execution id alone, as insufficient
+authorization.
+
+## Trusted Confirmation Lifecycle
+
+`execution_options.require_confirmation` is not an approval credential and must
+be removed from the public request schema. When policy requires confirmation,
+the subsystem persists a server-issued confirmation resource containing a
+random `confirmation_id`, execution id, immutable app/session scope, policy snapshot,
+expiry, and consumption state.
+
+Confirmation performs an atomic compare-and-set transition:
+
+```text
+pending_confirmation -> running -> completed | partial | failed
+```
+
+Only `pending_confirmation` may transition through confirmation. Repeated,
+expired, consumed, or scope-mismatched confirmation requests must not invoke the
+provider. Repeated requests for a terminal execution return its existing state.
+
+## Agent Dry Run
+
+With `execution_options.dry_run = true`, the engine may validate and return the
+policy, backend, resolved artifact metadata, expected output plan, and
+confirmation requirement. It must stop before provider invocation, workspace
+staging, output creation, artifact persistence, or confirmation consumption.
 
 ## Backend Discriminator
 
@@ -264,6 +319,14 @@ Phase 1 rules:
 - prompts must reference OpenClaw workspace paths only
 - Windows paths must not be passed to OpenClaw prompts
 - `/mnt/c` and `/mnt/d` must not be used unless a later test pass proves them reliable
+- every execution must use an isolated run root such as
+  `runs/<execution_id>/inputs` and `runs/<execution_id>/outputs`
+- normalized caller paths must be rebased beneath the current execution run root
+- verification must reject any path that resolves outside the current run root
+- a file from another execution must never satisfy current-run verification
+- run directories older than `OPENCLAW_RUN_RETENTION_HOURS` are eligible for
+  bounded cleanup; cleanup never removes the current run or persisted RAGenius
+  artifacts
 
 For output-producing requests, the provider must generate or receive explicit expected output paths before invoking OpenClaw.
 
@@ -336,6 +399,12 @@ type OpenClawVerificationResult = {
   required: boolean;
   exists: boolean;
   verified: boolean;
+  verification_status: "verified" | "failed" | "not_run";
+  persistence_status:
+    | "not_requested"
+    | "persisted"
+    | "failed"
+    | "not_run";
   size_bytes?: number;
   sha256?: string;
   media_type?: string;
@@ -345,8 +414,9 @@ type OpenClawVerificationResult = {
     | "empty_output"
     | "size_below_minimum"
     | "hash_mismatch"
-    | "read_failed"
-    | "persist_failed";
+    | "read_failed";
+  persistence_failure_code?: "persist_failed";
+  persistence_failure_message?: string;
   failure_message?: string;
 };
 ```
@@ -354,7 +424,9 @@ type OpenClawVerificationResult = {
 Completion rule:
 
 - all `required = true` verification results must have `verified = true`
-- optional output failures may be returned as diagnostics without failing the whole execution
+- required persistence requests must have `persistence_status = "persisted"`
+- optional verification or requested persistence failures produce top-level `partial`
+- persistence failure must not change a verified file to `verified = false`
 
 ## Success Semantics
 
@@ -377,6 +449,16 @@ An output-producing request may be normalized as completed only when:
 - response parsing produced usable diagnostics
 - every required output path was verified
 - any required export/post-read step succeeded
+
+Top-level execution status must reflect provider outcome:
+
+- provider task failure, timeout, required verification failure, or required
+  persistence failure maps to `failed`
+- optional verification or requested optional persistence failure maps to `partial`
+- only a fully successful provider result maps to `completed`
+
+The engine must not wrap a provider `failed` result in a top-level `completed`
+execution.
 
 ## Failure Semantics
 

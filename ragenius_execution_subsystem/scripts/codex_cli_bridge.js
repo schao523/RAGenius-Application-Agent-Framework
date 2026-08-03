@@ -1,27 +1,9 @@
-import fs from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
-
-function hasArg(args, ...candidates) {
-  return args.some((arg) => candidates.includes(String(arg)));
-}
-
-function buildCodexArgs(rawArgs) {
-  const args = Array.isArray(rawArgs) ? rawArgs.map((item) => String(item)) : [];
-  if (!hasArg(args, "exec", "e")) {
-    args.unshift("exec");
-  }
-  if (!hasArg(args, "--json")) {
-    args.push("--json");
-  }
-  if (!hasArg(args, "--skip-git-repo-check")) {
-    args.push("--skip-git-repo-check");
-  }
-  if (!hasArg(args, "--dangerously-bypass-approvals-and-sandbox", "-s", "--sandbox")) {
-    args.push("--dangerously-bypass-approvals-and-sandbox");
-  }
-  args.push("-c", "shell_environment_policy.inherit=all");
-  return args;
-}
+import {
+  buildCodexChildEnv,
+  resolveCodexAdditionalWritableDirs
+} from "./codex_cli_environment.js";
+import { buildCodexArgs, parseCodexJsonl } from "./codex_cli_protocol.js";
+import { runSupervisedProcess } from "./agent_process_supervisor.js";
 
 function sanitizeProxyEnv(sourceEnv) {
   const env = { ...sourceEnv };
@@ -43,44 +25,6 @@ function sanitizeProxyEnv(sourceEnv) {
   return env;
 }
 
-function ensurePythonCertEnv(sourceEnv) {
-  const env = { ...sourceEnv };
-  if (env.SSL_CERT_FILE && env.REQUESTS_CA_BUNDLE && env.CURL_CA_BUNDLE) {
-    return env;
-  }
-
-  const pythonCommand =
-    String(env.NOTEBOOKLM_PYTHON_COMMAND || env.PYTHON || "python").trim() || "python";
-  const result = spawnSync(
-    pythonCommand,
-    ["-c", "import certifi; print(certifi.where())"],
-    {
-      cwd: process.cwd(),
-      env,
-      encoding: "utf-8"
-    }
-  );
-  if (result.status !== 0) {
-    return env;
-  }
-
-  const certPath = String(result.stdout || "").trim();
-  if (!certPath || !fs.existsSync(certPath)) {
-    return env;
-  }
-
-  if (!env.SSL_CERT_FILE) {
-    env.SSL_CERT_FILE = certPath;
-  }
-  if (!env.REQUESTS_CA_BUNDLE) {
-    env.REQUESTS_CA_BUNDLE = certPath;
-  }
-  if (!env.CURL_CA_BUNDLE) {
-    env.CURL_CA_BUNDLE = certPath;
-  }
-  return env;
-}
-
 function parseJson(value, fallback) {
   try {
     return JSON.parse(value);
@@ -89,6 +33,7 @@ function parseJson(value, fallback) {
   }
 }
 
+/* eslint-disable @typescript-eslint/no-unused-vars -- Retained for legacy direct bridge result normalization. */
 function shortenText(value, maxLength = 220) {
   const text = String(value || "").trim().replace(/\s+/g, " ");
   if (!text) {
@@ -317,6 +262,7 @@ function normalizeSuccessResult(stdout, request) {
 }
 
 function emit(response, exitCode) {
+  /* eslint-enable @typescript-eslint/no-unused-vars */
   process.stdout.write(`${JSON.stringify(response)}\n`);
   process.exit(exitCode);
 }
@@ -326,41 +272,37 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   input += chunk;
 });
-process.stdin.on("end", () => {
+process.stdin.on("end", async () => {
   const request = parseJson(input || "{}", {});
   const command = String(process.env.CODEX_CLI_COMMAND || "codex").trim() || "codex";
-  const args = buildCodexArgs(parseJson(process.env.CODEX_CLI_ARGS_JSON || "[]", []));
-  const timeoutMs = Number.parseInt(process.env.CODEX_CLI_TIMEOUT_MS || "300000", 10);
-  const prompt = buildPrompt(request);
-  const childEnv = ensurePythonCertEnv(sanitizeProxyEnv(process.env));
-
-  const child = spawn(command, args, {
-    cwd: process.cwd(),
-    stdio: "pipe",
-    env: childEnv
-  });
-
-  let stdout = "";
-  let stderr = "";
-  let timedOut = false;
-
-  const timeoutHandle = Number.isFinite(timeoutMs) && timeoutMs > 0
-    ? setTimeout(() => {
-        timedOut = true;
-        child.kill();
-      }, timeoutMs)
-    : null;
-
-  child.stdout.on("data", (chunk) => {
-    stdout += String(chunk);
-  });
-  child.stderr.on("data", (chunk) => {
-    stderr += String(chunk);
-  });
-  child.on("error", (error) => {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
+  const args = buildCodexArgs(
+    parseJson(process.env.CODEX_CLI_ARGS_JSON || "[]", []),
+    {
+      workspaceAbsolutePath: request.workspace_absolute_path,
+      sandboxMode: request.sandbox_mode,
+      networkAccess: request.policy?.network_access,
+      additionalWritableDirs: resolveCodexAdditionalWritableDirs(request, process.env)
     }
+  );
+  const timeoutMs = Number.parseInt(process.env.CODEX_CLI_TIMEOUT_MS || "300000", 10);
+  const prompt = typeof request.prompt === "string" && request.prompt.trim()
+    ? request.prompt
+    : buildPrompt(request);
+  const childEnv = buildCodexChildEnv(sanitizeProxyEnv(process.env));
+
+  let supervised;
+  try {
+    supervised = await runSupervisedProcess({
+      command,
+      args,
+      cwd: request.workspace_absolute_path || process.cwd(),
+      env: childEnv,
+      stdin: prompt,
+      timeoutMs,
+      maxStdoutBytes: Number(process.env.CODEX_CLI_MAX_STDOUT_BYTES) || 4_194_304,
+      maxStderrBytes: Number(process.env.CODEX_CLI_MAX_STDERR_BYTES) || 65_536
+    });
+  } catch (error) {
     emit(
       {
         ok: false,
@@ -378,13 +320,11 @@ process.stdin.on("end", () => {
       },
       0
     );
-  });
-  child.on("close", (code) => {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-    }
+    return;
+  }
 
-    if (timedOut) {
+  const { exitCode: code, stdout, stderr, timedOut } = supervised;
+  if (timedOut) {
       emit(
         {
           ok: false,
@@ -404,9 +344,9 @@ process.stdin.on("end", () => {
         0
       );
       return;
-    }
+  }
 
-    if (code !== 0) {
+  if (code !== 0) {
       emit(
         {
           ok: false,
@@ -427,17 +367,16 @@ process.stdin.on("end", () => {
         0
       );
       return;
-    }
+  }
 
-    emit(
-      {
-        ok: true,
-        result: normalizeSuccessResult(stdout, request)
-      },
-      0
-    );
-  });
-
-  child.stdin.write(prompt);
-  child.stdin.end();
+  emit(
+    {
+      ok: true,
+      result: parseCodexJsonl(stdout, {
+        maxOutputBytes: Number(request.max_output_bytes) || 16384,
+        rawExitCode: code ?? 0
+      })
+    },
+    0
+  );
 });

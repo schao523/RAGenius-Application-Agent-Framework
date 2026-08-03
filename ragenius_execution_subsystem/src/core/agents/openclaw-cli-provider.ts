@@ -3,6 +3,7 @@ import { AppError } from "../errors/app-error.js";
 
 import type { AgentPolicyDecision } from "./agent-policy.js";
 import type { AgentProvider } from "./agent-provider.js";
+import type { AgentProviderExecutionContext } from "./agent-provider-context.js";
 import type {
   AgentArtifactResolverInput,
   ResolvedAgentArtifact
@@ -21,6 +22,8 @@ import type {
 import { normalizeOpenClawOptions } from "./openclaw-options.js";
 import { buildOpenClawPrompt } from "./openclaw-prompt-builder.js";
 import {
+  buildOpenClawRunWorkspaceRoot,
+  cleanupOpenClawRunWorkspacesViaWsl,
   inspectOpenClawWorkspaceFileViaWsl,
   stageResolvedAgentArtifactsForOpenClaw,
   transferOpenClawInputViaWsl,
@@ -43,6 +46,7 @@ export type OpenClawCliProviderConfig = {
   timeoutMs: number;
   maxStdoutBytes?: number;
   maxStderrBytes?: number;
+  runRetentionHours?: number;
 };
 
 export type OpenClawCliProviderDependencies = {
@@ -75,6 +79,16 @@ export type OpenClawCliProviderDependencies = {
     output: OpenClawExpectedOutput;
     verification: OpenClawVerificationResult;
   }) => Promise<PersistedAgentOutputArtifact>;
+  cleanupRuns?: (input: {
+    workspaceRoot: string;
+    currentExecutionId: string;
+    retentionHours: number;
+  }) => Promise<void>;
+  finalizeResult?: (input: {
+    request: ExecuteAgentRequest;
+    context: AgentProviderExecutionContext;
+    result: OpenClawProviderResult;
+  }) => Promise<OpenClawProviderResult>;
 };
 
 export class OpenClawCliProvider implements AgentProvider {
@@ -87,8 +101,8 @@ export class OpenClawCliProvider implements AgentProvider {
 
   async execute(
     request: ExecuteAgentRequest,
-    _policy: AgentPolicyDecision,
-    context?: { executionId?: string }
+    policy: AgentPolicyDecision,
+    context?: AgentProviderExecutionContext | { executionId?: string }
   ): Promise<OpenClawProviderResult> {
     if (!this.config.enabled) {
       throw new AppError({
@@ -103,9 +117,38 @@ export class OpenClawCliProvider implements AgentProvider {
       });
     }
 
-    const executionId = context?.executionId ?? "execution_unknown";
+    const executionId = context
+      ? "execution_id" in context
+        ? context.execution_id
+        : context.executionId ?? "execution_unknown"
+      : "execution_unknown";
+    const runWorkspaceRoot = buildOpenClawRunWorkspaceRoot(
+      this.config.workspaceRoot,
+      executionId
+    );
+    if (this.config.runRetentionHours) {
+      const cleanupRuns =
+        this.dependencies.cleanupRuns ??
+        ((input: {
+          workspaceRoot: string;
+          currentExecutionId: string;
+          retentionHours: number;
+        }) =>
+          cleanupOpenClawRunWorkspacesViaWsl({
+            wslDistro: this.config.wslDistro,
+            ...input
+          }));
+      await cleanupRuns({
+        workspaceRoot: this.config.workspaceRoot,
+        currentExecutionId: executionId,
+        retentionHours: this.config.runRetentionHours
+      });
+    }
     const normalizedOptions = normalizeOpenClawOptions({ request, executionId });
-    const stagedArtifactInputs = await this.resolveAndStageArtifacts(request);
+    const stagedArtifactInputs = await this.resolveAndStageArtifacts(
+      request,
+      runWorkspaceRoot
+    );
     const options = {
       ...normalizedOptions,
       staged_inputs: [
@@ -122,7 +165,7 @@ export class OpenClawCliProvider implements AgentProvider {
       });
     const prompt = buildOpenClawPrompt({
       request,
-      workspaceRoot: this.config.workspaceRoot,
+      workspaceRoot: runWorkspaceRoot,
       options
     });
     const bridge = this.dependencies.bridge ?? ((bridgeInput) =>
@@ -143,27 +186,47 @@ export class OpenClawCliProvider implements AgentProvider {
     });
     const inspectedVerificationResults =
       options.expected_outputs.length > 0
-        ? await this.verifyExpectedOutputs(options.expected_outputs)
+        ? await this.verifyExpectedOutputs(
+            options.expected_outputs,
+            runWorkspaceRoot
+          )
         : [];
     const verificationResults = await this.persistVerifiedOutputs({
       request,
       executionId,
       expectedOutputs: options.expected_outputs,
-      verificationResults: inspectedVerificationResults
+      verificationResults: inspectedVerificationResults.map((result) => ({
+        ...result,
+        verification_status:
+          result.verification_status ??
+          (result.verified ? "verified" : "failed")
+      }))
     });
     const requiredFailures = verificationResults.filter(
       (result) => result.required && !result.verified
     );
-    const persistenceFailure = verificationResults.find(
-      (result) => result.failure_code === "persist_failed"
+    const requiredPersistenceFailure = verificationResults.find(
+      (result) => result.required && result.persistence_status === "failed"
+    );
+    const optionalPersistenceFailure = verificationResults.find(
+      (result) => !result.required && result.persistence_status === "failed"
     );
     const nonzeroExit =
       typeof bridgeResult.exitCode === "number" && bridgeResult.exitCode !== 0;
+    const outputText = extractOutputText(bridgeResult);
+    const taskFailure = classifyOpenClawTaskFailure(outputText);
     const status =
-      bridgeResult.timedOut || nonzeroExit || requiredFailures.length > 0
+      bridgeResult.timedOut ||
+      nonzeroExit ||
+      requiredFailures.length > 0 ||
+      requiredPersistenceFailure ||
+      taskFailure.failed
         ? "failed"
+        : optionalPersistenceFailure
+          ? "partial"
         : "completed";
     const providerMetadata = this.buildMetadata({
+      policy,
       sessionKey,
       executionMode: options.execution_mode,
       bridgeResult,
@@ -171,16 +234,19 @@ export class OpenClawCliProvider implements AgentProvider {
       requiredOutputCount: options.expected_outputs.filter((output) => output.required)
         .length,
       verifiedOutputCount: verificationResults.filter((result) => result.verified)
-        .length
+        .length,
+      runWorkspaceRoot
     });
-    const outputText = extractOutputText(bridgeResult);
-
-    return {
+    const result: OpenClawProviderResult = {
       status,
       summary:
         status === "completed"
           ? `OpenClaw completed and verified ${providerMetadata.verified_output_count} output(s).`
-          : requiredFailures[0]?.failure_message ??
+          : status === "partial"
+            ? "OpenClaw completed, but an optional output could not be persisted."
+          : taskFailure.message ??
+            requiredFailures[0]?.failure_message ??
+            requiredPersistenceFailure?.persistence_failure_message ??
             (bridgeResult.timedOut
               ? "OpenClaw execution timed out."
               : nonzeroExit
@@ -188,7 +254,10 @@ export class OpenClawCliProvider implements AgentProvider {
               : "OpenClaw execution failed."),
       output_text: outputText,
       artifacts: verificationResults
-        .filter((result) => result.verified)
+        .filter(
+          (result) =>
+            result.verified && Boolean(result.persisted_artifact_id)
+        )
         .map((result) => ({
           output_id: result.output_id,
           display_name:
@@ -203,22 +272,52 @@ export class OpenClawCliProvider implements AgentProvider {
             ? { artifact_id: result.persisted_artifact_id }
             : {})
         })),
+      reported_outputs: verificationResults
+        .filter((result) => result.verified)
+        .map((result) => {
+          const output = options.expected_outputs.find(
+            (candidate) => candidate.output_id === result.output_id
+          );
+          return {
+            output_id: result.output_id,
+            display_name:
+              output?.display_name ??
+              result.workspace_relative_path.split("/").at(-1) ??
+              result.output_id,
+            media_type: result.media_type ?? "application/octet-stream",
+            workspace_relative_path: result.workspace_relative_path,
+            verified: true,
+            ...(typeof result.size_bytes === "number"
+              ? { size_bytes: result.size_bytes }
+              : {}),
+            ...(result.sha256 ? { sha256: result.sha256 } : {})
+          };
+        }),
       provider_metadata: providerMetadata,
       verification_results: verificationResults,
       diagnostics: {
         ...(requiredFailures[0]?.failure_code
           ? { failure_code: requiredFailures[0].failure_code }
+          : taskFailure.failed
+            ? { failure_code: "agent_task_failed" }
           : bridgeResult.timedOut
             ? { failure_code: "provider_timeout" }
             : nonzeroExit
               ? { failure_code: "provider_nonzero_exit" }
-              : persistenceFailure?.failure_code
-                ? { failure_code: persistenceFailure.failure_code }
+              : requiredPersistenceFailure || optionalPersistenceFailure
+                ? { failure_code: "persist_failed" }
             : {}),
         ...(requiredFailures[0]?.failure_message
           ? { failure_message: requiredFailures[0].failure_message }
-          : persistenceFailure?.failure_message
-            ? { failure_message: persistenceFailure.failure_message }
+          : taskFailure.detail
+            ? { failure_message: taskFailure.detail }
+          : (requiredPersistenceFailure ?? optionalPersistenceFailure)
+                ?.persistence_failure_message
+            ? {
+                failure_message: (requiredPersistenceFailure ??
+                  optionalPersistenceFailure)!
+                  .persistence_failure_message
+              }
           : {}),
         stdout_tail: bridgeResult.stdout,
         stderr_tail: bridgeResult.stderr,
@@ -231,24 +330,34 @@ export class OpenClawCliProvider implements AgentProvider {
         exit_code: bridgeResult.exitCode
       }
     };
+    if (this.dependencies.finalizeResult && context && "execution_id" in context) {
+      return this.dependencies.finalizeResult({
+        request,
+        context,
+        result
+      });
+    }
+    return result;
   }
 
   private async verifyExpectedOutputs(
-    expectedOutputs: ReturnType<typeof normalizeOpenClawOptions>["expected_outputs"]
+    expectedOutputs: ReturnType<typeof normalizeOpenClawOptions>["expected_outputs"],
+    runWorkspaceRoot: string
   ): Promise<OpenClawVerificationResult[]> {
     if (this.dependencies.verifyOutputs) {
       return this.dependencies.verifyOutputs({
-        workspaceRoot: this.config.workspaceRoot,
+        workspaceRoot: runWorkspaceRoot,
         expectedOutputs
       });
     }
     return verifyOpenClawOutputs({
-      workspaceRoot: this.config.workspaceRoot,
+      workspaceRoot: runWorkspaceRoot,
       expectedOutputs,
       inspectFile: async (workspaceAbsolutePath) =>
         inspectOpenClawWorkspaceFileViaWsl({
           wslDistro: this.config.wslDistro,
-          workspaceAbsolutePath
+          workspaceAbsolutePath,
+          allowedWorkspaceRoot: runWorkspaceRoot
         })
     });
   }
@@ -269,7 +378,10 @@ export class OpenClawCliProvider implements AgentProvider {
           (candidate) => candidate.output_id === verification.output_id
         );
         if (!output || !verification.verified || output.persist_as_artifact !== true) {
-          return verification;
+          return {
+            ...verification,
+            persistence_status: "not_requested" as const
+          };
         }
 
         try {
@@ -284,14 +396,15 @@ export class OpenClawCliProvider implements AgentProvider {
           }
           return {
             ...verification,
-            persisted_artifact_id: artifact.artifact_id
+            persisted_artifact_id: artifact.artifact_id,
+            persistence_status: "persisted" as const
           };
         } catch (error) {
           return {
             ...verification,
-            verified: false,
-            failure_code: "persist_failed" as const,
-            failure_message:
+            persistence_status: "failed" as const,
+            persistence_failure_code: "persist_failed" as const,
+            persistence_failure_message:
               error instanceof Error
                 ? error.message
                 : "Failed to persist verified OpenClaw output."
@@ -302,7 +415,8 @@ export class OpenClawCliProvider implements AgentProvider {
   }
 
   private async resolveAndStageArtifacts(
-    request: ExecuteAgentRequest
+    request: ExecuteAgentRequest,
+    runWorkspaceRoot: string
   ): Promise<OpenClawStagedInput[]> {
     const refs = request.artifact_refs ?? [];
     if (refs.length === 0) {
@@ -328,31 +442,50 @@ export class OpenClawCliProvider implements AgentProvider {
       refs
     });
 
-    if (this.dependencies.stageArtifacts) {
-      return this.dependencies.stageArtifacts({
-        workspaceRoot: this.config.workspaceRoot,
-        artifacts
+    try {
+      if (this.dependencies.stageArtifacts) {
+        return await this.dependencies.stageArtifacts({
+          workspaceRoot: runWorkspaceRoot,
+          artifacts
+        });
+      }
+
+      return await stageResolvedAgentArtifactsForOpenClaw({
+        workspaceRoot: runWorkspaceRoot,
+        artifacts,
+        transfer: async (input) =>
+          transferOpenClawInputViaWsl({
+            wslDistro: this.config.wslDistro,
+            allowedWorkspaceRoot: runWorkspaceRoot,
+            ...input
+          })
+      });
+    } catch (error) {
+      throw new AppError({
+        code: "OPENCLAW_ARTIFACT_STAGING_FAILED",
+        message: "OpenClaw artifact staging failed.",
+        errorClass: "tool",
+        httpStatus: 502,
+        details: {
+          backend: this.backend,
+          cause: error instanceof Error ? error.message : String(error)
+        },
+        recoverable: true,
+        suggestedAction:
+          "Retry the execution or inspect the OpenClaw WSL workspace configuration."
       });
     }
-
-    return stageResolvedAgentArtifactsForOpenClaw({
-      workspaceRoot: this.config.workspaceRoot,
-      artifacts,
-      transfer: async (input) =>
-        transferOpenClawInputViaWsl({
-          wslDistro: this.config.wslDistro,
-          ...input
-        })
-    });
   }
 
   private buildMetadata(input: {
+    policy: AgentPolicyDecision;
     sessionKey: string;
     executionMode: "read_only" | "output_required";
     bridgeResult: OpenClawCliBridgeResult;
     expectedOutputCount: number;
     requiredOutputCount: number;
     verifiedOutputCount: number;
+    runWorkspaceRoot: string;
   }): OpenClawProviderMetadata {
     return {
       backend: this.backend,
@@ -363,9 +496,12 @@ export class OpenClawCliProvider implements AgentProvider {
       openclaw_agent_id: this.config.agentId,
       openclaw_session_key: input.sessionKey,
       execution_mode: input.executionMode,
+      provider_state_access: input.policy.providerStateAccess,
+      provider_state_labels: input.policy.providerStateLabels,
       expected_output_count: input.expectedOutputCount,
       required_output_count: input.requiredOutputCount,
       verified_output_count: input.verifiedOutputCount,
+      run_workspace_root: input.runWorkspaceRoot,
       json_parse_status: input.bridgeResult.jsonParseStatus,
       raw_exit_code: input.bridgeResult.exitCode,
       timed_out: input.bridgeResult.timedOut,
@@ -392,7 +528,10 @@ function extractOutputText(bridgeResult: OpenClawCliBridgeResult): string {
         finalAssistantVisibleText?: unknown;
         payloads?: unknown;
       };
-      if (typeof record.finalAssistantVisibleText === "string") {
+      if (
+        typeof record.finalAssistantVisibleText === "string" &&
+        record.finalAssistantVisibleText.trim()
+      ) {
         return record.finalAssistantVisibleText;
       }
       if (Array.isArray(record.payloads)) {
@@ -409,4 +548,45 @@ function extractOutputText(bridgeResult: OpenClawCliBridgeResult): string {
     }
   }
   return bridgeResult.stdout.trim();
+}
+
+function classifyOpenClawTaskFailure(outputText: string): {
+  failed: boolean;
+  message?: string;
+  detail?: string;
+} {
+  const normalized = outputText.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return { failed: false };
+  }
+
+  const failurePatterns = [
+    /(?:^|\n)\s*(?:\*\*)?(?:task outcome|task status|overall status|message sent[^:\n]*)(?:\*\*)?\s*:\s*(?:❌\s*)?(?:\*\*)?(failed|failure|blocked|forbidden|denied)(?:\*\*)?/i,
+    /(?:request|action|message|task)\s+(?:was\s+)?(?:forbidden|denied|blocked|rejected|not permitted)/i,
+    /no further actions can be taken/i,
+    /tools\.sessions\.visibility=tree/i
+  ];
+
+  if (!failurePatterns.some((pattern) => pattern.test(normalized))) {
+    return { failed: false };
+  }
+
+  return {
+    failed: true,
+    message: "OpenClaw reported that the requested task failed.",
+    detail: extractFailureDetail(normalized)
+  };
+}
+
+function extractFailureDetail(outputText: string): string {
+  const lines = outputText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const failureLine = lines.find((line) =>
+    /failed|failure|forbidden|denied|blocked|not permitted|no further actions can be taken|tools\.sessions\.visibility=tree/i.test(
+      line
+    )
+  );
+  return failureLine?.slice(0, 500) ?? "OpenClaw reported task failure.";
 }

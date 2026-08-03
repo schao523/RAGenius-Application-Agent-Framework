@@ -33,6 +33,7 @@ export interface ExecutionLogEntry {
 }
 
 export interface ExecutionRecord extends NormalizedExecutionResult {
+  execution_id: string;
   app_id: string;
   created_at: string;
   request_type: ExecutionRequest["request_type"];
@@ -47,20 +48,38 @@ export interface SaveExecutionRecordInput {
   result: NormalizedExecutionResult;
 }
 
+export interface ExecutionScope {
+  appId: string;
+  executionId: string;
+  sessionId: string;
+}
+
+export interface TransitionExecutionInput {
+  scope: ExecutionScope;
+  from: NormalizedExecutionResult["status"][];
+  result: NormalizedExecutionResult;
+}
+
 export interface ListRecentExecutionsInput {
+  appId: string;
   executionPath?:
     | ToolExecutionProvenance["execution_path"]
     | undefined;
   limit: number;
+  sessionId: string;
   usedFallback?: boolean | undefined;
 }
 
 export interface ExecutionStore {
-  get(executionId: string): Promise<ExecutionRecord | null>;
-  getLogs(executionId: string): Promise<ExecutionLogEntry[]>;
-  getRequest(executionId: string): Promise<ExecutionRequest | null>;
+  get(scope: ExecutionScope): Promise<ExecutionRecord | null>;
+  getLogs(scope: ExecutionScope): Promise<ExecutionLogEntry[]>;
+  getRequest(scope: ExecutionScope): Promise<ExecutionRequest | null>;
   listRecent(input: ListRecentExecutionsInput): Promise<ExecutionRecord[]>;
+  listByStatuses(
+    statuses: NormalizedExecutionResult["status"][]
+  ): Promise<ExecutionRecord[]>;
   save(input: SaveExecutionRecordInput): Promise<void>;
+  transition(input: TransitionExecutionInput): Promise<boolean>;
 }
 
 export class InMemoryExecutionStore implements ExecutionStore {
@@ -94,21 +113,58 @@ export class InMemoryExecutionStore implements ExecutionStore {
     ]);
   }
 
-  async get(executionId: string): Promise<ExecutionRecord | null> {
-    return this.records.get(executionId) ?? null;
+  async get(scope: ExecutionScope): Promise<ExecutionRecord | null> {
+    const record = this.records.get(scope.executionId);
+    return record &&
+      record.app_id === scope.appId &&
+      record.session_id === scope.sessionId
+      ? record
+      : null;
   }
 
-  async getLogs(executionId: string): Promise<ExecutionLogEntry[]> {
-    return this.logs.get(executionId) ?? [];
+  async transition(input: TransitionExecutionInput): Promise<boolean> {
+    const existing = await this.get(input.scope);
+    if (!existing || !input.from.includes(existing.status)) {
+      return false;
+    }
+    const timestamp = new Date().toISOString();
+    this.records.set(input.scope.executionId, {
+      ...existing,
+      ...input.result,
+      execution_id: input.scope.executionId,
+      updated_at: timestamp
+    });
+    this.logs.set(input.scope.executionId, [
+      ...(this.logs.get(input.scope.executionId) ?? []),
+      {
+        created_at: timestamp,
+        execution_id: input.scope.executionId,
+        level: input.result.status === "failed" ? "error" : "info",
+        message: input.result.logs_summary
+      }
+    ]);
+    return true;
   }
 
-  async getRequest(executionId: string): Promise<ExecutionRequest | null> {
-    return this.requests.get(executionId) ?? null;
+  async getLogs(scope: ExecutionScope): Promise<ExecutionLogEntry[]> {
+    return (await this.get(scope)) ? (this.logs.get(scope.executionId) ?? []) : [];
+  }
+
+  async getRequest(scope: ExecutionScope): Promise<ExecutionRequest | null> {
+    return (await this.get(scope))
+      ? (this.requests.get(scope.executionId) ?? null)
+      : null;
   }
 
   async listRecent(input: ListRecentExecutionsInput): Promise<ExecutionRecord[]> {
     return [...this.records.values()]
       .filter((record) => {
+        if (
+          record.app_id !== input.appId ||
+          record.session_id !== input.sessionId
+        ) {
+          return false;
+        }
         if (
           input.usedFallback !== undefined &&
           record.execution_metadata?.used_fallback !== input.usedFallback
@@ -125,5 +181,11 @@ export class InMemoryExecutionStore implements ExecutionStore {
       })
       .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
       .slice(0, input.limit);
+  }
+
+  async listByStatuses(
+    statuses: NormalizedExecutionResult["status"][]
+  ): Promise<ExecutionRecord[]> {
+    return [...this.records.values()].filter((record) => statuses.includes(record.status));
   }
 }

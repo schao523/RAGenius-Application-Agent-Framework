@@ -2,11 +2,55 @@
 
 Date: 2026-06-14
 
+## Shared Agent Lifecycle Addendum
+
+`docs/agent-execution-lifecycle-evidence-contract.md` is the normative shared
+contract for Codex and OpenClaw lifecycle, process termination, evidence,
+provider-state access, artifact projection, diagnostics, and artifact byte
+serving. This document remains authoritative for OpenClaw cross-subsystem
+routing and payload details.
+
 ## Purpose
 
 This document defines the cross-subsystem contract for OpenClaw-backed agent execution from `ragenius_app_skeleton` through `ragenius_execution_subsystem`.
 
 It exists to keep responsibilities explicit and prevent runtime execution logic from leaking into the wrong subsystem.
+
+## Normative Hardening Addendum
+
+The rules in this section supersede older examples in this document where they
+conflict. Provider-neutral `artifact_refs` and `expected_outputs` are defined by
+`docs/agent-mode-artifact-creation-reuse-contract.md`; OpenClaw-specific context
+must not duplicate their persistence or reuse semantics.
+
+Execution access is scoped by:
+
+```ts
+type ExecutionAccessScope = {
+  app_id: string;
+  session_id: string;
+};
+```
+
+`ragenius_app_skeleton` must authenticate the user and verify that the stored
+session belongs to the requested app and user before sending an authenticated
+service-to-service request. The execution subsystem stores `app_id` and
+`session_id` and uses both for status, logs, confirmation, and result retrieval.
+Browser clients must not call the execution subsystem directly in production.
+
+The initial implementation uses a configured service bearer credential:
+
+```text
+Authorization: Bearer <RAGenius execution service credential>
+```
+
+The execution subsystem validates the service credential before accepting the
+app/session scope. User identity remains app-owned and is not required in the MVP
+execution request or persisted execution record. Tests may inject a trusted
+service principal directly. Production mode must fail startup when execution
+service authentication is required but not configured.
+
+An execution id is an identifier, not an authorization credential.
 
 ## Participating Subsystems
 
@@ -111,13 +155,14 @@ When the app backend receives an OpenClaw exec command, it must call the executi
   "agent_query": "user request",
   "approved_content_id": "optional",
   "approved_revision_id": "optional",
+  "artifact_refs": [],
+  "expected_outputs": [],
   "context": {
     "execution_mode": "sync",
     "approved_content": {},
-    "artifact_refs": [],
     "openclaw": {
-      "expected_outputs": [],
-      "staged_inputs": []
+      "execution_mode": "read_only",
+      "timeout_ms": 120000
     }
   },
   "execution_options": {
@@ -131,6 +176,7 @@ Exact optional fields may evolve, but these rules are stable:
 - `agent_backend` must be explicit.
 - OpenClaw must not be inferred from free text.
 - app/session ids must be preserved.
+- the app backend must validate authenticated session ownership before submission.
 - approved content metadata must remain app-owned and passed as context.
 - provider file paths must not be invented by the app frontend.
 
@@ -147,6 +193,24 @@ The app backend must submit this shape for OpenClaw agent runs:
   "agent_query": "Summarize the selected approved content into a reusable markdown artifact.",
   "approved_content_id": "ac_123",
   "approved_revision_id": "rev_456",
+  "artifact_refs": [
+    {
+      "artifact_id": "art_001",
+      "role": "source",
+      "reuse_mode": "file_backed"
+    }
+  ],
+  "expected_outputs": [
+    {
+      "output_id": "openclaw_answer",
+      "display_name": "openclaw-result.md",
+      "media_type": "text/markdown",
+      "required": true,
+      "persist_as_artifact": true,
+      "artifact_type": "agent_output",
+      "min_size_bytes": 1
+    }
+  ],
   "context": {
     "execution_mode": "sync",
     "approved_content": {
@@ -154,52 +218,11 @@ The app backend must submit this shape for OpenClaw agent runs:
       "revision_id": "rev_456",
       "content_hash": "sha256:...",
       "content_text": "approved text when safe to send",
-      "artifact_refs": [
-        {
-          "artifact_id": "art_001",
-          "artifact_version_id": "v1",
-          "role": "source"
-        }
-      ],
       "target_refs": []
     },
-    "artifact_refs": [
-      {
-        "artifact_id": "art_001",
-        "artifact_version_id": "v1",
-        "role": "source",
-        "reuse_mode": "read"
-      }
-    ],
     "openclaw": {
       "execution_mode": "output_required",
-      "timeout_ms": 120000,
-      "staged_inputs": [
-        {
-          "input_id": "approved_content_rev_456",
-          "source_kind": "approved_content",
-          "source_ref": {
-            "approved_content_id": "ac_123",
-            "approved_revision_id": "rev_456"
-          },
-          "display_name": "approved-content.md",
-          "media_type": "text/markdown",
-          "encoding": "utf8",
-          "content_sha256": "sha256..."
-        }
-      ],
-      "expected_outputs": [
-        {
-          "output_id": "openclaw_answer",
-          "purpose": "answer",
-          "display_name": "openclaw-result.md",
-          "media_type": "text/markdown",
-          "required": true,
-          "persist_as_artifact": true,
-          "artifact_role": "final",
-          "min_size_bytes": 1
-        }
-      ]
+      "timeout_ms": 120000
     }
   },
   "execution_options": {
@@ -208,7 +231,11 @@ The app backend must submit this shape for OpenClaw agent runs:
 }
 ```
 
-The app backend may omit `context.openclaw.staged_inputs` and `context.openclaw.expected_outputs` for simple read-only prompt runs. The execution subsystem must generate defaults when the run is classified as output-required.
+The app backend may omit top-level `artifact_refs` and `expected_outputs` for
+simple read-only prompt runs. The execution subsystem generates a provider-neutral
+default expected output when the run is classified as output-required. Resolved
+OpenClaw staged inputs and workspace paths are internal provider data and never
+part of the app-to-execution payload.
 
 ### Approved Content Assembly
 
@@ -218,8 +245,8 @@ Rules:
 
 - If a selected approved content id exists, include `approved_content_id` and `approved_revision_id` at the top level.
 - Include `context.approved_content` with revision metadata and safe content text when available.
-- Include `context.approved_content.artifact_refs` when the approved revision points to artifacts.
-- Include `context.artifact_refs` for artifacts selected directly in the UI or inherited from approved content.
+- Include top-level `artifact_refs` for artifacts selected directly in the UI or
+  inherited from approved content.
 - Do not include OpenClaw workspace paths in this payload.
 
 If approved content text is too large for direct context, the app may send only refs and hashes; the execution subsystem then resolves or rejects based on available artifact/context access.
@@ -230,7 +257,9 @@ The execution subsystem response must remain compatible with existing app execut
 
 Required high-level result states:
 
+- `running`
 - `completed`
+- `partial`
 - `failed`
 - `pending_confirmation`
 - `blocked`
@@ -349,36 +378,49 @@ The app must use this artifact ref shape when passing artifacts to execution:
 ```ts
 type AppExecutionArtifactRef = {
   artifact_id: string;
-  artifact_version_id?: string;
   role: "source" | "context" | "template" | "attachment";
-  reuse_mode: "read" | "transform" | "append" | "reference_only";
+  reuse_mode: "inline_text" | "file_backed" | "binary_payload" | "metadata_only";
   display_name?: string;
-  media_type?: string;
+  mime_type?: string;
 };
 ```
 
 Mapping to OpenClaw staged inputs:
 
-- `read` maps to `source_kind = "artifact"` and a read-only staged input.
-- `transform` maps to a staged input plus at least one required expected output.
-- `append` is not supported for OpenClaw Phase 1 unless the execution subsystem can create a safe copy and verify output separately.
-- `reference_only` should be included in prompt context but not staged unless needed.
+- `inline_text` resolves bounded text into prompt context.
+- `file_backed` stages a read-only copy under the execution run input root.
+- `binary_payload` stages verified bytes under the execution run input root.
+- `metadata_only` includes metadata without loading full content.
+
+Transformation and append intent are not reuse modes. They are represented by
+the user task plus provider-neutral `expected_outputs`; source artifacts are
+always immutable.
 
 The execution subsystem must not mutate the source artifact in place.
 
 ## Confirmation Contract
 
-Existing confirmation flow must be reused.
-
 The execution subsystem remains responsible for deciding whether an agent request requires confirmation.
+
+The public submission payload must not accept `require_confirmation = true` as
+proof of approval. If the policy requires confirmation, the execution subsystem
+returns `pending_confirmation` with a server-issued `confirmation_id`, records
+its app/session scope and expiry, and does not invoke the provider.
 
 The app remains responsible for:
 
 - displaying the pending confirmation state
-- calling `POST /v1/executions/:execution_id/confirm`
+- retaining the server-issued confirmation id in backend session state
+- calling `POST /v1/executions/:execution_id/confirm` with the execution scope,
+  `confirmation_id`, and `decision = "approve"`
 - updating session lane state after confirmation
 
 OpenClaw must not introduce a separate confirmation mechanism.
+
+The execution subsystem must atomically consume the confirmation and transition
+`pending_confirmation -> running`. Repeated confirm requests must not invoke the
+provider twice. Scope mismatch, expiry, or an invalid confirmation id must not
+reveal whether another tenant's execution exists.
 
 ## Status Contract
 
@@ -387,10 +429,12 @@ Existing status flow must be reused.
 The app calls:
 
 ```text
-GET /v1/executions/:execution_id
+GET /v1/executions/:execution_id?app_id=...&session_id=...
 ```
 
-The execution subsystem returns normalized status.
+The authenticated app client supplies the same `app_id` and `session_id`. The
+execution subsystem performs a scoped lookup and returns normalized status. Logs
+and confirmation use the same scope.
 
 The app must not poll OpenClaw directly.
 
@@ -401,9 +445,36 @@ Rules:
 - every request must carry `app_id`
 - every request must carry `session_id`
 - execution results must remain app/session scoped
+- the app must validate the authenticated user's ownership of the app/session
+- status, logs, confirmation, and result lookups must match app and session
 - no cross-app artifact leakage
 - app frontend must not expose raw WSL paths as editable user fields
 - execution subsystem must redact provider diagnostics before returning them
+- scope mismatch must be indistinguishable from an unknown execution id
+
+## Dry-Run Contract
+
+The app may submit `execution_options.dry_run = true` to preview validation,
+policy, backend selection, artifact resolution metadata, and expected outputs.
+The execution subsystem must not invoke OpenClaw/Codex, stage files, create
+outputs, persist artifacts, or consume confirmation state during a dry run.
+
+## Terminal Status Mapping
+
+The app renders the top-level execution status and must not infer success from a
+nested provider status.
+
+- `completed`: provider task succeeded and every required verification and
+  requested persistence obligation succeeded.
+- `partial`: the core task succeeded, but an optional expected output failed
+  verification or requested optional persistence failed.
+- `failed`: provider task failed, timed out, a required output failed
+  verification, or required persistence failed.
+- `blocked`: policy denied execution before provider invocation.
+
+The execution subsystem must propagate provider `failed` to top-level `failed`.
+It must preserve provider diagnostics inside the normalized result even when the
+HTTP request itself was handled successfully.
 
 ## Compatibility
 

@@ -111,4 +111,61 @@ describe("agent output artifact persister", () => {
     );
     assert.equal(resolved.payload.text_content, "# Agent answer");
   });
+
+  it("persists binary outputs without changing their bytes", async () => {
+    const root = createArtifactRoot();
+    const store = new ArtifactStore(root);
+    const expectedBytes = Buffer.from([0, 1, 2, 127, 128, 254, 255]);
+    const persister = new AgentOutputArtifactPersister(store, {
+      readOutputBytes: async () => expectedBytes
+    });
+
+    const artifact = await persister.persist({
+      request: {
+        request_type: "execute_agent",
+        app_id: "app_001",
+        session_id: "session_001",
+        agent_backend: "openclaw_cli",
+        agent_query: "Create a binary output."
+      },
+      executionId: "execution_002",
+      output: {
+        output_id: "binary_output",
+        purpose: "artifact",
+        display_name: "output.bin",
+        media_type: "application/octet-stream",
+        required: true,
+        persist_as_artifact: true,
+        artifact_type: "agent_output"
+      },
+      verification: {
+        output_id: "binary_output",
+        workspace_relative_path: "outputs/output.bin",
+        workspace_absolute_path:
+          "/home/openclaw/.openclaw/workspace/runs/execution_002/outputs/output.bin",
+        required: true,
+        exists: true,
+        verified: true,
+        size_bytes: expectedBytes.byteLength
+      }
+    });
+
+    const loaded = await store.load("app_001", artifact.artifact_id);
+    assert.ok(loaded.file_path);
+    assert.deepEqual(await fs.readFile(loaded.file_path), expectedBytes);
+    assert.equal(loaded.size_bytes, expectedBytes.byteLength);
+  });
+
+  it("generates collision-resistant ids for concurrent saves", async () => {
+    const store = new ArtifactStore(createArtifactRoot());
+    const saved = await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        store.save("app_001", "agent_output", `output-${index}.txt`, {
+          index
+        })
+      )
+    );
+
+    assert.equal(new Set(saved.map((item) => item.artifact_id)).size, 20);
+  });
 });

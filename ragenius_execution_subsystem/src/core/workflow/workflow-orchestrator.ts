@@ -251,7 +251,7 @@ export class WorkflowOrchestrator {
     } = {
       appId: context.request.app_id,
       sessionId: context.request.session_id,
-      confirmed: context.executionOptions.require_confirmation === true,
+      confirmed: context.confirmed,
       ...(context.executionId !== null ? { executionId: context.executionId } : {}),
       ...(typeof context.skill?.id === "string" ? { skillId: context.skill.id } : {})
     };

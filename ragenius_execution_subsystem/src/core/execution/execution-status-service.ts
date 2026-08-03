@@ -1,6 +1,7 @@
 import type {
   ExecutionLogEntry,
   ExecutionRecord,
+  ExecutionScope,
   ExecutionStore,
   ListRecentExecutionsInput
 } from "./execution-store.js";
@@ -9,16 +10,16 @@ import type { ExecutionRequest } from "../../api/schemas/execution-request.schem
 export class ExecutionStatusService {
   constructor(private readonly store: ExecutionStore) {}
 
-  async get(executionId: string): Promise<ExecutionRecord | null> {
-    return this.store.get(executionId);
+  async get(scope: ExecutionScope): Promise<ExecutionRecord | null> {
+    return this.store.get(scope);
   }
 
-  async getLogs(executionId: string): Promise<ExecutionLogEntry[]> {
-    return this.store.getLogs(executionId);
+  async getLogs(scope: ExecutionScope): Promise<ExecutionLogEntry[]> {
+    return this.store.getLogs(scope);
   }
 
-  async getRequest(executionId: string): Promise<ExecutionRequest | null> {
-    return this.store.getRequest(executionId);
+  async getRequest(scope: ExecutionScope): Promise<ExecutionRequest | null> {
+    return this.store.getRequest(scope);
   }
 
   async listRecent(input: ListRecentExecutionsInput): Promise<ExecutionRecord[]> {

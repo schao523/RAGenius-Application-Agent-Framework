@@ -79,6 +79,14 @@ def _configure_tls_trust() -> str | None:
 
 TLS_TRUST_MODE = _configure_tls_trust()
 
+SCRIPT_DIR = str(Path(__file__).resolve().parent)
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
+from notebooklm_compat import activate_renamed_host_compatibility
+
+NOTEBOOKLM_RENAMED_HOST_COMPAT_ACTIVE = activate_renamed_host_compatibility()
+
 try:
     from notebooklm import NotebookLMClient
 except Exception as exc:  # pragma: no cover - runtime-only dependency path

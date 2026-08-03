@@ -11,7 +11,10 @@
     "build": "tsc -p tsconfig.json",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "npm run build && node --experimental-test-isolation=none --test-concurrency=1 --test dist/tests/**/*.test.js"
+    "test": "npm run build && node --experimental-test-isolation=none --test-concurrency=1 --test dist/tests/**/*.test.js",
+    "smoke:agent-timeout-cleanup": "npm run build && node --experimental-test-isolation=none --test dist/tests/agents/agent-process-supervisor.test.js",
+    "smoke:codex-notebooklm": "tsx scripts/smoke-codex-notebooklm-agent.ts",
+    "smoke:openclaw": "tsx scripts/smoke-openclaw-agent.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.4.1",

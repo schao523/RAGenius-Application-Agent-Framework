@@ -37,7 +37,7 @@ export function normalizeOpenClawOptions(input: {
     plannedOutputs.length > 0
       ? validateExpectedOutputs(plannedOutputs.map(plannedOutputToOpenClawOutput))
       : validateExpectedOutputs(rawOptions.expected_outputs ?? []);
-  let executionMode = classifyOpenClawExecutionMode({
+  const executionMode = classifyOpenClawExecutionMode({
     request: input.request,
     options: rawOptions,
     stagedInputs,
@@ -182,20 +182,6 @@ function classifyOpenClawExecutionMode(input: {
   }
 
   return "read_only";
-}
-
-function defaultExpectedOutput(): OpenClawExpectedOutput {
-  return {
-    output_id: "openclaw_answer",
-    purpose: "answer",
-    display_name: "openclaw-result.md",
-    media_type: "text/markdown",
-    required: true,
-    workspace_relative_path: "outputs/openclaw_answer-openclaw-result.md",
-    persist_as_artifact: true,
-    artifact_role: "final",
-    min_size_bytes: 1
-  };
 }
 
 function defaultOutputPath(output: OpenClawExpectedOutput): string {

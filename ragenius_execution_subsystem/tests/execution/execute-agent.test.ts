@@ -5,8 +5,14 @@ import {
   executionRequestSchema
 } from "../../src/api/schemas/execution-request.schema.js";
 import type { AgentProvider } from "../../src/core/agents/agent-provider.js";
+import type { AgentProviderExecutionContext } from "../../src/core/agents/agent-provider-context.js";
+import {
+  createAgentOperationPlan
+} from "../../src/core/agents/agent-operation-planner.js";
+import { classifyAgentRequest } from "../../src/core/agents/agent-policy.js";
 import { ExecutionEngine } from "../../src/core/execution/execution-engine.js";
 import { persistedSkillIdForRequest } from "../../src/core/execution/execution-store.js";
+import { buildApp } from "../../src/app.js";
 
 describe("execute_agent requests", () => {
   it("accepts openclaw_cli as an execute_agent backend", () => {
@@ -160,6 +166,113 @@ describe("execute_agent requests", () => {
     assert.deepEqual(result.execution_metadata?.provider_ids, ["openclaw_cli"]);
   });
 
+  it("uses the provider terminal status as the top-level status", async () => {
+    const failedProvider: AgentProvider = {
+      backend: "openclaw_cli",
+      async execute() {
+        return {
+          status: "failed",
+          summary: "Required output was not created.",
+          diagnostics: { failure_code: "missing_output" }
+        };
+      }
+    };
+    const engine = new ExecutionEngine({
+      agentProviders: new Map([["openclaw_cli", failedProvider]])
+    });
+
+    const result = await engine.execute({
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "openclaw_cli",
+      agent_query: "Reply with OK."
+    });
+
+    assert.equal(result.status, "failed");
+    assert.equal(result.result.summary, "Required output was not created.");
+    assert.deepEqual(result.result.diagnostics, {
+      failure_code: "missing_output"
+    });
+  });
+
+  it("returns normalized provider failure diagnostics from the HTTP route", async () => {
+    const failedProvider: AgentProvider = {
+      backend: "openclaw_cli",
+      async execute() {
+        return {
+          status: "failed",
+          summary: "Required output was not created.",
+          diagnostics: {
+            failure_code: "missing_output",
+            failure_message: "The expected markdown file does not exist."
+          }
+        };
+      }
+    };
+    const app = buildApp({
+      executionEngine: new ExecutionEngine({
+        agentProviders: new Map([["openclaw_cli", failedProvider]])
+      })
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/executions",
+      payload: {
+        request_type: "execute_agent",
+        app_id: "app_001",
+        session_id: "sess_001",
+        agent_backend: "openclaw_cli",
+        agent_query: "Reply with OK."
+      }
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().status, "failed");
+    assert.equal(
+      response.json().result.diagnostics.failure_code,
+      "missing_output"
+    );
+    await app.close();
+  });
+
+  it("does not invoke the agent provider during dry run", async () => {
+    let providerCalls = 0;
+    const provider: AgentProvider = {
+      backend: "openclaw_cli",
+      async execute() {
+        providerCalls += 1;
+        return { status: "completed" };
+      }
+    };
+    const engine = new ExecutionEngine({
+      agentProviders: new Map([["openclaw_cli", provider]])
+    });
+
+    const result = await engine.execute({
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "openclaw_cli",
+      agent_query: "Create a markdown file.",
+      artifact_refs: [
+        {
+          artifact_id: "artifact_123",
+          role: "source",
+          reuse_mode: "file_backed"
+        }
+      ],
+      execution_options: { dry_run: true }
+    });
+
+    assert.equal(result.status, "completed");
+    assert.equal(result.result.dry_run, true);
+    assert.equal(result.result.confirmation_required, true);
+    assert.equal(result.result.side_effects_executed, false);
+    assert.equal(providerCalls, 0);
+  });
+
   it("persists backend-aware agent skill ids", () => {
     assert.equal(
       persistedSkillIdForRequest({
@@ -183,5 +296,143 @@ describe("execute_agent requests", () => {
       }),
       "codex_cli:notebooklm"
     );
+  });
+
+  it("passes confirmed authorization, immutable operations, and resolved artifacts to Codex", async () => {
+    const request = executionRequestSchema.parse({
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "codex_cli",
+      agent_skill_hint: "notebooklm",
+      agent_query:
+        "Add the selected artifact as a source to Testing, then create a study report.",
+      artifact_refs: [{
+        artifact_id: "artifact_123",
+        role: "source",
+        reuse_mode: "inline_text"
+      }],
+      expected_outputs: [{
+        output_id: "study_report",
+        required: true
+      }],
+      context: {
+        authorization: { state: "not_required" },
+        operation_plan: [],
+        resolved_artifacts: []
+      }
+    });
+    assert.equal(request.request_type, "execute_agent");
+    const policy = classifyAgentRequest(request);
+    const operationPlan = createAgentOperationPlan(request, policy);
+    const policySnapshot = {
+      backend: request.agent_backend,
+      matched_terms: policy.matchedTerms,
+      mode: policy.mode,
+      network_access: policy.networkAccess,
+      provider_state_access: policy.providerStateAccess,
+      provider_state_labels: policy.providerStateLabels,
+      operation_plan: operationPlan,
+      permission_scope: policy.permissionScope,
+      policy_reason: policy.reason,
+      request_type: request.request_type,
+      risk_class: policy.riskClass,
+      workspace_access: policy.workspaceAccess
+    };
+    let capturedContext: AgentProviderExecutionContext | undefined;
+    const provider: AgentProvider = {
+      backend: "codex_cli",
+      async execute(_request, _policy, context) {
+        capturedContext = context;
+        return { status: "completed", summary: "Started." };
+      }
+    };
+    const engine = new ExecutionEngine({
+      agentProviders: new Map([["codex_cli", provider]]),
+      resolveAgentArtifacts: async () => [{
+        artifact_id: "artifact_123",
+        artifact_type: "session_export",
+        display_name: "approved.md",
+        app_id: "app_001",
+        status: "ready",
+        role: "source",
+        requested_reuse_mode: "inline_text",
+        consumption: {
+          default_mode: "inline_text",
+          supported_modes: ["inline_text"],
+          resolved_mode: "inline_text"
+        },
+        payload: {
+          text_content: "Approved session content.",
+          metadata: {}
+        },
+        provenance: { provider_origin: "ragenius_app" }
+      }]
+    });
+
+    const result = await engine.execute(request, {
+      approvedConfirmation: {
+        confirmationId: "confirmation_123",
+        confirmedAt: "2026-08-03T01:02:03.000Z",
+        policySnapshot
+      },
+      executionId: "execution_123"
+    });
+
+    assert.equal(result.status, "completed");
+    assert.equal(capturedContext?.authorization.state, "confirmed");
+    assert.equal(
+      capturedContext?.authorization.confirmed_at,
+      "2026-08-03T01:02:03.000Z"
+    );
+    assert.deepEqual(
+      capturedContext?.operation_plan.map((item) => item.operation_id),
+      ["notebooklm_source_add", "notebooklm_report_generate"]
+    );
+    assert.equal(capturedContext?.resolved_artifacts[0]?.artifact_id, "artifact_123");
+    assert.equal(capturedContext?.expected_outputs[0]?.output_id, "study_report");
+    assert.equal(
+      capturedContext?.access_policy?.provider_state_access,
+      "scoped_write"
+    );
+    assert.deepEqual(
+      capturedContext?.access_policy?.provider_state_labels,
+      ["notebooklm_profile:default"]
+    );
+    assert.notEqual(capturedContext?.authorization.policy_fingerprint, "");
+  });
+
+  it("does not invoke Codex when selected artifact resolution fails", async () => {
+    let providerCalls = 0;
+    const provider: AgentProvider = {
+      backend: "codex_cli",
+      async execute() {
+        providerCalls += 1;
+        return { status: "completed" };
+      }
+    };
+    const engine = new ExecutionEngine({
+      agentProviders: new Map([["codex_cli", provider]]),
+      resolveAgentArtifacts: async () => {
+        throw new Error("artifact bytes are unavailable");
+      }
+    });
+
+    const result = await engine.execute({
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "codex_cli",
+      agent_query: "Explain the selected artifact.",
+      artifact_refs: [{
+        artifact_id: "artifact_123",
+        role: "source",
+        reuse_mode: "inline_text"
+      }]
+    });
+
+    assert.equal(result.status, "failed");
+    assert.equal(result.errors[0]?.code, "CODEX_ARTIFACT_RESOLUTION_FAILED");
+    assert.equal(providerCalls, 0);
   });
 });

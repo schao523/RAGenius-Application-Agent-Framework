@@ -1,5 +1,11 @@
 # Agent Mode Artifact Creation And Reuse Contract
 
+## Shared Lifecycle Reference
+
+`docs/agent-execution-lifecycle-evidence-contract.md` extends this contract with
+the trust distinction between provider-reported outputs and persisted RAGenius
+artifacts, plus scoped artifact byte-serving requirements.
+
 ## Purpose
 
 Agent-mode execution turns must support artifacts as first-class reusable inputs and outputs.
@@ -200,10 +206,14 @@ type ExecuteAgentRequest = {
   };
   execution_options?: {
     dry_run?: boolean;
-    require_confirmation?: boolean;
   };
 };
 ```
+
+`execution_options` must not contain a client-controlled approval flag. A caller
+cannot approve its own request by setting `require_confirmation = true` or an
+equivalent value. Approval is represented by the server-issued confirmation
+resource defined below.
 
 Artifact ref:
 
@@ -461,11 +471,26 @@ Required output handling:
 
 Optional output handling:
 
-- If an optional output fails verification, execution may still be `completed`.
-- If optional output persistence fails, execution may still be `completed`.
+- If an optional output fails verification, execution status is `partial`.
+- If requested persistence of an optional output fails, execution status is
+  `partial`.
 - Optional failures must be reported in `diagnostics` and inspector details.
 
-If the normalized execution model later supports `completed_with_warnings`, optional output failures should use that status. Until then, use `completed` with diagnostics for optional failures and `failed` for required failures.
+Verification and persistence are separate outcomes. A file that passed content
+verification remains verified even if artifact-store persistence later fails.
+Each output result must include both:
+
+```ts
+type AgentOutputDisposition = {
+  verification_status: "verified" | "failed" | "not_run";
+  persistence_status:
+    | "not_requested"
+    | "persisted"
+    | "failed"
+    | "not_run";
+  persisted_artifact_id?: string;
+};
+```
 
 ## Result Shape
 
@@ -473,7 +498,7 @@ Agent provider result should include:
 
 ```ts
 type AgentProviderResult = {
-  status: "completed" | "failed";
+  status: "completed" | "partial" | "failed";
   summary: string;
   output_text?: string;
   artifacts?: AgentOutputArtifactView[];
@@ -481,6 +506,8 @@ type AgentProviderResult = {
   verification_results?: Array<{
     output_id: string;
     verified: boolean;
+    verification_status: "verified" | "failed" | "not_run";
+    persistence_status: "not_requested" | "persisted" | "failed" | "not_run";
     persisted_artifact_id?: string;
     failure_code?: string;
     failure_message?: string;
@@ -507,10 +534,32 @@ Rules:
 - Source artifacts must not be mutated in place.
 - Output artifact persistence must copy data out of provider workspace into the RAGenius artifact store.
 - Inspector may show provider-local paths for debugging, but main UI should not depend on them.
+- Execution status, logs, confirmation, and result retrieval must use the same
+  `{app_id, session_id}` scope as submission.
+- Possession of an `execution_id` is not authorization.
+- `ragenius_app_skeleton` must authenticate the user and verify that the session
+  record belongs to that user before calling the execution subsystem.
+- The execution subsystem is an internal service and must authenticate the app
+  backend. It does not persist user identity in the MVP execution record.
+- Scope mismatch must return the same `404` response as a missing execution to
+  avoid cross-tenant existence disclosure.
+
+## Dry-Run Contract
+
+For `execution_options.dry_run = true`, the execution subsystem may validate,
+classify policy, resolve metadata, and return a provider plan. It must not:
+
+- invoke Codex, OpenClaw, a tool, or a skill workflow
+- stage artifact bytes or create provider workspace files
+- create or modify expected output files
+- persist output artifacts
+- consume a confirmation resource
+
+Dry-run results use top-level `status = "completed"` with `result.dry_run = true`
+and must identify the selected backend, policy decision, artifact plan, expected
+output plan, and whether a real run would require confirmation.
 
 ## Confirmation Contract
-
-Existing confirmation flow applies.
 
 Agent execution requires confirmation when policy class is:
 
@@ -518,13 +567,39 @@ Agent execution requires confirmation when policy class is:
 - workspace write
 - output-producing action with side effects
 
-The app must show confirmation actions on pending agent turns.
+The initial execution request never carries approval. When confirmation is
+required, the execution subsystem persists the execution as
+`pending_confirmation` and returns:
+
+```ts
+type PendingExecutionConfirmation = {
+  confirmation_id: string;
+  execution_id: string;
+  app_id: string;
+  session_id: string;
+  policy_class: string;
+  reason: string;
+  expires_at: string;
+};
+```
+
+The app must show confirmation actions on pending agent turns and submit the
+server-issued `confirmation_id` through the confirmation endpoint. The app must
+validate session ownership first; subsystem confirmation is scoped to app/session
+and must use an atomic state change
+from `pending_confirmation` to `running`.
+
+A confirmation resource is single-use. Repeated confirmation of a running or
+terminal execution returns the existing state and must not execute side effects
+again. Expired, consumed, mismatched, or unknown confirmation ids do not run the
+provider.
 
 The execution subsystem remains responsible for:
 
 - classifying agent request risk
 - returning `pending_confirmation`
-- running only after confirmation
+- issuing and storing confirmation resources
+- running only after a valid scoped confirmation transition
 
 ## Acceptance Criteria
 
@@ -540,6 +615,10 @@ The execution subsystem remains responsible for:
 - Verified OpenClaw outputs marked for persistence are persisted as RAGenius artifacts.
 - Required output persistence failure makes execution fail.
 - Optional output persistence failure is visible in diagnostics.
+- Optional output verification or requested persistence failure returns `partial`.
+- Client-provided approval flags cannot bypass confirmation.
+- Status, logs, results, and confirmation reject cross-scope access.
+- Dry-run never invokes a provider or writes provider/artifact files.
 - Execution cards show persisted artifact actions.
 - Artifact Library shows generated agent artifacts with friendly names.
 - Inspector shows provider diagnostics and raw paths only as debug information.
@@ -555,4 +634,3 @@ Target end state:
 - Agent-mode reuse uses artifacts by default.
 - Approved content remains only as compatibility plumbing where necessary.
 - New UX documentation should describe artifacts as the single visible reuse concept.
-

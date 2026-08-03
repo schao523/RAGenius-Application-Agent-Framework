@@ -111,12 +111,12 @@ export class ToolEngine {
     const timeoutMs = tool.timeoutMs ?? 30_000;
 
     let output: Record<string, unknown>;
-    let provenance: ToolExecutionProvenance | undefined;
+    let timeoutHandle: NodeJS.Timeout | undefined;
     try {
       output = await Promise.race([
         provider.execute(tool, parsedInput.data, options),
         new Promise<Record<string, unknown>>((_, reject) => {
-          setTimeout(() => {
+          timeoutHandle = setTimeout(() => {
             reject(
               new AppError({
                 code: "TOOL_TIMEOUT",
@@ -145,9 +145,14 @@ export class ToolEngine {
         recoverable: true,
         suggestedAction: "Retry later or inspect the provider."
       });
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
     }
 
-    provenance = this.extractExecutionProvenance(tool, output);
+    const provenance: ToolExecutionProvenance | undefined =
+      this.extractExecutionProvenance(tool, output);
 
     const parsedOutput = tool.outputSchema.safeParse(output);
     if (!parsedOutput.success) {

@@ -59,6 +59,8 @@ export function buildOpenClawPrompt(input: {
   lines.push(
     "",
     "Final response rules:",
+    "- Start with `Task outcome: succeeded` only if the user task was actually completed.",
+    "- Start with `Task outcome: failed` if the requested action was blocked, forbidden, denied, impossible, or only a diagnostic output file was created.",
     "- Report whether each staged input was read.",
     "- Report the exact staged input path(s) used.",
     "- If you created an output file, report the exact output path.",

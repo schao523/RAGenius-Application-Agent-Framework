@@ -18,6 +18,38 @@ def _load_bridge_module():
     return module
 
 
+def test_bridge_activates_renamed_notebook_host_compatibility(monkeypatch):
+    import notebooklm._env as notebooklm_env
+    import notebooklm.auth as public_auth
+    import playwright.sync_api as playwright_sync
+    from notebooklm._auth import cookie_policy
+    from notebooklm.cli.services.login import cookie_domains
+
+    original_hosts = notebooklm_env._ALLOWED_BASE_HOSTS
+    original_required = cookie_policy.REQUIRED_COOKIE_DOMAINS
+    original_allowed = cookie_policy.ALLOWED_COOKIE_DOMAINS
+    original_public_required = public_auth.REQUIRED_COOKIE_DOMAINS
+    original_public_allowed = public_auth.ALLOWED_COOKIE_DOMAINS
+    original_login_required = cookie_domains.REQUIRED_COOKIE_DOMAINS
+    original_wait_for_url = playwright_sync.Page.wait_for_url
+    monkeypatch.setenv("NOTEBOOKLM_BASE_URL", "https://notebook.google.com")
+
+    try:
+        _load_bridge_module()
+
+        assert notebooklm_env.get_base_url() == "https://notebook.google.com"
+        assert "notebook.google.com" in cookie_policy.REQUIRED_COOKIE_DOMAINS
+        assert ".notebook.google.com" in cookie_policy.ALLOWED_COOKIE_DOMAINS
+    finally:
+        notebooklm_env._ALLOWED_BASE_HOSTS = original_hosts
+        cookie_policy.REQUIRED_COOKIE_DOMAINS = original_required
+        cookie_policy.ALLOWED_COOKIE_DOMAINS = original_allowed
+        public_auth.REQUIRED_COOKIE_DOMAINS = original_public_required
+        public_auth.ALLOWED_COOKIE_DOMAINS = original_public_allowed
+        cookie_domains.REQUIRED_COOKIE_DOMAINS = original_login_required
+        playwright_sync.Page.wait_for_url = original_wait_for_url
+
+
 def test_sanitize_proxy_environment_removes_dead_local_proxy(monkeypatch):
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")

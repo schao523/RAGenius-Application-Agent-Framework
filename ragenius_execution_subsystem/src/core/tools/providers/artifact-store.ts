@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -29,6 +30,14 @@ export interface StoredArtifactRecord {
   status: "ready";
   content: unknown;
 }
+
+export type ScopedArtifactFile = {
+  artifact_id: string;
+  display_name: string;
+  mime_type?: string;
+  size_bytes: number;
+  absolute_path: string;
+};
 
 function inferMimeType(name: string, artifactType: string, content: unknown): string | undefined {
   const lowerName = String(name || "").toLowerCase();
@@ -69,6 +78,20 @@ export class ArtifactStore {
 
   private resolveStoragePath(value: string): string {
     return path.isAbsolute(value) ? value : path.resolve(value);
+  }
+
+  private async canonicalRoot(): Promise<string> {
+    const root = this.resolveStoragePath(this.rootDir);
+    await fs.mkdir(root, { recursive: true });
+    return fs.realpath(root);
+  }
+
+  private assertContained(root: string, candidate: string): string {
+    const relative = path.relative(root, candidate);
+    if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+      return candidate;
+    }
+    throw new Error("Artifact path escapes the configured storage root.");
   }
 
   private normalizeStoredPath(value: string | null | undefined): string | undefined {
@@ -145,6 +168,7 @@ export class ArtifactStore {
       mimeType?: string;
       fileSourcePath?: string;
       fileTextContent?: string;
+      fileBytes?: Buffer;
       reviewed?: boolean;
       reviewedAt?: string;
       reviewedBy?: string;
@@ -153,7 +177,7 @@ export class ArtifactStore {
       contentHash?: string;
     }
   ): Promise<Omit<StoredArtifactRecord, "content">> {
-    const artifactId = `artifact_${Date.now()}`;
+    const artifactId = `artifact_${randomUUID().replace(/-/g, "")}`;
     const dir = this.resolveStoragePath(path.join(this.rootDir, appId, artifactType));
     await fs.mkdir(dir, { recursive: true });
     const metadataPath = path.join(dir, `${artifactId}.json`);
@@ -175,12 +199,19 @@ export class ArtifactStore {
       typeof options?.fileTextContent === "string"
         ? options.fileTextContent
         : undefined;
+    const fileBytes = Buffer.isBuffer(options?.fileBytes)
+      ? options.fileBytes
+      : undefined;
 
     if (fileSourcePath) {
       exportFilePath = path.join(dir, `${artifactId}-${storageFileName}`);
       await fs.copyFile(fileSourcePath, exportFilePath);
       const stat = await fs.stat(exportFilePath);
       sizeBytes = stat.size;
+    } else if (fileBytes) {
+      exportFilePath = path.join(dir, `${artifactId}-${storageFileName}`);
+      await fs.writeFile(exportFilePath, fileBytes);
+      sizeBytes = fileBytes.byteLength;
     } else if (fileTextContent !== undefined) {
       exportFilePath = path.join(dir, `${artifactId}-${storageFileName}`);
       await fs.writeFile(exportFilePath, fileTextContent, "utf-8");
@@ -421,6 +452,65 @@ export class ArtifactStore {
     await fs.writeFile(record.path, JSON.stringify(updated, null, 2), "utf-8");
     const { content: _content, ...result } = updated;
     return result;
+  }
+
+  async resolveScopedFile(input: {
+    appId: string;
+    sessionId: string;
+    artifactId: string;
+  }): Promise<ScopedArtifactFile> {
+    const record = await this.load(input.appId, input.artifactId);
+    if (record.app_id !== input.appId || record.session_id !== input.sessionId) {
+      throw new Error(`Artifact not found: ${input.artifactId}`);
+    }
+    const candidate = record.file_path ?? record.path;
+    const root = await this.canonicalRoot();
+    const canonical = this.assertContained(root, await fs.realpath(candidate));
+    const stat = await fs.stat(canonical);
+    if (!stat.isFile()) {
+      throw new Error(`Artifact file not found: ${input.artifactId}`);
+    }
+    return {
+      artifact_id: record.artifact_id,
+      display_name: record.display_name,
+      ...(record.mime_type ? { mime_type: record.mime_type } : {}),
+      size_bytes: stat.size,
+      absolute_path: canonical
+    };
+  }
+
+  async deleteScoped(input: {
+    appId: string;
+    sessionId: string;
+    artifactId: string;
+  }): Promise<boolean> {
+    const record = await this.load(input.appId, input.artifactId);
+    if (record.app_id !== input.appId || record.session_id !== input.sessionId) {
+      throw new Error(`Artifact not found: ${input.artifactId}`);
+    }
+    const root = await this.canonicalRoot();
+    const candidates = [record.file_path, record.path].filter(
+      (value): value is string => typeof value === "string" && value.length > 0
+    );
+    const canonicalPaths: string[] = [];
+    for (const candidate of candidates) {
+      try {
+        canonicalPaths.push(this.assertContained(root, await fs.realpath(candidate)));
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+          continue;
+        }
+        throw error;
+      }
+    }
+    for (const candidate of [...new Set(canonicalPaths)]) {
+      await fs.unlink(candidate).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") {
+          throw error;
+        }
+      });
+    }
+    return true;
   }
 
   async list(

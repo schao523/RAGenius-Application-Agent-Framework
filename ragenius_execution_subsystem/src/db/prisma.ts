@@ -27,6 +27,21 @@ export interface ExecutionLogRow {
   createdAt: Date;
 }
 
+export interface ExecutionConfirmationRow {
+  id: string;
+  executionId: string;
+  appId: string;
+  sessionId: string;
+  status: string;
+  decision: string;
+  policySnapshot: unknown;
+  expiresAt: Date;
+  decidedAt: Date | null;
+  consumedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface PrismaClientLike {
   $connect(): Promise<void>;
   $disconnect(): Promise<void>;
@@ -34,11 +49,18 @@ export interface PrismaClientLike {
 
 export interface ExecutionStorePrismaClient extends PrismaClientLike {
   execution: {
-    findUnique(args: { where: { id: string } }): Promise<ExecutionRow | null>;
+    findFirst(args: {
+      where: { appId: string; id: string; sessionId: string };
+    }): Promise<ExecutionRow | null>;
     findMany(args: {
       orderBy: { updatedAt: "asc" | "desc" };
-      take: number;
+      take?: number;
+      where: Record<string, unknown>;
     }): Promise<ExecutionRow[]>;
+    updateMany?(args: {
+      data: Record<string, unknown>;
+      where: Record<string, unknown>;
+    }): Promise<{ count: number }>;
     upsert(args: {
       where: { id: string };
       create: Record<string, unknown>;
@@ -56,12 +78,34 @@ export interface ExecutionStorePrismaClient extends PrismaClientLike {
   };
 }
 
+export interface ConfirmationStorePrismaClient extends PrismaClientLike {
+  executionConfirmation: {
+    create(args: {
+      data: Record<string, unknown>;
+    }): Promise<ExecutionConfirmationRow>;
+    findFirst(args: {
+      where: {
+        appId: string;
+        executionId: string;
+        id: string;
+        sessionId: string;
+      };
+    }): Promise<ExecutionConfirmationRow | null>;
+    updateMany(args: {
+      data: Record<string, unknown>;
+      where: Record<string, unknown>;
+    }): Promise<{ count: number }>;
+  };
+}
+
 let prismaClient: PrismaClient | undefined;
 
-export function createPrismaClient(): ExecutionStorePrismaClient {
+export function createPrismaClient(): ExecutionStorePrismaClient &
+  ConfirmationStorePrismaClient {
   if (!prismaClient) {
     prismaClient = new PrismaClient();
   }
 
-  return prismaClient as unknown as ExecutionStorePrismaClient;
+  return prismaClient as unknown as ExecutionStorePrismaClient &
+    ConfirmationStorePrismaClient;
 }

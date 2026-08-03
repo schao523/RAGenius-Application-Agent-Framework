@@ -21,6 +21,34 @@ import { NotebookLmAdapter } from "../../src/core/tools/providers/notebooklm-ada
 const originalFetch = globalThis.fetch;
 const mutationRoots = new Set<string>();
 
+async function claimPendingConfirmation(
+  engine: ExecutionEngine,
+  pending: {
+    execution_id?: string | null | undefined;
+    result: Record<string, unknown>;
+  },
+  scope: { appId: string; sessionId: string }
+) {
+  const executionId = String(pending.execution_id ?? "");
+  const confirmationId = String(pending.result.confirmation_id ?? "");
+  const claim = await engine.getConfirmationService().claim({
+    ...scope,
+    confirmationId,
+    executionId
+  });
+  assert.equal(claim.outcome, "claimed");
+  if (claim.outcome !== "claimed") {
+    throw new Error("Expected confirmation claim.");
+  }
+  return {
+    approvedConfirmation: {
+      confirmationId,
+      policySnapshot: claim.record.policySnapshot
+    },
+    executionId
+  };
+}
+
 async function cleanupMutationRoot(root: string): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
@@ -829,9 +857,9 @@ describe("agent execution routes", () => {
 
     const confirmResponse = await app.inject({
       method: "POST",
-      url: `/v1/executions/${createResponse.json().execution_id}/confirm`,
+      url: `/v1/executions/${createResponse.json().execution_id}/confirm?app_id=app_001&session_id=sess_001`,
       payload: {
-        approved: true
+        confirmation_id: createResponse.json().result.confirmation_id
       }
     });
 
@@ -1042,7 +1070,12 @@ describe("execution engine", () => {
 
   it("requires confirmation before adding a NotebookLM source file", async () => {
     const adapterCalls: Array<Record<string, unknown>> = [];
+    const resolutionCalls: Array<Record<string, unknown>> = [];
     const engine = new ExecutionEngine({
+      async resolveScopedSkillArtifactFile(input) {
+        resolutionCalls.push(input);
+        return "D:\\scoped-artifacts\\reviewed-chat.md";
+      },
       toolEngine: new ToolEngine({
         adapter: {
           async execute(tool, input, options) {
@@ -1068,7 +1101,12 @@ describe("execution engine", () => {
       skill_id: "notebooklm_add_source_file",
       input: {
         notebookTitle: "GPT Application Designer",
-        filePath: "storage/artifacts/app_001/chat_export/reviewed-chat.md"
+        filePath: "artifact_export",
+        artifactRefs: [{
+          artifact_id: "artifact_export",
+          field_name: "filePath",
+          consumption: { resolved_mode: "file_backed" }
+        }]
       }
     } as const;
 
@@ -1078,18 +1116,29 @@ describe("execution engine", () => {
     assert.equal(pending.result.tool_id, "adapter.notebooklm.add_source_file");
     assert.equal(pending.result.permission_scope, "external_api.write");
     assert.equal(adapterCalls.length, 0);
+    assert.equal(resolutionCalls.length, 0);
 
-    const completed = await engine.execute({
-      ...request,
-      execution_options: {
-        require_confirmation: true
-      }
-    });
+    const completed = await engine.execute(
+      request,
+      await claimPendingConfirmation(engine, pending, {
+        appId: "app_001",
+        sessionId: "session-1779614072248"
+      })
+    );
 
     assert.equal(completed.status, "completed");
     assert.equal(completed.result.notebook_id, "notebook_1");
     assert.equal(adapterCalls.length, 1);
     assert.equal(adapterCalls[0]?.tool_id, "adapter.notebooklm.add_source_file");
+    assert.equal(
+      (adapterCalls[0]?.input as Record<string, unknown>).filePath,
+      "D:\\scoped-artifacts\\reviewed-chat.md"
+    );
+    assert.deepEqual(resolutionCalls, [{
+      appId: "app_001",
+      artifactId: "artifact_export",
+      sessionId: "session-1779614072248"
+    }]);
   });
 
   it("falls back to a builder-provided published skill and returns raw json output", async () => {
@@ -1441,10 +1490,7 @@ describe("execution engine", () => {
       input: {
         path: "D:/GitHub/Codex-RAGenius-System/docs"
       },
-      execution_options: {
-        dry_run: false,
-        require_confirmation: false
-      }
+      execution_options: { dry_run: false }
     });
 
     assert.equal(result.status, "completed");
@@ -1508,13 +1554,12 @@ describe("execution engine", () => {
         input: {
           path: targetPath,
           content: "after"
-        },
-        execution_options: {
-          dry_run: false,
-          require_confirmation: true
         }
       },
-      { executionId: pending.execution_id }
+      await claimPendingConfirmation(engine, pending, {
+        appId: "app_writer",
+        sessionId: "sess_writer"
+      })
     );
 
     assert.equal(confirmed.status, "completed");
@@ -1719,7 +1764,7 @@ describe("execution engine", () => {
       )
     });
 
-    const result = await engine.execute({
+    const request = {
       request_type: "execute_skill",
       app_id: "app_notebooklm_write",
       session_id: "sess_notebooklm_write",
@@ -1727,11 +1772,16 @@ describe("execution engine", () => {
       input: {
         notebookId: "nb_1",
         customPrompt: "Summarize the notebook"
-      },
-      execution_options: {
-        require_confirmation: true
       }
-    });
+    } as const;
+    const pending = await engine.execute(request);
+    const result = await engine.execute(
+      request,
+      await claimPendingConfirmation(engine, pending, {
+        appId: "app_notebooklm_write",
+        sessionId: "sess_notebooklm_write"
+      })
+    );
 
     assert.equal(result.status, "completed");
     assert.equal(result.result_type, "json");
@@ -1891,7 +1941,7 @@ describe("execution routes", () => {
     const executionId = createResponse.json().execution_id;
     const response = await app.inject({
       method: "GET",
-      url: `/v1/executions/${executionId}`
+      url: `/v1/executions/${executionId}?app_id=app_001&session_id=sess_001`
     });
 
     assert.equal(response.statusCode, 200);
@@ -1929,7 +1979,7 @@ describe("execution routes", () => {
     const executionId = createResponse.json().execution_id;
     const response = await app.inject({
       method: "GET",
-      url: `/v1/executions/${executionId}/logs`
+      url: `/v1/executions/${executionId}/logs?app_id=app_001&session_id=sess_001`
     });
 
     assert.equal(response.statusCode, 200);
@@ -2754,7 +2804,7 @@ describe("execution routes", () => {
 
     const persistedResponse = await app.inject({
       method: "GET",
-      url: `/v1/executions/${response.json().execution_id}`
+      url: `/v1/executions/${response.json().execution_id}?app_id=app_gdrive_exporter&session_id=sess_gdrive_exporter`
     });
 
     assert.equal(persistedResponse.statusCode, 200);
@@ -2773,7 +2823,7 @@ describe("execution routes", () => {
 
     const diagnosticsResponse = await app.inject({
       method: "GET",
-      url: "/v1/executions/diagnostics/recent?used_fallback=true&execution_path=rest_fallback&limit=10"
+      url: "/v1/executions/diagnostics/recent?app_id=app_gdrive_exporter&session_id=sess_gdrive_exporter&used_fallback=true&execution_path=rest_fallback&limit=10"
     });
 
     assert.equal(diagnosticsResponse.statusCode, 200);
@@ -3027,9 +3077,9 @@ describe("execution routes", () => {
 
     const confirmResponse = await app.inject({
       method: "POST",
-      url: `/v1/executions/${executionId}/confirm`,
+      url: `/v1/executions/${executionId}/confirm?app_id=app_gmail_attachment_writer&session_id=sess_gmail_attachment_writer`,
       payload: {
-        approved: true
+        confirmation_id: draftResponse.json().result.confirmation_id
       }
     });
 
@@ -3309,9 +3359,9 @@ describe("execution routes", () => {
     const createDraftExecutionId = createDraftResponse.json().execution_id;
     const confirmDraftResponse = await app.inject({
       method: "POST",
-      url: `/v1/executions/${createDraftExecutionId}/confirm`,
+      url: `/v1/executions/${createDraftExecutionId}/confirm?app_id=app_gmail_attachment_sender&session_id=sess_gmail_attachment_sender`,
       payload: {
-        approved: true
+        confirmation_id: createDraftResponse.json().result.confirmation_id
       }
     });
 
@@ -3350,9 +3400,9 @@ describe("execution routes", () => {
     const sendDraftExecutionId = sendDraftResponse.json().execution_id;
     const confirmSendDraftResponse = await app.inject({
       method: "POST",
-      url: `/v1/executions/${sendDraftExecutionId}/confirm`,
+      url: `/v1/executions/${sendDraftExecutionId}/confirm?app_id=app_gmail_attachment_sender&session_id=sess_gmail_attachment_sender`,
       payload: {
-        approved: true
+        confirmation_id: sendDraftResponse.json().result.confirmation_id
       }
     });
 
@@ -3497,9 +3547,9 @@ describe("execution routes", () => {
 
     const confirmResponse = await app.inject({
       method: "POST",
-      url: `/v1/executions/${executionId}/confirm`,
+      url: `/v1/executions/${executionId}/confirm?app_id=app_gmail_writer&session_id=sess_gmail_writer`,
       payload: {
-        approved: true
+        confirmation_id: createResponse.json().result.confirmation_id
       }
     });
 
@@ -3639,9 +3689,9 @@ describe("execution routes", () => {
 
     const confirmResponse = await app.inject({
       method: "POST",
-      url: `/v1/executions/${executionId}/confirm`,
+      url: `/v1/executions/${executionId}/confirm?app_id=app_gmail_sender&session_id=sess_gmail_sender`,
       payload: {
-        approved: true
+        confirmation_id: createResponse.json().result.confirmation_id
       }
     });
 
@@ -3788,9 +3838,9 @@ describe("execution routes", () => {
 
     const confirmResponse = await app.inject({
       method: "POST",
-      url: `/v1/executions/${executionId}/confirm`,
+      url: `/v1/executions/${executionId}/confirm?app_id=app_gmail_direct_sender&session_id=sess_gmail_direct_sender`,
       payload: {
-        approved: true
+        confirmation_id: createResponse.json().result.confirmation_id
       }
     });
 

@@ -183,7 +183,7 @@ export class McpHttpClient {
         headers,
         method: "POST"
       });
-    } catch (error) {
+    } catch {
       throw new AppError({
         code: "MCP_TRANSPORT_FAILED",
         message: "The remote MCP provider could not be reached.",

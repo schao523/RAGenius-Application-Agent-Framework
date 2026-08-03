@@ -79,6 +79,10 @@ export interface CodexCliProviderConfig {
   command: string;
   args: string[];
   timeoutMs: number;
+  runRoot?: string;
+  runRetentionHours?: number;
+  maxOutputBytes?: number;
+  sandboxMode?: "read-only" | "workspace-write";
 }
 
 export interface OpenClawCliRuntimeConfig {
@@ -90,6 +94,7 @@ export interface OpenClawCliRuntimeConfig {
   timeoutMs: number;
   maxStdoutBytes: number;
   maxStderrBytes: number;
+  runRetentionHours: number;
 }
 
 export interface ResearchPaperProviderConfig {
@@ -202,7 +207,11 @@ export function buildProviderRuntimeConfig(env: AppEnv): ProviderRuntimeConfig {
       bridgeScript: env.CODEX_CLI_BRIDGE_SCRIPT,
       command: env.CODEX_CLI_COMMAND,
       args: z.array(z.string()).parse(JSON.parse(env.CODEX_CLI_ARGS_JSON)),
-      timeoutMs: env.CODEX_CLI_TIMEOUT_MS
+      timeoutMs: env.CODEX_CLI_TIMEOUT_MS,
+      runRoot: env.CODEX_RUN_ROOT,
+      runRetentionHours: env.CODEX_RUN_RETENTION_HOURS,
+      maxOutputBytes: env.CODEX_MAX_OUTPUT_BYTES,
+      sandboxMode: env.CODEX_CLI_SANDBOX_MODE
     },
     openClaw: {
       enabled: env.OPENCLAW_CLI_ENABLED,
@@ -212,7 +221,8 @@ export function buildProviderRuntimeConfig(env: AppEnv): ProviderRuntimeConfig {
       workspaceRoot: env.OPENCLAW_WORKSPACE_ROOT,
       timeoutMs: env.OPENCLAW_DEFAULT_TIMEOUT_MS,
       maxStdoutBytes: env.OPENCLAW_MAX_STDOUT_BYTES,
-      maxStderrBytes: env.OPENCLAW_MAX_STDERR_BYTES
+      maxStderrBytes: env.OPENCLAW_MAX_STDERR_BYTES,
+      runRetentionHours: env.OPENCLAW_RUN_RETENTION_HOURS
     },
     notebooklm: {
       enabled: env.NOTEBOOKLM_ENABLED,

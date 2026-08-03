@@ -20,6 +20,8 @@ function fakeAgentPolicy(riskClass = "agent_read_only"): AgentPolicyDecision {
     mode: "auto_allow",
     permissionScope: "agent.read",
     workspaceAccess: "none",
+    providerStateAccess: "scoped_write",
+    providerStateLabels: ["openclaw_agent_state"],
     networkAccess: "allowlisted",
     reason: "test",
     matchedTerms: []
@@ -67,6 +69,7 @@ test("extracts assistant text from OpenClaw payload arrays", async () => {
       stdout: JSON.stringify({
         status: "ok",
         result: {
+          finalAssistantVisibleText: "",
           payloads: [{ text: "OK.\n\nStatus Summary: ready" }]
         }
       }),
@@ -77,6 +80,7 @@ test("extracts assistant text from OpenClaw payload arrays", async () => {
       json: {
         status: "ok",
         result: {
+          finalAssistantVisibleText: "",
           payloads: [{ text: "OK.\n\nStatus Summary: ready" }]
         }
       },
@@ -147,6 +151,7 @@ test("fails output-required run when required output is missing despite ok JSON"
 test("uses the same generated expected output path for prompt and verification", async () => {
   let capturedPrompt = "";
   let capturedVerificationPath = "";
+  let capturedWorkspaceRoot = "";
   const provider = new OpenClawCliProvider(baseConfig, {
     bridge: async ({ prompt }) => {
       capturedPrompt = prompt;
@@ -161,7 +166,8 @@ test("uses the same generated expected output path for prompt and verification",
         jsonParseStatus: "parsed"
       };
     },
-    verifyOutputs: async ({ expectedOutputs }) => {
+    verifyOutputs: async ({ expectedOutputs, workspaceRoot }) => {
+      capturedWorkspaceRoot = workspaceRoot;
       capturedVerificationPath =
         expectedOutputs[0]?.workspace_relative_path ?? "";
       return [
@@ -197,9 +203,13 @@ test("uses the same generated expected output path for prompt and verification",
     capturedVerificationPath,
     "outputs/openclaw_answer-openclaw-result.md"
   );
+  assert.equal(
+    capturedWorkspaceRoot,
+    "/home/openclaw/.openclaw/workspace/runs/execution_001"
+  );
   assert.match(
     capturedPrompt,
-    /\/home\/openclaw\/\.openclaw\/workspace\/outputs\/openclaw_answer-openclaw-result\.md/
+    /\/home\/openclaw\/\.openclaw\/workspace\/runs\/execution_001\/outputs\/openclaw_answer-openclaw-result\.md/
   );
 });
 
@@ -245,7 +255,76 @@ test("completes output-required run when required output verifies", async () => 
 
   assert.equal(result.status, "completed");
   assert.equal(result.provider_metadata.verified_output_count, 1);
-  assert.equal(result.artifacts[0]?.verified, true);
+  assert.deepEqual(result.artifacts, []);
+  assert.equal(result.reported_outputs[0]?.verified, true);
+});
+
+test("fails when OpenClaw reports requested task failure despite verified output", async () => {
+  const provider = new OpenClawCliProvider(baseConfig, {
+    bridge: async () => ({
+      exitCode: 0,
+      stdout: JSON.stringify({
+        status: "ok",
+        result: {
+          finalAssistantVisibleText:
+            "## Status Summary\n\n**Message sent to OpenClaw Bot:** ❌ **Failed** — request was forbidden due to `tools.sessions.visibility=tree` restrictions.\n\n**Required outputs:**\n- ✅ `/home/openclaw/.openclaw/workspace/outputs/agent_output-agent_output.md` — exists"
+        }
+      }),
+      stderr: "",
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      json: {
+        status: "ok",
+        result: {
+          finalAssistantVisibleText:
+            "## Status Summary\n\n**Message sent to OpenClaw Bot:** ❌ **Failed** — request was forbidden due to `tools.sessions.visibility=tree` restrictions.\n\n**Required outputs:**\n- ✅ `/home/openclaw/.openclaw/workspace/outputs/agent_output-agent_output.md` — exists"
+        }
+      },
+      jsonParseStatus: "parsed"
+    }),
+    verifyOutputs: async () => [
+      {
+        output_id: "agent_output",
+        workspace_relative_path: "outputs/agent_output-agent_output.md",
+        workspace_absolute_path:
+          "/home/openclaw/.openclaw/workspace/outputs/agent_output-agent_output.md",
+        required: true,
+        exists: true,
+        verified: true,
+        size_bytes: 128,
+        media_type: "text/markdown"
+      }
+    ]
+  });
+
+  const result = await provider.execute(
+    {
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "openclaw_cli",
+      agent_query: "Send this message to OpenClaw Bot.",
+      expected_outputs: [
+        {
+          output_id: "agent_output",
+          display_name: "agent-output.md",
+          required: true,
+          persist_as_artifact: false
+        }
+      ]
+    },
+    fakeAgentPolicy("agent_external_write"),
+    { executionId: "execution_001" }
+  );
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.summary, "OpenClaw reported that the requested task failed.");
+  assert.equal(result.diagnostics.failure_code, "agent_task_failed");
+  assert.match(
+    result.diagnostics.failure_message ?? "",
+    /request was forbidden/
+  );
 });
 
 test("persists verified required OpenClaw outputs as agent artifacts", async () => {
@@ -369,14 +448,15 @@ test("fails required output execution when artifact persistence fails", async ()
 
   assert.equal(result.status, "failed");
   assert.equal(result.diagnostics.failure_code, "persist_failed");
-  assert.equal(result.verification_results[0]?.failure_code, "persist_failed");
+  assert.equal(result.verification_results[0]?.verified, true);
+  assert.equal(result.verification_results[0]?.persistence_status, "failed");
   assert.match(
-    result.verification_results[0]?.failure_message ?? "",
+    result.verification_results[0]?.persistence_failure_message ?? "",
     /artifact store unavailable/
   );
 });
 
-test("keeps execution completed when optional output persistence fails", async () => {
+test("returns partial when optional output persistence fails", async () => {
   const provider = new OpenClawCliProvider(baseConfig, {
     bridge: async () => ({
       exitCode: 0,
@@ -426,9 +506,10 @@ test("keeps execution completed when optional output persistence fails", async (
     { executionId: "execution_001" }
   );
 
-  assert.equal(result.status, "completed");
+  assert.equal(result.status, "partial");
   assert.equal(result.diagnostics.failure_code, "persist_failed");
-  assert.equal(result.verification_results[0]?.failure_code, "persist_failed");
+  assert.equal(result.verification_results[0]?.verified, true);
+  assert.equal(result.verification_results[0]?.persistence_status, "failed");
   assert.equal(result.artifacts.length, 0);
 });
 
@@ -577,7 +658,7 @@ test("resolves selected artifacts, stages them, and includes staged paths in pro
   assert.equal(resolvedSessionId, "sess_001");
   assert.match(
     capturedPrompt,
-    /\/home\/openclaw\/\.openclaw\/workspace\/inputs\/artifact_1-Notes\.md/
+    /\/home\/openclaw\/\.openclaw\/workspace\/runs\/execution_001\/inputs\/artifact_1-Notes\.md/
   );
   assert.match(capturedPrompt, /Read every staged input file before answering\./);
   assert.match(
@@ -588,4 +669,72 @@ test("resolves selected artifacts, stages them, and includes staged paths in pro
   assert.match(capturedPrompt, /Report whether each staged input was read\./);
   assert.match(capturedPrompt, /Report the exact staged input path\(s\) used\./);
   assert.match(capturedPrompt, /If you created an output file, report the exact output path\./);
+});
+
+test("classifies OpenClaw artifact staging failures before bridge invocation", async () => {
+  let bridgeCalled = false;
+  const provider = new OpenClawCliProvider(baseConfig, {
+    resolveArtifacts: async (input) => [
+      {
+        artifact_id: "artifact_1",
+        artifact_type: "chat_export",
+        display_name: "Notes.md",
+        app_id: input.appId,
+        status: "ready",
+        role: "source",
+        requested_reuse_mode: "file_backed",
+        consumption: {
+          default_mode: "file_backed",
+          supported_modes: ["file_backed"],
+          resolved_mode: "file_backed"
+        },
+        payload: {
+          text_content: "# Notes",
+          metadata: {},
+          mime_type: "text/markdown"
+        },
+        provenance: { provider_origin: "local" }
+      } satisfies ResolvedAgentArtifact
+    ],
+    stageArtifacts: async () => {
+      throw new Error("canonical staging parent is unavailable");
+    },
+    bridge: async () => {
+      bridgeCalled = true;
+      throw new Error("bridge must not run");
+    }
+  });
+
+  await assert.rejects(
+    provider.execute(
+      {
+        request_type: "execute_agent",
+        app_id: "app_001",
+        session_id: "sess_001",
+        agent_backend: "openclaw_cli",
+        agent_query: "Use the selected artifact.",
+        artifact_refs: [
+          {
+            artifact_id: "artifact_1",
+            role: "source",
+            reuse_mode: "file_backed"
+          }
+        ]
+      },
+      fakeAgentPolicy(),
+      { executionId: "execution_001" }
+    ),
+    (error: unknown) => {
+      const candidate = error as {
+        code?: string;
+        message?: string;
+        recoverable?: boolean;
+      };
+      assert.equal(candidate.code, "OPENCLAW_ARTIFACT_STAGING_FAILED");
+      assert.equal(candidate.message, "OpenClaw artifact staging failed.");
+      assert.equal(candidate.recoverable, true);
+      return true;
+    }
+  );
+  assert.equal(bridgeCalled, false);
 });

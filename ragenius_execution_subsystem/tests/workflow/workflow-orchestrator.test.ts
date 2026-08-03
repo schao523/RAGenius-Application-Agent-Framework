@@ -41,10 +41,8 @@ describe("workflow placeholder", () => {
 
     const baseContext: Omit<ExecutionContext, "request" | "skill"> = {
       executionId: "execution_001",
-      executionOptions: {
-        dry_run: false,
-        require_confirmation: false
-      },
+      confirmed: false,
+      executionOptions: { dry_run: false },
       toolDefinitions: [],
       stepOutputs: {},
       toolResults: {},
@@ -204,10 +202,8 @@ describe("workflow placeholder", () => {
 
     const result = await orchestrator.execute({
       executionId: "execution_002",
-      executionOptions: {
-        dry_run: false,
-        require_confirmation: false
-      },
+      confirmed: false,
+      executionOptions: { dry_run: false },
       toolDefinitions: [],
       stepOutputs: {},
       toolResults: {},
@@ -383,10 +379,8 @@ describe("workflow placeholder", () => {
 
     const result = await orchestrator.execute({
       executionId: "execution_003",
-      executionOptions: {
-        dry_run: false,
-        require_confirmation: false
-      },
+      confirmed: false,
+      executionOptions: { dry_run: false },
       toolDefinitions: [],
       stepOutputs: {},
       toolResults: {},

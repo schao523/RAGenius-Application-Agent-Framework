@@ -25,6 +25,16 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(["debug", "info", "warn", "error"])
     .default("info"),
+  EXECUTION_CONFIRMATION_TTL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(900000),
+  AGENT_ASYNC_EXECUTION_ENABLED: booleanEnv(false),
+  AGENT_ASYNC_CONCURRENCY: z.coerce.number().int().positive().default(1),
+  RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED: booleanEnv(false),
+  RAGENIUS_EXECUTION_SERVICE_ID: z.string().trim().min(1).default("ragenius_app"),
+  RAGENIUS_EXECUTION_SERVICE_TOKEN: z.string().trim().min(1).optional(),
   BUILDER_BASE_URL: z.string().trim().url().optional(),
   HTTP_PROXY: z.string().trim().optional(),
   HTTPS_PROXY: z.string().trim().optional(),
@@ -70,6 +80,12 @@ const envSchema = z.object({
   CODEX_CLI_COMMAND: z.string().trim().default("codex"),
   CODEX_CLI_ARGS_JSON: z.string().default("[]"),
   CODEX_CLI_TIMEOUT_MS: z.coerce.number().int().positive().default(300000),
+  CODEX_RUN_ROOT: z.string().trim().min(1).default("storage/codex-runs"),
+  CODEX_RUN_RETENTION_HOURS: z.coerce.number().int().positive().default(24),
+  CODEX_MAX_OUTPUT_BYTES: z.coerce.number().int().positive().default(16384),
+  CODEX_CLI_SANDBOX_MODE: z
+    .enum(["read-only", "workspace-write"])
+    .default("workspace-write"),
   OPENCLAW_CLI_ENABLED: booleanEnv(false),
   OPENCLAW_WSL_DISTRO: z.string().trim().default("OpenClawGateway"),
   OPENCLAW_CLI_COMMAND: z.string().trim().default("openclaw"),
@@ -81,6 +97,7 @@ const envSchema = z.object({
   OPENCLAW_DEFAULT_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
   OPENCLAW_MAX_STDOUT_BYTES: z.coerce.number().int().positive().default(262144),
   OPENCLAW_MAX_STDERR_BYTES: z.coerce.number().int().positive().default(65536),
+  OPENCLAW_RUN_RETENTION_HOURS: z.coerce.number().int().positive().default(24),
   OPENAI_ENABLED: booleanEnv(false),
   OPENAI_API_KEY: z.string().trim().optional(),
   OPENAI_BASE_URL: z.string().trim().url().optional(),

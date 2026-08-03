@@ -41,7 +41,8 @@ export class MockApiToolProvider implements ApiToolProvider {
         workspaceRoot: "/home/openclaw/.openclaw/workspace",
         timeoutMs: 120000,
         maxStdoutBytes: 262144,
-        maxStderrBytes: 65536
+        maxStderrBytes: 65536,
+        runRetentionHours: 24
       },
       notebooklm: {
         enabled: false,

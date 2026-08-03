@@ -42,8 +42,10 @@ if ($resolvedCertPath -and (Test-Path -LiteralPath $resolvedCertPath)) {
 }
 
 $env:PYTHONHTTPSVERIFY = "1"
+$env:RAGENIUS_NOTEBOOKLM_COMPAT_SCRIPT = Join-Path $PSScriptRoot "notebooklm_compat.py"
 
 $pythonBootstrap = @"
+import os
 import runpy
 import sys
 
@@ -53,8 +55,9 @@ try:
 except Exception:
     pass
 
-sys.argv = ['notebooklm', *sys.argv[1:]]
-runpy.run_module('notebooklm', run_name='__main__')
+compat_script = os.environ['RAGENIUS_NOTEBOOKLM_COMPAT_SCRIPT']
+sys.argv = [compat_script, *sys.argv[1:]]
+runpy.run_path(compat_script, run_name='__main__')
 "@
 
 & $pythonCommand -c $pythonBootstrap @NotebookLmArgs

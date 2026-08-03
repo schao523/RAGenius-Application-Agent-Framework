@@ -1,36 +1,33 @@
+---
+name: ragenius-execution
+description: Execute RAGenius Agent tasks using scoped inputs and declared outputs.
+---
 
+# RAGenius Execution Skill Guidance
 
-## `SKILL.md`
+Use this skill when working on `ragenius_execution_subsystem`.
 
-    ---
-    name: ragenius-execution
-    description: Use when modifying the RAGenius Execution Subsystem, especially execution lifecycle, skills, workflow orchestration, tools, MCP adapters, RAG adapter, permissions, result normalization, or audit logging.
-    ---
-    
-    # RAGenius Execution Skill Guidance
-    
-    Use this skill when working on `ragenius_execution_subsystem`.
-    
-    ## Purpose
-    
-    This subsystem is a controlled execution backend. It receives structured execution requests, validates them, executes registered skills, orchestrates approved tools, enforces permissions, records trace logs, and returns normalized results.
-    
-    ## Boundaries
-    
-    Do not add responsibilities that belong to other RAGenius subsystems.
-    
-    ```text
-    ragenius_app
-      = reasoning, planning, user-facing answers
-    
-    ragenius_execution_subsystem
-      = controlled execution of skills through tools
-    
-    rag_subsystem
-      = ingestion and retrieval only
-    
-    ragenius_builder
-      = app configuration
+## Purpose
+
+This subsystem is a controlled execution backend. It receives structured execution requests, validates them, executes registered skills, orchestrates approved tools, enforces permissions, records trace logs, and returns normalized results.
+
+## Boundaries
+
+Do not add responsibilities that belong to other RAGenius subsystems.
+
+```text
+ragenius_app
+  = reasoning, planning, user-facing answers
+
+ragenius_execution_subsystem
+  = controlled execution of skills through tools
+
+rag_subsystem
+  = ingestion and retrieval only
+
+ragenius_builder
+  = app configuration
+```
 
 This subsystem must not:
 

@@ -2,6 +2,14 @@
 
 Date: 2026-06-14
 
+## Shared Agent Design Reference
+
+Provider-neutral lifecycle, evidence authority, diagnostics, process supervision,
+and artifact serving are defined by
+`docs/superpowers/specs/2026-08-03-agent-execution-lifecycle-evidence-design.md`.
+This document remains authoritative for OpenClaw WSL invocation, workspace,
+session-key, and protocol details.
+
 ## Goal
 
 Add OpenClaw as a second `execute_agent` backend in `ragenius_execution_subsystem`, while preserving the existing Codex CLI agent path.
@@ -18,6 +26,95 @@ OpenClaw-specific behavior lives below the execution engine boundary:
 - prompt construction
 - output verification
 - provider diagnostics
+
+## Security And Lifecycle Hardening Design
+
+This section is normative for the hardening implementation and supersedes older
+examples where they conflict.
+
+### Scoped Persistence
+
+Replace execution-id-only store reads with scoped methods accepting
+`{ executionId, appId, sessionId }`. Prisma queries should include the complete
+scope in `where`; in-memory storage must enforce the same behavior.
+The diagnostics endpoint must also be app/session scoped or restricted to an
+authenticated administrative service role.
+
+Add Fastify authentication middleware that validates the configured app-service
+bearer credential and constructs a trusted service principal. Route handlers
+pass that principal into the engine/status/confirmation services. The app backend
+validates user ownership before sending app/session scope. Production
+configuration fails closed if service authentication is required but its
+credential is absent.
+
+### Confirmation Resource
+
+Add a persisted confirmation record with:
+
+- random `confirmation_id`
+- `execution_id`
+- immutable app/session scope
+- policy class and policy snapshot hash
+- `expires_at`
+- `consumed_at`
+- decision
+
+Initial submission never accepts approval. The confirmation service atomically
+claims an unconsumed, unexpired confirmation and transitions the execution from
+`pending_confirmation` to `running`. It then invokes the engine through an
+internal trusted execution context, not by mutating and replaying public request
+fields. A uniqueness constraint permits only one active confirmation per
+execution.
+
+### Lifecycle Mapping
+
+Extend normalized status with `running` if it is not already present. Provider
+results map as follows:
+
+- provider `completed` -> execution `completed`
+- provider `partial` -> execution `partial`
+- provider `failed` -> execution `failed`
+
+Required output or required persistence failures are `failed`. Optional output
+verification or requested optional persistence failures are `partial`.
+Transport success does not imply execution success; the API may return a
+normalized terminal result while preserving its top-level execution status.
+
+### Dry Run Placement
+
+Move dry-run handling before both skill and agent provider invocation. Agent dry
+run performs schema validation, policy classification, backend selection, and a
+metadata-only artifact/output plan. It does not stage bytes, invoke a bridge,
+write files, persist artifacts, or consume confirmation.
+
+### Per-Execution Workspace
+
+Derive a safe run root from the execution id:
+
+```text
+<workspace>/runs/<execution_id>/inputs
+<workspace>/runs/<execution_id>/outputs
+```
+
+Input and output descriptors are rebased beneath this root before prompt
+construction. Verification receives the run root and rejects paths outside it.
+This removes stale-output acceptance and makes concurrent executions independent.
+
+### Artifact Identity And Binary Persistence
+
+Use `randomUUID()` or a sortable UUID/ULID for artifact ids; timestamps are not
+unique identifiers. Extend `ArtifactStore.save` with a byte-preserving input such
+as `fileBytes` or a safe source-file copy. Binary agent outputs must create a
+normal file-backed stored artifact rather than storing only base64 metadata.
+
+Verification and persistence remain separate fields. Persistence failure records
+`persistence_status = "failed"` without changing a successful verification to
+false.
+
+Run-directory retention is controlled by
+`OPENCLAW_RUN_RETENTION_HOURS` (default `24`). Cleanup is restricted to
+first-level directories beneath `<workspace>/runs`, excludes the current
+execution id, and does not touch persisted artifact storage.
 
 ## Files to Modify
 
@@ -70,12 +167,17 @@ For Phase 1, OpenClaw provider options can be carried under:
 context: {
   openclaw?: {
     session_key?: string;
-    staged_inputs?: Array<...>;
-    expected_outputs?: Array<...>;
+    execution_mode?: "read_only" | "output_required";
     timeout_ms?: number;
   }
 }
 ```
+
+Provider-neutral `artifact_refs` and `expected_outputs` remain top-level request
+fields. `staged_inputs` and provider workspace paths are internal resolved values,
+not app-supplied provider options. Legacy context fields may be parsed during a
+bounded migration but must be normalized into the provider-neutral model and not
+emitted by new clients.
 
 If provider options become heavily used, promote them later to a typed top-level `provider_options`.
 
@@ -124,8 +226,6 @@ export type OpenClawProviderOptions = {
   timeout_ms?: number;
   max_stdout_bytes?: number;
   max_stderr_bytes?: number;
-  staged_inputs?: OpenClawStagedInput[];
-  expected_outputs?: OpenClawExpectedOutput[];
 };
 
 export type OpenClawVerificationResult = {
@@ -135,6 +235,8 @@ export type OpenClawVerificationResult = {
   required: boolean;
   exists: boolean;
   verified: boolean;
+  verification_status: "verified" | "failed" | "not_run";
+  persistence_status: "not_requested" | "persisted" | "failed" | "not_run";
   size_bytes?: number;
   sha256?: string;
   media_type?: string;
@@ -144,8 +246,8 @@ export type OpenClawVerificationResult = {
     | "empty_output"
     | "size_below_minimum"
     | "hash_mismatch"
-    | "read_failed"
-    | "persist_failed";
+    | "read_failed";
+  persistence_failure_code?: "persist_failed";
   failure_message?: string;
 };
 
@@ -168,6 +270,9 @@ export type OpenClawProviderMetadata = {
   stderr_truncated: boolean;
 };
 ```
+
+`OpenClawStagedInput[]` and `OpenClawExpectedOutput[]` are internal provider-plan
+types produced after resolving top-level artifact refs and expected outputs.
 
 Validation rules:
 
@@ -363,6 +468,10 @@ Missing required output maps to a provider failure even when OpenClaw returns ex
 
 Persist verified outputs with `persist_as_artifact = true` through the existing artifact persistence mechanism. If persistence is not available in the execution subsystem runtime, return the verified workspace output metadata and mark `persisted_artifact_id` absent; do not claim artifact persistence succeeded.
 
+For required persistence, an unavailable or failed artifact store makes the
+execution `failed`. For optional persistence, it makes the execution `partial`.
+The verification result itself remains verified.
+
 ## Config
 
 Add environment/config fields:
@@ -525,6 +634,16 @@ Required tests:
 - OpenClaw bridge truncates stdout/stderr and records truncation flags
 - OpenClaw bridge times out and reports `timed_out = true`
 - binary staging rejects hash mismatch
+- initial request cannot bypass confirmation with a public boolean
+- confirmation is scoped, expires, and is consumed exactly once
+- status and logs reject app, session, or owner mismatch
+- repeated confirmation does not repeat provider side effects
+- agent dry run never invokes the provider or workspace bridge
+- provider failure maps to top-level execution failure
+- optional persistence failure maps to `partial` while verification stays true
+- run-specific output verification rejects a stale output from another execution
+- concurrent output persistence generates unique artifact ids
+- binary output persistence creates a file-backed artifact
 
 Integration tests that invoke real WSL/OpenClaw should be opt-in, not part of normal unit test runs.
 
@@ -538,11 +657,13 @@ Integration tests that invoke real WSL/OpenClaw should be opt-in, not part of no
 
 ## Implementation Order
 
-1. Add backend enum and tests.
-2. Add provider interface and adapt Codex provider.
-3. Add execution engine provider dispatch.
-4. Add backend-aware execution store id handling.
-5. Add OpenClaw config.
-6. Add OpenClaw provider with mocked bridge tests.
-7. Add staging and verification helpers.
-8. Add opt-in real OpenClaw smoke test script.
+The original provider implementation order is complete. Apply hardening in this
+order:
+
+1. Add scoped execution persistence and scoped store/query tests.
+2. Replace public confirmation bypass with persisted single-use confirmation.
+3. Correct dry-run placement and top-level lifecycle mapping.
+4. Introduce per-execution OpenClaw run roots and stale-output tests.
+5. Separate verification and persistence outcomes.
+6. Replace timestamp artifact ids and add byte-preserving binary persistence.
+7. Run subsystem, app integration, and opt-in real OpenClaw regression tests.

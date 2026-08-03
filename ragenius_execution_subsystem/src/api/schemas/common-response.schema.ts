@@ -10,6 +10,8 @@ export const errorClassSchema = z.enum([
 ]);
 
 export const executionStatusSchema = z.enum([
+  "queued",
+  "running",
   "completed",
   "failed",
   "partial",

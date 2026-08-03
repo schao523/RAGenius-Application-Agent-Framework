@@ -3,8 +3,9 @@ import { z } from "zod";
 export const executionOptionsSchema = z
   .object({
     dry_run: z.boolean().optional().default(false),
-    require_confirmation: z.boolean().optional().default(false)
+    mode: z.enum(["sync", "async"]).optional()
   })
+  .strict()
   .default({});
 
 const executionRequestBaseSchema = z.object({

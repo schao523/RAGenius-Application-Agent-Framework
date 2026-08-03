@@ -33,10 +33,31 @@ model Execution {
 
   @@index([appId], map: "idx_executions_app_id")
   @@index([sessionId], map: "idx_executions_session_id")
+  @@index([appId, sessionId], map: "idx_executions_app_session")
   @@index([skillId], map: "idx_executions_skill_id")
   @@index([status], map: "idx_executions_status")
   @@index([createdAt], map: "idx_executions_created_at")
   @@map("executions")
+}
+
+model ExecutionConfirmation {
+  id             String   @id
+  executionId    String   @unique @map("execution_id")
+  appId          String   @map("app_id")
+  sessionId      String   @map("session_id")
+  status         String   @default("pending")
+  decision       String   @default("pending")
+  policySnapshot Json     @map("policy_snapshot")
+  expiresAt      DateTime @map("expires_at")
+  decidedAt      DateTime? @map("decided_at")
+  consumedAt     DateTime? @map("consumed_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([appId, sessionId], map: "idx_execution_confirmations_app_session")
+  @@index([status], map: "idx_execution_confirmations_status")
+  @@index([expiresAt], map: "idx_execution_confirmations_expires_at")
+  @@map("execution_confirmations")
 }
 
 model WorkflowStep {

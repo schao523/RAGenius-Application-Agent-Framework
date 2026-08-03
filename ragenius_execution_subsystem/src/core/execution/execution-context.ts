@@ -8,6 +8,7 @@ import type { SkillDefinition } from "../skills/skill.types.js";
 import type { ToolDefinition } from "../tools/tool.types.js";
 
 export interface ExecutionContext {
+  confirmed: boolean;
   executionId: string | null;
   request: ExecuteSkillRequest;
   skill?: SkillDefinition;

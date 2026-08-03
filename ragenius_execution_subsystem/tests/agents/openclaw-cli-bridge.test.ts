@@ -1,7 +1,47 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { executeOpenClawCliBridge } from "../../src/core/agents/openclaw-cli-bridge.js";
+import {
+  buildOpenClawSupervisedWslArgs,
+  executeOpenClawCliBridge,
+  extractOpenClawExecArgs
+} from "../../src/core/agents/openclaw-cli-bridge.js";
+
+test("builds a static WSL process-group wrapper with separate agent arguments", () => {
+  const prompt = "do not run $(whoami)";
+  const args = buildOpenClawSupervisedWslArgs({
+    wslDistro: "OpenClawGateway",
+    processGroupFile: "/tmp/ragenius-openclaw-test.pgid",
+    agentArgs: ["openclaw", "agent", "--message", prompt]
+  });
+
+  assert.deepEqual(args.slice(0, 7), [
+    "-d",
+    "OpenClawGateway",
+    "--exec",
+    "setsid",
+    "--wait",
+    "sh",
+    "-c"
+  ]);
+  assert.equal(args[7]?.includes(prompt), false);
+  assert.equal(args.at(-1), prompt);
+  assert.match(args[7] ?? "", /exec "\$@"/);
+});
+
+test("retains the OpenClaw executable when wrapping direct WSL arguments", () => {
+  assert.deepEqual(
+    extractOpenClawExecArgs([
+      "-d",
+      "OpenClawGateway",
+      "--exec",
+      "openclaw",
+      "agent",
+      "--json"
+    ]),
+    ["openclaw", "agent", "--json"]
+  );
+});
 
 test("builds OpenClaw argv without shell interpolation", async () => {
   const calls: unknown[] = [];
@@ -15,7 +55,7 @@ test("builds OpenClaw argv without shell interpolation", async () => {
       maxStderrBytes: 65536
     },
     sessionKey: "ragenius:app:sess:exec",
-    prompt: "Reply OK",
+    prompt: "Reply with `Task outcome: succeeded`; do not run $(whoami).",
     spawnProcess: async (command, args) => {
       calls.push({ command, args });
       return {
@@ -35,6 +75,7 @@ test("builds OpenClaw argv without shell interpolation", async () => {
     args: [
       "-d",
       "OpenClawGateway",
+      "--exec",
       "openclaw",
       "agent",
       "--agent",
@@ -42,7 +83,7 @@ test("builds OpenClaw argv without shell interpolation", async () => {
       "--session-key",
       "ragenius:app:sess:exec",
       "--message",
-      "Reply OK",
+      "Reply with `Task outcome: succeeded`; do not run $(whoami).",
       "--json"
     ]
   });

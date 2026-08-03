@@ -3,10 +3,14 @@ import test from "node:test";
 
 import {
   assertSafeWorkspaceRelativePath,
+  assertResolvedPathContained,
+  buildOpenClawRunWorkspaceRoot,
+  buildOpenClawRunCleanupScript,
   buildOpenClawReadFileScript,
-  buildOpenClawStageInputScript,
+  buildOpenClawWslExecArgs,
   stageResolvedAgentArtifactsForOpenClaw,
   stageBinaryInputWithVerifiedBase64,
+  transferOpenClawInputViaWsl,
   verifyOpenClawOutputs
 } from "../../src/core/agents/openclaw-workspace.js";
 import type { ResolvedAgentArtifact } from "../../src/core/agents/agent-artifact-resolver.js";
@@ -19,6 +23,45 @@ test("rejects unsafe workspace paths", () => {
     assertSafeWorkspaceRelativePath("outputs/result.md"),
     "outputs/result.md"
   );
+});
+
+test("derives and contains per-execution run workspaces", () => {
+  const runRoot = buildOpenClawRunWorkspaceRoot(
+    "/home/openclaw/.openclaw/workspace",
+    "execution_001"
+  );
+  assert.equal(
+    runRoot,
+    "/home/openclaw/.openclaw/workspace/runs/execution_001"
+  );
+  assert.equal(
+    assertResolvedPathContained(runRoot, `${runRoot}/outputs/result.md`),
+    `${runRoot}/outputs/result.md`
+  );
+  assert.throws(() =>
+    assertResolvedPathContained(
+      runRoot,
+      "/home/openclaw/.openclaw/workspace/runs/execution_000/outputs/result.md"
+    )
+  );
+  assert.throws(() =>
+    buildOpenClawRunWorkspaceRoot(
+      "/home/openclaw/.openclaw/workspace",
+      "../execution_001"
+    )
+  );
+});
+
+test("builds bounded cleanup for old run directories only", () => {
+  const script = buildOpenClawRunCleanupScript({
+    workspaceRoot: "/home/openclaw/.openclaw/workspace",
+    currentExecutionId: "execution_001",
+    retentionHours: 24
+  });
+  assert.match(script, /workspace\/runs/);
+  assert.match(script, /-mmin \+1440/);
+  assert.match(script, /! -name 'execution_001'/);
+  assert.match(script, /-mindepth 1 -maxdepth 1 -type d/);
 });
 
 test("marks required missing output as failed", async () => {
@@ -81,30 +124,126 @@ test("binary staging rejects hash mismatch", async () => {
   );
 });
 
-test("builds OpenClaw WSL scripts without positional path arguments", () => {
-  const stageScript = buildOpenClawStageInputScript(
-    "/home/openclaw/.openclaw/workspace/inputs/artifact_1-Notes.md"
-  );
+test("builds OpenClaw read scripts without positional path arguments", () => {
   const readScript = buildOpenClawReadFileScript(
     "/home/openclaw/.openclaw/workspace/outputs/result's.md"
   );
 
-  assert.doesNotMatch(stageScript, /\$1/);
-  assert.match(
-    stageScript,
-    /dirname '\/home\/openclaw\/\.openclaw\/workspace\/inputs\/artifact_1-Notes\.md'/
-  );
-  assert.match(
-    stageScript,
-    /base64 -d > '\/home\/openclaw\/\.openclaw\/workspace\/inputs\/artifact_1-Notes\.md'/
-  );
   assert.doesNotMatch(readScript, /\$1/);
   assert.match(readScript, /base64 -w 0 '\/home\/openclaw\/\.openclaw\/workspace\/outputs\/result'\\''s\.md'/);
 });
 
-test("rejects unsafe OpenClaw workspace absolute paths in WSL scripts", () => {
-  assert.throws(() => buildOpenClawStageInputScript(""));
-  assert.throws(() => buildOpenClawStageInputScript("relative/path.md"));
+test("uses WSL exec mode so command arguments are not pre-expanded", () => {
+  assert.deepEqual(
+    buildOpenClawWslExecArgs("OpenClawGateway", [
+      "readlink",
+      "-f",
+      "--",
+      "/home/openclaw/.openclaw/workspace/runs/execution_001/inputs"
+    ]),
+    [
+      "-d",
+      "OpenClawGateway",
+      "--exec",
+      "readlink",
+      "-f",
+      "--",
+      "/home/openclaw/.openclaw/workspace/runs/execution_001/inputs"
+    ]
+  );
+});
+
+test("stages inputs with direct WSL commands and TypeScript containment", async () => {
+  const runRoot = "/home/openclaw/.openclaw/workspace/runs/execution_001";
+  const target = `${runRoot}/inputs/file.bin`;
+  const calls: Array<{ args: string[]; stdin?: string }> = [];
+  const payload = Buffer.from("OpenClaw staging probe", "utf8");
+  const expectedSha256 = "7402a30cd5428b51111e419de3863d5ee73a41ea1b747a0e97a70f614c23266f";
+
+  const result = await transferOpenClawInputViaWsl({
+    wslDistro: "OpenClawGateway",
+    base64Chunks: [payload.toString("base64")],
+    workspaceAbsolutePath: target,
+    allowedWorkspaceRoot: runRoot,
+    expectedSizeBytes: payload.byteLength,
+    expectedSha256,
+    runWsl: async (input) => {
+      calls.push({
+        args: input.args,
+        ...(typeof input.stdin === "string" ? { stdin: input.stdin } : {})
+      });
+      if (input.args[0] === "readlink") {
+        return {
+          exitCode: 0,
+          stdout: `${input.args.at(-1)}\n`,
+          stderr: ""
+        };
+      }
+      if (input.args[0] === "test") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (input.args[0] === "wc") {
+        return { exitCode: 0, stdout: `${payload.byteLength} ${target}\n`, stderr: "" };
+      }
+      if (input.args[0] === "sha256sum") {
+        return { exitCode: 0, stdout: `${expectedSha256} ${target}\n`, stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+  });
+
+  assert.deepEqual(calls[0]?.args, ["mkdir", "-p", "--", `${runRoot}/inputs`]);
+  assert.deepEqual(calls[1]?.args, ["readlink", "-f", "--", `${runRoot}/inputs`]);
+  assert.equal(calls[2]?.args[0], "python3");
+  assert.equal(calls[2]?.args.at(-1), target);
+  assert.equal(calls[2]?.stdin, payload.toString("base64"));
+  assert.equal(calls.some((call) => call.args.includes("bash")), false);
+  assert.equal(result.exists, true);
+  assert.equal(result.size_bytes, payload.byteLength);
+  assert.equal(result.sha256, expectedSha256);
+});
+
+test("rejects a canonical staged input parent outside the current run", async () => {
+  await assert.rejects(
+    transferOpenClawInputViaWsl({
+      wslDistro: "OpenClawGateway",
+      base64Chunks: [""],
+      workspaceAbsolutePath:
+        "/home/openclaw/.openclaw/workspace/runs/execution_001/inputs/file.bin",
+      allowedWorkspaceRoot:
+        "/home/openclaw/.openclaw/workspace/runs/execution_001",
+      expectedSizeBytes: 0,
+      expectedSha256: "empty",
+      runWsl: async (input) => ({
+        exitCode: 0,
+        stdout:
+          input.args[0] === "readlink"
+            ? "/home/openclaw/.openclaw/workspace/runs/execution_other/inputs\n"
+            : "",
+        stderr: ""
+      })
+    }),
+    /outside the current run/
+  );
+});
+
+test("rejects unsafe OpenClaw workspace absolute paths before WSL invocation", async () => {
+  let invoked = false;
+  await assert.rejects(
+    transferOpenClawInputViaWsl({
+      wslDistro: "OpenClawGateway",
+      base64Chunks: [""],
+      workspaceAbsolutePath: "relative/path.md",
+      expectedSizeBytes: 0,
+      expectedSha256: "empty",
+      runWsl: async () => {
+        invoked = true;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+    }),
+    /Unsafe OpenClaw workspace-absolute path/
+  );
+  assert.equal(invoked, false);
   assert.throws(() => buildOpenClawReadFileScript(""));
 });
 

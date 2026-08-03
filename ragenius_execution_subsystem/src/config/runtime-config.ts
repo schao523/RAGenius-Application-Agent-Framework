@@ -25,16 +25,25 @@ import {
 } from "./policy-config.js";
 
 export interface RuntimeConfig {
+  agentAsync: { enabled: boolean; concurrency: number };
   adapters: AdapterRuntimeConfig;
   artifactStore: ArtifactStoreRuntimeConfig;
   builder: BuilderRuntimeConfig;
+  confirmationTtlMs: number;
   env: AppEnv;
   fileTools: FileToolRuntimeConfig;
   mcp: McpRuntimeConfig;
   network: NetworkRuntimeConfig;
   policy: RuntimePolicyConfig;
   providers: ProviderRuntimeConfig;
+  serviceAuth: ServiceAuthRuntimeConfig;
   tools: ToolToggleRuntimeConfig;
+}
+
+export interface ServiceAuthRuntimeConfig {
+  required: boolean;
+  serviceId: string;
+  token?: string;
 }
 
 export interface RuntimeConfigDiagnostics {
@@ -78,6 +87,10 @@ export interface RuntimeConfigDiagnostics {
     openAi: { enabled: boolean };
     semanticScholar: { enabled: boolean; hasApiKey: boolean };
   };
+  serviceAuth: {
+    configured: boolean;
+    required: boolean;
+  };
   tools: {
     openAiAnswer: boolean;
     ragRetrieval: boolean;
@@ -90,15 +103,27 @@ export function buildRuntimeConfig(
   source: NodeJS.ProcessEnv = process.env
 ): RuntimeConfig {
   return {
+    agentAsync: {
+      enabled: env.AGENT_ASYNC_EXECUTION_ENABLED,
+      concurrency: env.AGENT_ASYNC_CONCURRENCY
+    },
     adapters: buildAdapterRuntimeConfig(env),
     artifactStore: buildArtifactStoreRuntimeConfig(env),
     builder: buildBuilderRuntimeConfig(env),
+    confirmationTtlMs: env.EXECUTION_CONFIRMATION_TTL_MS,
     env,
     fileTools: buildFileToolRuntimeConfig(env),
     mcp: buildMcpRuntimeConfig(env, source),
     network: buildNetworkRuntimeConfig(env),
     policy: buildDefaultRuntimePolicyConfig(),
     providers: buildProviderRuntimeConfig(env),
+    serviceAuth: {
+      required: env.RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED,
+      serviceId: env.RAGENIUS_EXECUTION_SERVICE_ID,
+      ...(env.RAGENIUS_EXECUTION_SERVICE_TOKEN
+        ? { token: env.RAGENIUS_EXECUTION_SERVICE_TOKEN }
+        : {})
+    },
     tools: buildToolToggleRuntimeConfig(env)
   };
 }
@@ -169,6 +194,10 @@ export function inspectRuntimeConfig(
         enabled: runtimeConfig.providers.openAi.enabled
       }
     },
+    serviceAuth: {
+      configured: Boolean(runtimeConfig.serviceAuth.token),
+      required: runtimeConfig.serviceAuth.required
+    },
     tools: {
       researchPaperSearch: runtimeConfig.tools.researchPaperSearch.enabled,
       ragRetrieval: runtimeConfig.tools.ragRetrieval.enabled,
@@ -191,6 +220,12 @@ function isInvalidDiscardProxyTarget(value: string): boolean {
 }
 
 export function validateRuntimeConfig(runtimeConfig: RuntimeConfig): void {
+  if (runtimeConfig.serviceAuth.required && !runtimeConfig.serviceAuth.token) {
+    throw new Error(
+      "Execution service authentication is required but no service token is configured."
+    );
+  }
+
   const proxyTargets = [
     runtimeConfig.network.httpProxy,
     runtimeConfig.network.httpsProxy,

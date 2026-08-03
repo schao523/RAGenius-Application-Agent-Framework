@@ -2,7 +2,8 @@ import type {
   ExecutionMetadata,
   NormalizedError,
   NormalizedExecutionResult,
-  ResultType
+  ResultType,
+  ExecutionStatus
 } from "../../api/schemas/common-response.schema.js";
 import type { ToolExecutionProvenance } from "../tools/tool.types.js";
 
@@ -15,9 +16,26 @@ export function normalizeCompletedResult(options: {
   files?: Array<Record<string, unknown>>;
   logsSummary: string;
 }): NormalizedExecutionResult {
+  return normalizeTerminalResult({
+    ...options,
+    status: "completed"
+  });
+}
+
+export function normalizeTerminalResult(options: {
+  executionId: string | null;
+  status: Extract<ExecutionStatus, "completed" | "partial" | "failed">;
+  resultType: ResultType;
+  result: Record<string, unknown>;
+  executionProvenance?: ToolExecutionProvenance[];
+  executionMetadata?: ExecutionMetadata;
+  files?: Array<Record<string, unknown>>;
+  errors?: NormalizedError[];
+  logsSummary: string;
+}): NormalizedExecutionResult {
   return {
     execution_id: options.executionId,
-    status: "completed",
+    status: options.status,
     result_type: options.resultType,
     result: options.result,
     ...(options.executionProvenance && options.executionProvenance.length > 0
@@ -27,7 +45,7 @@ export function normalizeCompletedResult(options: {
       ? { execution_metadata: options.executionMetadata }
       : {}),
     files: options.files ?? [],
-    errors: [],
+    errors: options.errors ?? [],
     logs_summary: options.logsSummary
   };
 }

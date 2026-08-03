@@ -18,7 +18,16 @@ describe("prisma execution store", () => {
           upsertPayload = args;
           return args.create;
         },
-        async findUnique() {
+        async findFirst(args: {
+          where: { appId: string; id: string; sessionId: string };
+        }) {
+          if (
+            args.where.appId !== "app_001" ||
+            args.where.id !== "execution_001" ||
+            args.where.sessionId !== "sess_001"
+          ) {
+            return null;
+          }
           return {
             id: "execution_001",
             requestType: "execute_skill",
@@ -126,9 +135,22 @@ describe("prisma execution store", () => {
       }
     });
 
-    const record = await store.get("execution_001");
-    const storedRequest = await store.getRequest("execution_001");
-    const logs = await store.getLogs("execution_001");
+    const scope = {
+      appId: "app_001",
+      executionId: "execution_001",
+      sessionId: "sess_001"
+    };
+    const record = await store.get(scope);
+    const storedRequest = await store.getRequest(scope);
+    const logs = await store.getLogs(scope);
+    const wrongScopeRecord = await store.get({
+      ...scope,
+      sessionId: "sess_002"
+    });
+    const wrongScopeRequest = await store.getRequest({
+      ...scope,
+      appId: "app_002"
+    });
 
     assert.ok(upsertPayload);
     assert.equal(
@@ -166,6 +188,8 @@ describe("prisma execution store", () => {
     assert.equal(record?.execution_metadata?.used_fallback, true);
     assert.equal(storedRequest?.session_id, "sess_001");
     assert.equal(logs[0]?.message, "Skill completed.");
+    assert.equal(wrongScopeRecord, null);
+    assert.equal(wrongScopeRequest, null);
   });
 
   it("lists recent execution records with fallback filters", async () => {
@@ -174,7 +198,7 @@ describe("prisma execution store", () => {
         async upsert() {
           return undefined;
         },
-        async findUnique() {
+        async findFirst() {
           return null;
         },
         async findMany() {
@@ -259,11 +283,15 @@ describe("prisma execution store", () => {
 
     const store = new PrismaExecutionStore(prisma);
     const fallbackOnly = await store.listRecent({
+      appId: "app_001",
       limit: 10,
+      sessionId: "sess_002",
       usedFallback: true
     });
     const mcpOnly = await store.listRecent({
+      appId: "app_001",
       limit: 10,
+      sessionId: "sess_001",
       executionPath: "mcp"
     });
 

@@ -104,7 +104,6 @@ export class GoogleRestFallbackProvider {
 
     const to = this.formatRecipients(input.to);
     const subject = String(input.subject ?? "").trim();
-    const body = String(input.body ?? "");
     if (!to || !subject) {
       throw new AppError({
         code: "VALIDATION_ERROR",

@@ -165,6 +165,8 @@ Recommended runtime config:
 NOTEBOOKLM_ENABLED="true"
 NOTEBOOKLM_PYTHON_COMMAND="python"
 NOTEBOOKLM_BRIDGE_SCRIPT="scripts/notebooklm_bridge.py"
+# Set only when Google redirects this account to the renamed Gemini Notebook host.
+NOTEBOOKLM_BASE_URL="https://notebook.google.com"
 NOTEBOOKLM_AUTH_MODE="env_json"
 NOTEBOOKLM_ALLOWED_OPERATIONS="list_notebooks,list_sources,ask,add_source_text,add_source_url,add_source_file,generate_report,generate_slide_deck,generate_video"
 NOTEBOOKLM_GENERATION_WAIT_FOR_COMPLETION="true"
@@ -176,6 +178,7 @@ Auth expectations:
 - install `notebooklm-py` in the Python environment used by `NOTEBOOKLM_PYTHON_COMMAND`
 - provide NotebookLM auth through one of the `notebooklm-py` supported storage/env flows
 - the current bridge uses `NotebookLMClient.from_storage()`, so `NOTEBOOKLM_AUTH_JSON`, `NOTEBOOKLM_PROFILE`, or a configured storage path must resolve correctly in that Python environment
+- `scripts/notebooklm_with_env.ps1` applies a narrow compatibility shim for `NOTEBOOKLM_BASE_URL=https://notebook.google.com`; other hosts retain native `notebooklm-py` validation
 
 Phase 3.5 rules:
 
