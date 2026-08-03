@@ -352,12 +352,13 @@ class BuilderChatIntegrationTests(unittest.TestCase):
         db_path, _ = _create_builder_db(str(self.tmp_root))
 
         with mock.patch.dict(os.environ, {"RAGENIUS_BUILDER_DB": db_path}, clear=False):
-            seeded = self.client.post(
-                "/apps/app-1/instruction-understanding/recompile",
-                headers={"x-role": "admin"},
-            )
-            self.assertEqual(seeded.status_code, 200)
-            instructions = self.client.get("/apps/app-1/instructions", headers={"x-role": "admin"})
+            with mock.patch("backend.app.main.build_instruction_understanding_compiler", return_value=None):
+                seeded = self.client.post(
+                    "/apps/app-1/instruction-understanding/recompile",
+                    headers={"x-role": "admin"},
+                )
+                self.assertEqual(seeded.status_code, 200)
+                instructions = self.client.get("/apps/app-1/instructions", headers={"x-role": "admin"})
 
         self.assertEqual(instructions.status_code, 200)
         self.assertEqual(instructions.json()["runtime_source"], "builder")
@@ -376,12 +377,13 @@ class BuilderChatIntegrationTests(unittest.TestCase):
         db_path, _ = _create_builder_db(str(self.tmp_root))
 
         with mock.patch.dict(os.environ, {"RAGENIUS_BUILDER_DB": db_path}, clear=False):
-            seeded = self.client.post(
-                "/apps/app-1/instruction-understanding/recompile",
-                headers={"x-role": "admin"},
-            )
-            self.assertEqual(seeded.status_code, 200)
-            runtime = self.client.get("/apps/app-1/runtime", headers={"x-role": "admin"})
+            with mock.patch("backend.app.main.build_instruction_understanding_compiler", return_value=None):
+                seeded = self.client.post(
+                    "/apps/app-1/instruction-understanding/recompile",
+                    headers={"x-role": "admin"},
+                )
+                self.assertEqual(seeded.status_code, 200)
+                runtime = self.client.get("/apps/app-1/runtime", headers={"x-role": "admin"})
 
         self.assertEqual(runtime.status_code, 200)
         payload = runtime.json()
@@ -560,12 +562,16 @@ class BuilderChatIntegrationTests(unittest.TestCase):
         db_path, _ = _create_builder_db(str(self.tmp_root))
 
         with mock.patch.dict(os.environ, {"RAGENIUS_BUILDER_DB": db_path}, clear=False):
-            seeded = self.client.post(
-                "/apps/app-1/instruction-understanding/recompile",
-                headers={"x-role": "admin"},
-            )
-            self.assertEqual(seeded.status_code, 200)
-            detail = self.client.get("/apps/app-1/instruction-understanding", headers={"x-role": "admin"})
+            with mock.patch("backend.app.main.build_instruction_understanding_compiler", return_value=None):
+                seeded = self.client.post(
+                    "/apps/app-1/instruction-understanding/recompile",
+                    headers={"x-role": "admin"},
+                )
+                self.assertEqual(seeded.status_code, 200)
+                detail = self.client.get(
+                    "/apps/app-1/instruction-understanding",
+                    headers={"x-role": "admin"},
+                )
 
         self.assertEqual(detail.status_code, 200)
         payload = detail.json()
@@ -772,10 +778,11 @@ class BuilderChatIntegrationTests(unittest.TestCase):
         db_path, _ = _create_builder_db(str(self.tmp_root))
 
         with mock.patch.dict(os.environ, {"RAGENIUS_BUILDER_DB": db_path}, clear=False):
-            seeded = self.client.post(
-                "/apps/app-1/instruction-understanding/recompile",
-                headers={"x-role": "admin"},
-            )
+            with mock.patch("backend.app.main.build_instruction_understanding_compiler", return_value=None):
+                seeded = self.client.post(
+                    "/apps/app-1/instruction-understanding/recompile",
+                    headers={"x-role": "admin"},
+                )
             self.assertEqual(seeded.status_code, 200)
             compiled_id = seeded.json()["compiled"]["id"]
 
