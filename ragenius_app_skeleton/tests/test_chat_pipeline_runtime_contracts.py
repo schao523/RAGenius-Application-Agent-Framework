@@ -124,13 +124,13 @@ class ChatPipelineRuntimeContractTests(unittest.TestCase):
 ## 教導風格
 - 以提問引導學習
 
-## 模式自動識別（Mode Detection）
+## Mode Detection
 • 查考經文模式（Bible Study）
   o 觸發：輸入含「查考」「研經」「經文」等字。
   o 回應：「好的，我們一起用歸納釋經法查考經文。請問想從哪一段開始？」
-  o 啟動完整十步歸納釋經流程: 查經互動模組。
+  o 啟動完整十步歸納釋經流程: 查經互動流程。
 
-## 查經互動模組（歸納釋經法的十個步驟）
+## 查經互動流程（歸納釋經法的十個步驟）
 1. 細察事實 (Observation)
 目的： 幫助學員觀察經文的具體細節。
 使用資源： Resource/ observation_guide.md
@@ -222,9 +222,9 @@ Validate the final configuration output with support_guardrails.md.
 ## Mode Detection
 • Bible Study
   o Trigger: query includes 「查考」 「經文」
-  o Start full workflow: 查經互動模組
+  o Start full workflow: 查經互動流程
 
-## 查經互動模組
+## 查經互動流程
 1. 細察事實 (Observation)
 使用資源： observation guide.md
 """,
@@ -647,7 +647,7 @@ Generate Director Bundle.md
         )
         state["workflow_progress"] = {
             "workflow_id": "bible_study",
-            "workflow_title": "æŸ¥ç¶“äº’å‹•æ¨¡çµ„",
+            "workflow_title": "查經互動流程",
         }
         def llm_planner(_prompt, _tools, _context):
             return _valid_planner_output(state["user_query"])
@@ -699,9 +699,9 @@ Generate Director Bundle.md
         )
         state["workflow_progress"] = {
             "workflow_id": "bible_study",
-            "workflow_title": "æŸ¥ç¶“äº’å‹•æ¨¡çµ„",
+            "workflow_title": "查經互動流程",
             "step_order": 1,
-            "step_title": "ç´°å¯Ÿäº‹å¯¦ (Observation)",
+            "step_title": "細察事實 (Observation)",
             "resource_file": "observation_guide.md",
         }
         def llm_planner(_prompt, _tools, _context):

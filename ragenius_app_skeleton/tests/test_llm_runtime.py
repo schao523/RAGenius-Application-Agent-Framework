@@ -48,10 +48,10 @@ class LlmRuntimeTests(unittest.TestCase):
         planner = llm_runtime.resolve_task_model(llm_settings, "planner")
         answer = llm_runtime.resolve_task_model(llm_settings, "answer_generation")
 
-        self.assertEqual(planner["model"], "deepseek-reasoner")
+        self.assertEqual(planner["model"], "deepseek-v4-pro")
         self.assertEqual(planner["provider"], "deepseek")
         self.assertEqual(planner["temperature"], 0.1)
-        self.assertEqual(answer["model"], "deepseek-chat")
+        self.assertEqual(answer["model"], "deepseek-v4-flash")
         self.assertEqual(answer["temperature"], 0.3)
 
     def test_task_callable_posts_openai_compatible_tool_request_and_returns_arguments(self):
@@ -235,12 +235,19 @@ class LlmRuntimeTests(unittest.TestCase):
             self.assertIs(state["_llm_answer"], answer_callable)
             self.assertIs(state["_llm_evidence_analysis"], evidence_callable)
 
-        with mock.patch.object(chat_service, "maybe_build_task_callable") as maybe_build:
-            maybe_build.side_effect = lambda state, task: {
+        def fake_task_binding(_state, task):
+            callable_ = {
                 "planner": planner_callable,
                 "answer_generation": answer_callable,
                 "evidence_analysis": evidence_callable,
             }.get(task)
+            return {
+                "callable": callable_,
+                "config": None,
+                "diagnostics": {"task": task, "selected_source": "test-override"},
+            }
+
+        with mock.patch.object(chat_service, "build_task_binding", side_effect=fake_task_binding):
             with mock.patch.object(chat_service, "_graph", return_value=_FakeGraph(assert_state)):
                 result = chat_service.run_chat_pipeline(
                     {

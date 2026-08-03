@@ -32,7 +32,11 @@ class BuilderRuntimeTests(unittest.TestCase):
         adapter_json = derive_builder_adapter_json(app_record, config_json)
 
         self.assertEqual(config_json["meta"]["builder_app_id"], "app-1")
-        self.assertEqual(config_json["meta"]["llm_settings"]["model"], "text-embedding-3-small")
+        self.assertEqual(
+            config_json["meta"]["builder_settings"]["embedding_model"],
+            "text-embedding-3-small",
+        )
+        self.assertEqual(config_json["meta"]["llm_settings"]["models"]["planner"], "deepseek-v4-pro")
         self.assertIn("Answer from uploaded knowledge.", config_json["role"]["mission"])
         self.assertEqual(adapter_json["domain"], "bible-helper")
         self.assertEqual(adapter_json["retrieval_defaults"]["language"], "zh")
