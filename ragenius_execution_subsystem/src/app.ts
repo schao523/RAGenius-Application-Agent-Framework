@@ -70,6 +70,7 @@ import {
 import { AgentSkillDiscoveryService } from "./core/agent-skills/agent-skill-discovery-service.js";
 import { CodexAgentSkillDiscoveryAdapter } from "./core/agent-skills/codex-agent-skill-discovery.js";
 import { OpenClawAgentSkillDiscoveryAdapter } from "./core/agent-skills/openclaw-agent-skill-discovery.js";
+import { AgentSkillSelectionService } from "./core/agent-skills/agent-skill-selection-service.js";
 
 export interface McpDiscoveryProviderState {
   discoveredToolCount: number;
@@ -87,6 +88,7 @@ export interface McpDiscoveryState {
 export interface AppServices {
   agentExecutionQueue: AgentExecutionQueue;
   agentSkillDiscoveryService: AgentSkillDiscoveryService;
+  agentSkillSelectionService: AgentSkillSelectionService;
   agentSkillProjectionStore: AgentSkillProjectionStore;
   artifactStore: ArtifactStore;
   confirmationService: ConfirmationService;
@@ -133,6 +135,12 @@ export function createAppServices(
       new CodexAgentSkillDiscoveryAdapter(runtimeConfig.agentSkills.codex),
       new OpenClawAgentSkillDiscoveryAdapter(runtimeConfig.agentSkills.openClaw)
     ]);
+  const agentSkillSelectionService =
+    overrides.agentSkillSelectionService ??
+    new AgentSkillSelectionService({
+      discoveryService: agentSkillDiscoveryService,
+      projectionStore: agentSkillProjectionStore
+    });
   const executionStatusService =
     overrides.executionStatusService ??
     new ExecutionStatusService(executionStore);
@@ -318,6 +326,7 @@ export function createAppServices(
   return {
     agentExecutionQueue,
     agentSkillDiscoveryService,
+    agentSkillSelectionService,
     agentSkillProjectionStore,
     artifactStore,
     confirmationService,

@@ -22,6 +22,11 @@ export const executeSkillRequestSchema = executionRequestBaseSchema.extend({
 
 export const agentBackendSchema = z.enum(["codex_cli", "openclaw_cli"]);
 
+export const agentSkillRefSchema = z.object({
+  agent_skill_id: z.string().trim().min(1),
+  approved_fingerprint: z.string().trim().min(1)
+}).strict();
+
 export const agentArtifactRefSchema = z
   .object({
     artifact_id: z.string().trim().min(1),
@@ -55,6 +60,7 @@ export const executeAgentRequestSchema = executionRequestBaseSchema.extend({
   request_type: z.literal("execute_agent"),
   agent_backend: agentBackendSchema,
   agent_query: z.string().trim().min(1),
+  agent_skill_ref: agentSkillRefSchema.optional(),
   agent_skill_hint: z.string().trim().min(1).optional(),
   approved_content_id: z.string().trim().min(1).optional(),
   approved_revision_id: z.string().trim().min(1).optional(),
@@ -70,6 +76,7 @@ export const executionRequestSchema = z.discriminatedUnion("request_type", [
 
 export type ExecutionOptions = z.infer<typeof executionOptionsSchema>;
 export type AgentArtifactRef = z.infer<typeof agentArtifactRefSchema>;
+export type AgentSkillRef = z.infer<typeof agentSkillRefSchema>;
 export type AgentExpectedOutput = z.infer<typeof agentExpectedOutputSchema>;
 export type ExecuteSkillRequest = z.infer<typeof executeSkillRequestSchema>;
 export type ExecuteAgentRequest = z.infer<typeof executeAgentRequestSchema>;

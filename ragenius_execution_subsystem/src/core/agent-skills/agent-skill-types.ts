@@ -79,6 +79,23 @@ export interface AgentSkillDiscoveryAdapter {
   sourceOptions(): AgentSkillSourceOption[];
 }
 
+export interface ResolvedAgentSkillSelection {
+  activation_method:
+    | "codex_explicit_reference"
+    | "codex_prompt_guidance"
+    | "openclaw_prompt_guidance";
+  agent_skill_id: string;
+  approved_fingerprint: string;
+  backend: AgentSkillBackend;
+  display_name: string;
+  observed_fingerprint: string;
+  protected_locator_ref: string;
+  provider_skill_name: string;
+  resolved_at: string;
+  runtime_target_id: string;
+  source_id: string;
+}
+
 export type AgentSkillApprovalState = "approved" | "revoked" | "superseded";
 
 export interface ProjectedAgentSkillGovernance {
