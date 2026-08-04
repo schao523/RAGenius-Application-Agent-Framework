@@ -27,6 +27,7 @@ import { z } from "zod";
 
 export interface RuntimeConfig {
   agentAsync: { enabled: boolean; concurrency: number };
+  agentSkills: AgentSkillRuntimeConfig;
   adapters: AdapterRuntimeConfig;
   artifactStore: ArtifactStoreRuntimeConfig;
   builder: BuilderRuntimeConfig;
@@ -48,6 +49,14 @@ export interface ServiceAuthRuntimeConfig {
     token: string;
     scopes: string[];
   }>;
+}
+
+export interface AgentSkillRuntimeConfig {
+  projection: {
+    maxBytes: number;
+    maxItems: number;
+    trustedBuilderInstanceId: string;
+  };
 }
 
 const serviceCredentialSchema = z.object({
@@ -138,6 +147,13 @@ export function buildRuntimeConfig(
     agentAsync: {
       enabled: env.AGENT_ASYNC_EXECUTION_ENABLED,
       concurrency: env.AGENT_ASYNC_CONCURRENCY
+    },
+    agentSkills: {
+      projection: {
+        maxBytes: env.AGENT_SKILL_PROJECTION_MAX_BYTES,
+        maxItems: env.AGENT_SKILL_PROJECTION_MAX_ITEMS,
+        trustedBuilderInstanceId: env.AGENT_SKILL_TRUSTED_BUILDER_INSTANCE_ID
+      }
     },
     adapters: buildAdapterRuntimeConfig(env),
     artifactStore: buildArtifactStoreRuntimeConfig(env),
