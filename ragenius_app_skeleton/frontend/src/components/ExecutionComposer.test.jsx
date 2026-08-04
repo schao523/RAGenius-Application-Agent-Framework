@@ -412,6 +412,15 @@ describe("ExecutionComposer", () => {
       <ExecutionComposer
         toolInventory={[]}
         skillInventory={[]}
+        agentSkillInventory={[
+          {
+            agent_skill_id: "agent-notebooklm",
+            approved_fingerprint: "sha256:v1:notebooklm",
+            backend: "codex_cli",
+            display_name: "NotebookLM",
+            provider_skill_name: "notebooklm",
+          },
+        ]}
         selectedApprovedContent={{ approved_content_id: "ac_123", revision_id: "rev_123" }}
         onSubmit={onSubmit}
         onClose={vi.fn()}
@@ -425,7 +434,7 @@ describe("ExecutionComposer", () => {
     expect(screen.getByText(/selected approved revision \| rev_123/i)).toBeInTheDocument();
     expect(screen.getByText(/predicted policy \| read only/i)).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Skill Hint"), { target: { value: "notebooklm" } });
+    fireEvent.change(screen.getByLabelText("Agent Skill"), { target: { value: "agent-notebooklm" } });
     fireEvent.change(screen.getByLabelText("Agent Request"), {
       target: { value: "Use NotebookLM to create a Traditional Chinese study guide for Micah 2." },
     });
@@ -443,6 +452,10 @@ describe("ExecutionComposer", () => {
       args: {
         request: "Use NotebookLM to create a Traditional Chinese study guide for Micah 2.",
         skillHint: "notebooklm",
+        agentSkillRef: {
+          agent_skill_id: "agent-notebooklm",
+          approved_fingerprint: "sha256:v1:notebooklm",
+        },
         expectedOutputs: [
           expect.objectContaining({
             output_id: "agent_output",
@@ -467,15 +480,32 @@ describe("ExecutionComposer", () => {
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
 
     expect(screen.getByLabelText("Agent Backend")).toHaveValue("codex_cli");
-    expect(screen.getByLabelText("Skill Hint")).toBeInTheDocument();
+    expect(screen.getByLabelText("Agent Skill")).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "NotebookLM" })).not.toBeInTheDocument();
   });
 
-  it("submits OpenClaw agent backend without Codex-only skill hints", async () => {
+  it("filters approved Agent Skills by backend and resets selection", async () => {
     const onSubmit = vi.fn();
     render(
       <ExecutionComposer
         toolInventory={[]}
         skillInventory={[]}
+        agentSkillInventory={[
+          {
+            agent_skill_id: "agent-codex",
+            approved_fingerprint: "sha256:v1:codex",
+            backend: "codex_cli",
+            display_name: "Codex Research",
+            provider_skill_name: "research-paper-finder",
+          },
+          {
+            agent_skill_id: "agent-openclaw",
+            approved_fingerprint: "sha256:v1:openclaw",
+            backend: "openclaw_cli",
+            display_name: "OpenClaw Summarizer",
+            provider_skill_name: "summarizer",
+          },
+        ]}
         onSubmit={onSubmit}
         onClose={vi.fn()}
         styles={styles}
@@ -483,10 +513,17 @@ describe("ExecutionComposer", () => {
     );
 
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    fireEvent.change(screen.getByLabelText("Agent Skill"), { target: { value: "agent-codex" } });
+    expect(screen.getByRole("option", { name: "Codex Research" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "OpenClaw Summarizer" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Agent Backend"), { target: { value: "openclaw_cli" } });
 
-    expect(screen.queryByLabelText("Skill Hint")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Agent Skill")).toHaveValue("");
+    expect(screen.getByRole("option", { name: "OpenClaw Summarizer" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Codex Research" })).not.toBeInTheDocument();
     expect(screen.getByText(/openclaw agent mode/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Agent Skill"), { target: { value: "agent-openclaw" } });
 
     fireEvent.change(screen.getByLabelText("Agent Request"), {
       target: { value: "Reply with OK." },
@@ -502,6 +539,11 @@ describe("ExecutionComposer", () => {
       executionMode: "sync",
       args: {
         request: "Reply with OK.",
+        skillHint: "summarizer",
+        agentSkillRef: {
+          agent_skill_id: "agent-openclaw",
+          approved_fingerprint: "sha256:v1:openclaw",
+        },
         expectedOutputs: [
           expect.objectContaining({
             output_id: "agent_output",
@@ -510,6 +552,28 @@ describe("ExecutionComposer", () => {
         ],
       },
     });
+  });
+
+  it("shows missing projection and inventory failures without inventing skills", () => {
+    render(
+      <ExecutionComposer
+        toolInventory={[]}
+        skillInventory={[]}
+        agentSkillInventory={[]}
+        agentSkillInventoryError="Inventory request failed."
+        agentSkillProjectionStatusByBackend={{ codex_cli: "unavailable" }}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+        styles={styles}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+
+    expect(screen.getByRole("option", { name: "Auto" })).toBeInTheDocument();
+    expect(screen.getByText(/inventory request failed/i)).toBeInTheDocument();
+    expect(screen.getByText(/approved skill projection is unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "NotebookLM" })).not.toBeInTheDocument();
   });
 
   it("submits agent mode with selected artifacts and expected reusable output", async () => {

@@ -453,4 +453,41 @@ describe("ExecutionInspector", () => {
     expect(screen.getByText(/produced artifacts/i)).toBeInTheDocument();
     expect(screen.queryByText(/submitted artifact inputs/i)).toBeNull();
   });
+
+  it("renders Agent Skill activation labels only from normalized evidence", () => {
+    render(
+      <ExecutionInspector
+        open
+        tab="summary"
+        onChangeTab={vi.fn()}
+        onClose={vi.fn()}
+        message={{
+          retrievalSummary: {
+            execution_override: true,
+            command: "openclaw",
+            execution_status_result: {
+              status: "completed",
+              result: {
+                backend: "openclaw_cli",
+                output_text: "I used the skill successfully.",
+                agent_skill_activation: {
+                  requested_agent_skill_id: "agent-skill-1",
+                  resolved_provider_skill_name: "summarizer",
+                  activation_status: "not_observed",
+                  evidence_level: "agent_reported",
+                  evidence_summary: "The agent reported use without process evidence.",
+                },
+              },
+            },
+          },
+        }}
+        sessionLaneState={{ execution_lane: {} }}
+        styles={styles}
+      />,
+    );
+
+    expect(screen.getByText(/activation not observed/i)).toBeInTheDocument();
+    expect(screen.getByText(/^agent reported$/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^process observed$/i)).not.toBeInTheDocument();
+  });
 });

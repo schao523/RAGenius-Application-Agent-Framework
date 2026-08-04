@@ -78,6 +78,18 @@ function formatConsumptionMode(value) {
   return String(value || "").replace(/_/g, " ").trim();
 }
 
+function formatAgentSkillActivationStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  const labels = {
+    projected: "Requested",
+    process_observed: "Process observed",
+    not_observed: "Activation not observed",
+    failed: "Activation failed",
+    not_requested: "Auto",
+  };
+  return labels[normalized] || formatConsumptionMode(normalized);
+}
+
 function normalizeArtifactReuseSummary(mappedInput, executionArtifacts) {
   if (!mappedInput || typeof mappedInput !== "object") {
     return [];
@@ -198,6 +210,10 @@ export default function ExecutionInspector({
     agentResult.diagnostics && typeof agentResult.diagnostics === "object"
       ? agentResult.diagnostics
       : {};
+  const agentSkillActivation =
+    agentResult.agent_skill_activation && typeof agentResult.agent_skill_activation === "object"
+      ? agentResult.agent_skill_activation
+      : null;
   const executionArtifacts = normalizeExecutionArtifacts(executionPayload);
   const artifactReuseSummary = normalizeArtifactReuseSummary(mappedInput, executionArtifacts);
   const selectedExecutionId = String(
@@ -303,6 +319,21 @@ export default function ExecutionInspector({
           <div>{executionPayload.logs_summary}</div>
         </div>
       )}
+      {isAgentExecution && agentSkillActivation ? (
+        <div style={styles.inspectorGroup}>
+          <div style={styles.inspectorGroupTitle}>Agent Skill activation</div>
+          <div style={styles.inspectorKeyValue}>
+            {renderKeyValue(
+              "Activation",
+              formatAgentSkillActivationStatus(agentSkillActivation.activation_status),
+            )}
+            {renderKeyValue("Requested skill", agentSkillActivation.requested_agent_skill_id)}
+            {renderKeyValue("Provider skill", agentSkillActivation.resolved_provider_skill_name)}
+            {renderKeyValue("Evidence", formatConsumptionMode(agentSkillActivation.evidence_level))}
+            {renderKeyValue("Evidence summary", agentSkillActivation.evidence_summary)}
+          </div>
+        </div>
+      ) : null}
       {isOpenClawAgent && (
         <div style={styles.inspectorGroup}>
           <div style={styles.inspectorGroupTitle}>OpenClaw result</div>

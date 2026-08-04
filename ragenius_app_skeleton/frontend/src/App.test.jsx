@@ -76,6 +76,7 @@ function createDeferred() {
 
 function buildAppFetchMock({
   artifactResponse,
+  agentSkillResponse,
   instructionPreview = { compiled_id: "compiled-test" },
   messages = [],
   sessions = [],
@@ -103,6 +104,12 @@ function buildAppFetchMock({
     }
     if (normalizedUrl.includes("/exec/skills?")) {
       return mockJsonResponse({ items: [] });
+    }
+    if (normalizedUrl.includes("/exec/agent-skills?")) {
+      if (typeof agentSkillResponse === "function") {
+        return agentSkillResponse(normalizedUrl);
+      }
+      return mockJsonResponse({ items: [], inventory_revision: null, projection_status: "unavailable" });
     }
     if (normalizedUrl.includes("/apps/app-1/sessions?")) {
       return mockJsonResponse({ sessions });
@@ -350,6 +357,17 @@ describe("buildExecCommand", () => {
     expect(command).toBe('@exec async openclaw "Reply with OK."');
   });
 
+  it("builds an OpenClaw command with a legacy provider skill hint", () => {
+    const command = buildExecCommand({
+      commandKind: "agent",
+      targetId: "openclaw_cli",
+      args: { request: "Summarize this.", skillHint: "summarizer" },
+      executionMode: "sync",
+    });
+
+    expect(command).toBe('@exec openclaw use summarizer "Summarize this."');
+  });
+
   it("builds structured execution_request metadata for agent composer submissions", () => {
     const executionRequest = buildExecutionRequestForComposer({
       commandKind: "agent",
@@ -392,6 +410,31 @@ describe("buildExecCommand", () => {
           persist_as_artifact: true,
         },
       ],
+    });
+  });
+
+  it("builds structured execution metadata when only an Agent Skill is selected", () => {
+    const executionRequest = buildExecutionRequestForComposer({
+      commandKind: "agent",
+      targetId: "codex_cli",
+      executionMode: "sync",
+      args: {
+        request: "Find relevant papers.",
+        agentSkillRef: {
+          agent_skill_id: "agent-skill-1",
+          approved_fingerprint: "sha256:v1:abc",
+        },
+      },
+    });
+
+    expect(executionRequest).toEqual({
+      request_type: "execute_agent",
+      agent_backend: "codex_cli",
+      execution_mode: "sync",
+      agent_skill_ref: {
+        agent_skill_id: "agent-skill-1",
+        approved_fingerprint: "sha256:v1:abc",
+      },
     });
   });
 });
@@ -874,6 +917,56 @@ describe("App artifact fetch propagation", () => {
         output_id: "agent_output",
         artifact_type: "agent_output",
         persist_as_artifact: true,
+      });
+    });
+  });
+
+  it("loads session-scoped Agent Skills and submits the approved immutable reference", async () => {
+    const requests = [];
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Persisted session" }],
+      onRequest: (url, options) => requests.push({ url: String(url || ""), options }),
+      agentSkillResponse: (url) => {
+        const backend = new URL(url).searchParams.get("backend");
+        return mockJsonResponse({
+          inventory_revision: "builder-1:7:sha256:test",
+          projection_status: "active",
+          items: backend === "codex_cli"
+            ? [{
+                agent_skill_id: "agent-research",
+                approved_fingerprint: "sha256:v1:research",
+                backend: "codex_cli",
+                display_name: "Research Papers",
+                provider_skill_name: "research-paper-finder",
+              }]
+            : [],
+        });
+      },
+    }));
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /run tool or skill/i }));
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    await waitFor(() => expect(screen.getByRole("option", { name: "Research Papers" })).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("Agent Skill"), { target: { value: "agent-research" } });
+    fireEvent.change(screen.getByLabelText("Agent Request"), { target: { value: "Find relevant papers." } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    await waitFor(() => {
+      const inventoryUrls = requests
+        .map((request) => request.url)
+        .filter((url) => url.includes("/sessions/session-1/exec/agent-skills?"));
+      expect(inventoryUrls).toEqual(expect.arrayContaining([
+        expect.stringContaining("app_id=app-1&user_id=user1&backend=codex_cli"),
+        expect.stringContaining("app_id=app-1&user_id=user1&backend=openclaw_cli"),
+      ]));
+      const chatPost = requests.find((request) => request.url.endsWith("/sessions/session-1/chat"));
+      const body = JSON.parse(chatPost.options.body);
+      expect(body.user_query).toBe('@exec codex use research-paper-finder "Find relevant papers."');
+      expect(body.execution_request.agent_skill_ref).toEqual({
+        agent_skill_id: "agent-research",
+        approved_fingerprint: "sha256:v1:research",
       });
     });
   });
