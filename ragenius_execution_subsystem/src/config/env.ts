@@ -35,6 +35,7 @@ const envSchema = z.object({
   RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED: booleanEnv(false),
   RAGENIUS_EXECUTION_SERVICE_ID: z.string().trim().min(1).default("ragenius_app"),
   RAGENIUS_EXECUTION_SERVICE_TOKEN: z.string().trim().min(1).optional(),
+  RAGENIUS_EXECUTION_SERVICE_CREDENTIALS_JSON: z.string().default("[]"),
   BUILDER_BASE_URL: z.string().trim().url().optional(),
   HTTP_PROXY: z.string().trim().optional(),
   HTTPS_PROXY: z.string().trim().optional(),

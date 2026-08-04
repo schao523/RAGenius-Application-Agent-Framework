@@ -23,6 +23,7 @@ import {
   buildDefaultRuntimePolicyConfig,
   type RuntimePolicyConfig
 } from "./policy-config.js";
+import { z } from "zod";
 
 export interface RuntimeConfig {
   agentAsync: { enabled: boolean; concurrency: number };
@@ -42,8 +43,39 @@ export interface RuntimeConfig {
 
 export interface ServiceAuthRuntimeConfig {
   required: boolean;
-  serviceId: string;
-  token?: string;
+  credentials: Array<{
+    serviceId: string;
+    token: string;
+    scopes: string[];
+  }>;
+}
+
+const serviceCredentialSchema = z.object({
+  service_id: z.string().trim().min(1),
+  token: z.string().trim().min(1),
+  scopes: z.array(z.string().trim().min(1)).default([])
+}).strict();
+
+function buildServiceAuthRuntimeConfig(env: AppEnv): ServiceAuthRuntimeConfig {
+  const configured = z.array(serviceCredentialSchema).parse(
+    JSON.parse(env.RAGENIUS_EXECUTION_SERVICE_CREDENTIALS_JSON)
+  );
+  const credentials = configured.map((credential) => ({
+    serviceId: credential.service_id,
+    token: credential.token,
+    scopes: [...new Set(credential.scopes)]
+  }));
+  if (env.RAGENIUS_EXECUTION_SERVICE_TOKEN) {
+    credentials.push({
+      serviceId: env.RAGENIUS_EXECUTION_SERVICE_ID,
+      token: env.RAGENIUS_EXECUTION_SERVICE_TOKEN,
+      scopes: ["execution"]
+    });
+  }
+  return {
+    required: env.RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED,
+    credentials
+  };
 }
 
 export interface RuntimeConfigDiagnostics {
@@ -117,13 +149,7 @@ export function buildRuntimeConfig(
     network: buildNetworkRuntimeConfig(env),
     policy: buildDefaultRuntimePolicyConfig(),
     providers: buildProviderRuntimeConfig(env),
-    serviceAuth: {
-      required: env.RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED,
-      serviceId: env.RAGENIUS_EXECUTION_SERVICE_ID,
-      ...(env.RAGENIUS_EXECUTION_SERVICE_TOKEN
-        ? { token: env.RAGENIUS_EXECUTION_SERVICE_TOKEN }
-        : {})
-    },
+    serviceAuth: buildServiceAuthRuntimeConfig(env),
     tools: buildToolToggleRuntimeConfig(env)
   };
 }
@@ -195,7 +221,7 @@ export function inspectRuntimeConfig(
       }
     },
     serviceAuth: {
-      configured: Boolean(runtimeConfig.serviceAuth.token),
+      configured: runtimeConfig.serviceAuth.credentials.length > 0,
       required: runtimeConfig.serviceAuth.required
     },
     tools: {
@@ -220,7 +246,10 @@ function isInvalidDiscardProxyTarget(value: string): boolean {
 }
 
 export function validateRuntimeConfig(runtimeConfig: RuntimeConfig): void {
-  if (runtimeConfig.serviceAuth.required && !runtimeConfig.serviceAuth.token) {
+  if (
+    runtimeConfig.serviceAuth.required &&
+    runtimeConfig.serviceAuth.credentials.length === 0
+  ) {
     throw new Error(
       "Execution service authentication is required but no service token is configured."
     );
