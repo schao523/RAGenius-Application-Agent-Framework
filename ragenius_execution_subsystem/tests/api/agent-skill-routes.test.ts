@@ -99,6 +99,36 @@ describe("agent skill projection routes", () => {
     });
   });
 
+  it("returns opaque Codex source options without configured paths", async () => {
+    const config = runtimeConfig();
+    config.agentSkills.codex.sourceOptions = [{
+      display_name: "Administrator Codex Skills",
+      path: "C:\\Users\\Administrator\\.codex\\skills",
+      protected_locator_ref: "codex-source-ref-1",
+      runtime_target_id: "codex-local-default"
+    }];
+    app = buildApp(
+      { agentSkillProjectionStore: new InMemoryAgentSkillProjectionStore() },
+      config
+    );
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/admin/agent-skills/source-options",
+      headers: { authorization: "Bearer builder-token" }
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json().items, [{
+      backend: "codex_cli",
+      display_name: "Administrator Codex Skills",
+      protected_locator_ref: "codex-source-ref-1",
+      runtime_target_id: "codex-local-default",
+      source_kind: "codex_directory"
+    }]);
+    assert.equal(JSON.stringify(response.json()).includes("C:\\\\Users"), false);
+  });
+
   it("publishes idempotently and returns only redacted scoped inventory", async () => {
     app = buildApp(
       { agentSkillProjectionStore: new InMemoryAgentSkillProjectionStore() },

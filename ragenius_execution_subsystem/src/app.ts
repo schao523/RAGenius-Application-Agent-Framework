@@ -67,6 +67,8 @@ import {
   PrismaAgentSkillProjectionStore,
   type PrismaAgentSkillProjectionClient
 } from "./core/agent-skills/prisma-agent-skill-projection-store.js";
+import { AgentSkillDiscoveryService } from "./core/agent-skills/agent-skill-discovery-service.js";
+import { CodexAgentSkillDiscoveryAdapter } from "./core/agent-skills/codex-agent-skill-discovery.js";
 
 export interface McpDiscoveryProviderState {
   discoveredToolCount: number;
@@ -83,6 +85,7 @@ export interface McpDiscoveryState {
 
 export interface AppServices {
   agentExecutionQueue: AgentExecutionQueue;
+  agentSkillDiscoveryService: AgentSkillDiscoveryService;
   agentSkillProjectionStore: AgentSkillProjectionStore;
   artifactStore: ArtifactStore;
   confirmationService: ConfirmationService;
@@ -123,6 +126,11 @@ export function createAppServices(
           dependencies.prismaClient as unknown as PrismaAgentSkillProjectionClient
         )
       : new InMemoryAgentSkillProjectionStore());
+  const agentSkillDiscoveryService =
+    overrides.agentSkillDiscoveryService ??
+    new AgentSkillDiscoveryService([
+      new CodexAgentSkillDiscoveryAdapter(runtimeConfig.agentSkills.codex)
+    ]);
   const executionStatusService =
     overrides.executionStatusService ??
     new ExecutionStatusService(executionStore);
@@ -307,6 +315,7 @@ export function createAppServices(
 
   return {
     agentExecutionQueue,
+    agentSkillDiscoveryService,
     agentSkillProjectionStore,
     artifactStore,
     confirmationService,

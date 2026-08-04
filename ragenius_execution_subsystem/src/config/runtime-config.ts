@@ -52,12 +52,33 @@ export interface ServiceAuthRuntimeConfig {
 }
 
 export interface AgentSkillRuntimeConfig {
+  codex: {
+    limits: {
+      maxDepth: number;
+      maxFileBytes: number;
+      maxFiles: number;
+      maxTotalBytes: number;
+    };
+    sourceOptions: Array<{
+      display_name: string;
+      path: string;
+      protected_locator_ref: string;
+      runtime_target_id: string;
+    }>;
+  };
   projection: {
     maxBytes: number;
     maxItems: number;
     trustedBuilderInstanceId: string;
   };
 }
+
+const codexAgentSkillSourceSchema = z.object({
+  display_name: z.string().trim().min(1),
+  path: z.string().trim().min(1),
+  protected_locator_ref: z.string().trim().min(1),
+  runtime_target_id: z.string().trim().min(1)
+}).strict();
 
 const serviceCredentialSchema = z.object({
   service_id: z.string().trim().min(1),
@@ -149,6 +170,17 @@ export function buildRuntimeConfig(
       concurrency: env.AGENT_ASYNC_CONCURRENCY
     },
     agentSkills: {
+      codex: {
+        limits: {
+          maxDepth: env.CODEX_AGENT_SKILL_MAX_DEPTH,
+          maxFileBytes: env.CODEX_AGENT_SKILL_MAX_FILE_BYTES,
+          maxFiles: env.CODEX_AGENT_SKILL_MAX_FILES,
+          maxTotalBytes: env.CODEX_AGENT_SKILL_MAX_TOTAL_BYTES
+        },
+        sourceOptions: z.array(codexAgentSkillSourceSchema).parse(
+          JSON.parse(env.CODEX_AGENT_SKILL_SOURCES_JSON)
+        )
+      },
       projection: {
         maxBytes: env.AGENT_SKILL_PROJECTION_MAX_BYTES,
         maxItems: env.AGENT_SKILL_PROJECTION_MAX_ITEMS,

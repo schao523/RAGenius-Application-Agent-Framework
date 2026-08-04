@@ -10,6 +10,18 @@ import {
   AgentSkillProjectionError
 } from "../../core/agent-skills/agent-skill-projection-store.js";
 import { AppError } from "../../core/errors/app-error.js";
+import { z } from "zod";
+
+const discoveryRequestSchema = z.object({
+  backend: z.enum(["codex_cli", "openclaw_cli"]),
+  protected_locator_ref: z.string().trim().min(1),
+  runtime_target_id: z.string().trim().min(1),
+  source_id: z.string().trim().min(1)
+}).strict();
+
+const inspectionRequestSchema = discoveryRequestSchema.extend({
+  provider_skill_name: z.string().trim().min(1)
+}).strict();
 
 function requireScope(
   request: FastifyRequest,
@@ -42,6 +54,31 @@ function projectionError(error: AgentSkillProjectionError): AppError {
 export async function registerAgentSkillRoutes(
   app: FastifyInstance
 ): Promise<void> {
+  app.get("/admin/agent-skills/source-options", async (request, reply) => {
+    if (!requireScope(request, reply, "agent_skills:admin")) return;
+    return { items: app.services.agentSkillDiscoveryService.sourceOptions() };
+  });
+
+  app.post("/admin/agent-skills/discover", async (request, reply) => {
+    if (!requireScope(request, reply, "agent_skills:admin")) return;
+    const input = discoveryRequestSchema.parse(request.body);
+    const { backend, ...discoveryInput } = input;
+    return app.services.agentSkillDiscoveryService.discover(
+      backend,
+      discoveryInput
+    );
+  });
+
+  app.post("/admin/agent-skills/inspect", async (request, reply) => {
+    if (!requireScope(request, reply, "agent_skills:admin")) return;
+    const input = inspectionRequestSchema.parse(request.body);
+    const { backend, ...inspectionInput } = input;
+    return app.services.agentSkillDiscoveryService.inspect(
+      backend,
+      inspectionInput
+    );
+  });
+
   app.put("/admin/agent-skills/governance-projection", async (request, reply) => {
     if (!requireScope(request, reply, "agent_skills:admin")) return;
     const config = app.services.runtimeConfig.agentSkills.projection;
