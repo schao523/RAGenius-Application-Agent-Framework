@@ -66,6 +66,26 @@ export interface AgentSkillRuntimeConfig {
       runtime_target_id: string;
     }>;
   };
+  openClaw: {
+    command: string;
+    limits: {
+      maxDepth: number;
+      maxFileBytes: number;
+      maxFiles: number;
+      maxTotalBytes: number;
+    };
+    maxStderrBytes: number;
+    maxStdoutBytes: number;
+    targets: Array<{
+      agent_id: string;
+      display_name: string;
+      protected_locator_ref: string;
+      runtime_target_id: string;
+      skill_roots: string[];
+      wsl_distro: string;
+    }>;
+    timeoutMs: number;
+  };
   projection: {
     maxBytes: number;
     maxItems: number;
@@ -78,6 +98,15 @@ const codexAgentSkillSourceSchema = z.object({
   path: z.string().trim().min(1),
   protected_locator_ref: z.string().trim().min(1),
   runtime_target_id: z.string().trim().min(1)
+}).strict();
+
+const openClawAgentSkillTargetSchema = z.object({
+  agent_id: z.string().trim().min(1),
+  display_name: z.string().trim().min(1),
+  protected_locator_ref: z.string().trim().min(1),
+  runtime_target_id: z.string().trim().min(1),
+  skill_roots: z.array(z.string().trim().startsWith("/")).min(1),
+  wsl_distro: z.string().trim().min(1)
 }).strict();
 
 const serviceCredentialSchema = z.object({
@@ -180,6 +209,21 @@ export function buildRuntimeConfig(
         sourceOptions: z.array(codexAgentSkillSourceSchema).parse(
           JSON.parse(env.CODEX_AGENT_SKILL_SOURCES_JSON)
         )
+      },
+      openClaw: {
+        command: env.OPENCLAW_CLI_COMMAND,
+        limits: {
+          maxDepth: env.OPENCLAW_AGENT_SKILL_MAX_DEPTH,
+          maxFileBytes: env.OPENCLAW_AGENT_SKILL_MAX_FILE_BYTES,
+          maxFiles: env.OPENCLAW_AGENT_SKILL_MAX_FILES,
+          maxTotalBytes: env.OPENCLAW_AGENT_SKILL_MAX_TOTAL_BYTES
+        },
+        maxStderrBytes: env.OPENCLAW_MAX_STDERR_BYTES,
+        maxStdoutBytes: env.OPENCLAW_MAX_STDOUT_BYTES,
+        targets: z.array(openClawAgentSkillTargetSchema).parse(
+          JSON.parse(env.OPENCLAW_AGENT_SKILL_ALLOWED_TARGETS_JSON)
+        ),
+        timeoutMs: env.OPENCLAW_DEFAULT_TIMEOUT_MS
       },
       projection: {
         maxBytes: env.AGENT_SKILL_PROJECTION_MAX_BYTES,

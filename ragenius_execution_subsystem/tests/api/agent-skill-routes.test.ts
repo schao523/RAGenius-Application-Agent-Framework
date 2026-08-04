@@ -129,6 +129,39 @@ describe("agent skill projection routes", () => {
     assert.equal(JSON.stringify(response.json()).includes("C:\\\\Users"), false);
   });
 
+  it("returns opaque OpenClaw targets without WSL details or skill roots", async () => {
+    const config = runtimeConfig();
+    config.agentSkills.openClaw.targets = [{
+      agent_id: "main",
+      display_name: "OpenClaw Main",
+      protected_locator_ref: "openclaw-main-ref",
+      runtime_target_id: "openclaw-main",
+      skill_roots: ["/home/openclaw/.openclaw/skills"],
+      wsl_distro: "OpenClawGateway"
+    }];
+    app = buildApp(
+      { agentSkillProjectionStore: new InMemoryAgentSkillProjectionStore() },
+      config
+    );
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/admin/agent-skills/source-options",
+      headers: { authorization: "Bearer builder-token" }
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json().items, [{
+      backend: "openclaw_cli",
+      display_name: "OpenClaw Main",
+      protected_locator_ref: "openclaw-main-ref",
+      runtime_target_id: "openclaw-main",
+      source_kind: "openclaw_agent_inventory"
+    }]);
+    assert.equal(JSON.stringify(response.json()).includes("OpenClawGateway"), false);
+    assert.equal(JSON.stringify(response.json()).includes("/home/openclaw"), false);
+  });
+
   it("publishes idempotently and returns only redacted scoped inventory", async () => {
     app = buildApp(
       { agentSkillProjectionStore: new InMemoryAgentSkillProjectionStore() },

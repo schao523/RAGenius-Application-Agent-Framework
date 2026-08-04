@@ -69,6 +69,7 @@ import {
 } from "./core/agent-skills/prisma-agent-skill-projection-store.js";
 import { AgentSkillDiscoveryService } from "./core/agent-skills/agent-skill-discovery-service.js";
 import { CodexAgentSkillDiscoveryAdapter } from "./core/agent-skills/codex-agent-skill-discovery.js";
+import { OpenClawAgentSkillDiscoveryAdapter } from "./core/agent-skills/openclaw-agent-skill-discovery.js";
 
 export interface McpDiscoveryProviderState {
   discoveredToolCount: number;
@@ -129,7 +130,8 @@ export function createAppServices(
   const agentSkillDiscoveryService =
     overrides.agentSkillDiscoveryService ??
     new AgentSkillDiscoveryService([
-      new CodexAgentSkillDiscoveryAdapter(runtimeConfig.agentSkills.codex)
+      new CodexAgentSkillDiscoveryAdapter(runtimeConfig.agentSkills.codex),
+      new OpenClawAgentSkillDiscoveryAdapter(runtimeConfig.agentSkills.openClaw)
     ]);
   const executionStatusService =
     overrides.executionStatusService ??
