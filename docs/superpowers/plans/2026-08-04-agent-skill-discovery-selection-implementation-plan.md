@@ -556,7 +556,7 @@ git commit -m "feat(execution): activate selected agent skills with evidence"
 - Consumes: execution source-options/discover/inspect/projection APIs.
 - Produces: separate source/catalog/approval/binding/audit/projection-state storage methods.
 
-- [ ] **Step 1: Write failing storage and publisher tests**
+- [x] **Step 1: Write failing storage and publisher tests**
 
 Cover stable catalog identity, fingerprint change, compare-and-set approval, unique app binding, audit events, monotonic revision, canonical digest, idempotent acknowledgment, failed synchronization, and restart retry.
 
@@ -566,18 +566,18 @@ self.assertGreater(snapshot["revision"], previous_revision)
 self.assertEqual(store.get_agent_skill_projection_state()["sync_status"], "pending")
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 ```powershell
 cd D:\GitHub\Codex-RAGenius-System\ragenius_builder
 python -m unittest discover -s flask_scaffold/tests -p "test_agent_skill_*.py" -v
 ```
 
-- [ ] **Step 3: Implement tables, storage methods, canonical snapshot, and HTTP client**
+- [x] **Step 3: Implement tables, storage methods, canonical snapshot, and HTTP client**
 
 Add the five governance tables plus `agent_skill_projection_state`. Every runtime-affecting mutation increments `max(previous + 1, utc_epoch_ms)` and marks pending in the same transaction. Publish a complete sorted snapshot with SHA-256 digest and mark synchronized only after instance/revision/digest acknowledgment.
 
-- [ ] **Step 4: Verify Builder persistence in isolation**
+- [x] **Step 4: Verify Builder persistence in isolation**
 
 ```powershell
 python -m unittest discover -s flask_scaffold/tests -p "test_agent_skill_*.py" -v
@@ -586,7 +586,7 @@ python -m unittest discover -s flask_scaffold/tests -p "test_skill_management.py
 
 Expected: existing executable skill storage remains unchanged.
 
-- [ ] **Step 5: Commit Builder governance core**
+- [x] **Step 5: Commit Builder governance core**
 
 ```powershell
 git add ragenius_builder/flask_scaffold/storage.py ragenius_builder/flask_scaffold/agent_skill_execution_client.py ragenius_builder/flask_scaffold/agent_skill_projection.py ragenius_builder/flask_scaffold/tests

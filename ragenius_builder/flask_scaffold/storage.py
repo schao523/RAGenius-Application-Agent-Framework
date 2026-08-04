@@ -599,6 +599,120 @@ class DatabaseStore:
             )
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_skill_sources (
+                id TEXT PRIMARY KEY,
+                backend TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                runtime_target_id TEXT NOT NULL,
+                protected_locator_ref TEXT NOT NULL,
+                precedence INTEGER NOT NULL DEFAULT 100,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(backend, runtime_target_id, protected_locator_ref)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_skill_catalog (
+                id TEXT PRIMARY KEY,
+                backend TEXT NOT NULL,
+                runtime_target_id TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                provider_skill_name TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                content_fingerprint TEXT NOT NULL,
+                discovery_status TEXT NOT NULL,
+                model_visible INTEGER NOT NULL,
+                user_invocable INTEGER NOT NULL,
+                direct_tool_dispatch INTEGER NOT NULL,
+                missing_requirements_json TEXT NOT NULL,
+                provider_metadata_json TEXT NOT NULL,
+                discovered_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(source_id) REFERENCES agent_skill_sources(id) ON DELETE CASCADE,
+                UNIQUE(backend, runtime_target_id, source_id, provider_skill_name)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_skill_approvals (
+                id TEXT PRIMARY KEY,
+                agent_skill_id TEXT NOT NULL,
+                approved_fingerprint TEXT NOT NULL,
+                state TEXT NOT NULL,
+                review_notes TEXT,
+                approved_by TEXT NOT NULL,
+                approved_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(agent_skill_id) REFERENCES agent_skill_catalog(id) ON DELETE CASCADE
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_agent_skill_bindings (
+                id TEXT PRIMARY KEY,
+                app_id TEXT NOT NULL,
+                agent_skill_id TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(app_id) REFERENCES applications(id) ON DELETE CASCADE,
+                FOREIGN KEY(agent_skill_id) REFERENCES agent_skill_catalog(id) ON DELETE CASCADE,
+                UNIQUE(app_id, agent_skill_id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_skill_audit_events (
+                id TEXT PRIMARY KEY,
+                occurred_at TEXT NOT NULL,
+                actor_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                source_id TEXT,
+                agent_skill_id TEXT,
+                approval_id TEXT,
+                binding_id TEXT,
+                app_id TEXT,
+                before_json TEXT,
+                after_json TEXT,
+                correlation_id TEXT
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_skill_projection_state (
+                singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
+                builder_instance_id TEXT,
+                local_revision INTEGER NOT NULL DEFAULT 0,
+                published_revision INTEGER,
+                published_digest TEXT,
+                sync_status TEXT NOT NULL DEFAULT 'synchronized',
+                last_attempt_at TEXT,
+                last_success_at TEXT,
+                last_error_code TEXT,
+                last_error_message TEXT
+            )
+            """
+        )
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO agent_skill_projection_state (
+                singleton_id, local_revision, sync_status
+            ) VALUES (1, 0, 'synchronized')
+            """
+        )
         try:
             cursor.execute("ALTER TABLE documents ADD COLUMN file_path TEXT")
         except sqlite3.OperationalError:
@@ -607,6 +721,9 @@ class DatabaseStore:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_app_id ON documents(app_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_skill_versions_skill_id ON skill_versions(skill_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_app_skill_bindings_app_id ON app_skill_bindings(app_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_skill_catalog_source_id ON agent_skill_catalog(source_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_skill_approvals_skill_id ON agent_skill_approvals(agent_skill_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_app_agent_skill_bindings_app_id ON app_agent_skill_bindings(app_id)")
         self.conn.commit()
 
     def seed(self):
@@ -1442,6 +1559,723 @@ class DatabaseStore:
             }
         finally:
             shutil.rmtree(temp_root, ignore_errors=True)
+
+    @staticmethod
+    def _agent_skill_now() -> str:
+        return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+    @staticmethod
+    def _agent_skill_json(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def _record_agent_skill_audit(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        actor_id: str,
+        action: str,
+        source_id: str | None = None,
+        agent_skill_id: str | None = None,
+        approval_id: str | None = None,
+        binding_id: str | None = None,
+        app_id: str | None = None,
+        before: Any = None,
+        after: Any = None,
+        correlation_id: str | None = None,
+    ) -> None:
+        cursor.execute(
+            """
+            INSERT INTO agent_skill_audit_events (
+                id, occurred_at, actor_id, action, source_id, agent_skill_id,
+                approval_id, binding_id, app_id, before_json, after_json,
+                correlation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                self._agent_skill_now(),
+                actor_id,
+                action,
+                source_id,
+                agent_skill_id,
+                approval_id,
+                binding_id,
+                app_id,
+                self._agent_skill_json(before)[:16384] if before is not None else None,
+                self._agent_skill_json(after)[:16384] if after is not None else None,
+                correlation_id,
+            ),
+        )
+
+    def _mark_agent_skill_projection_pending(self, cursor: sqlite3.Cursor) -> int:
+        row = cursor.execute(
+            "SELECT local_revision FROM agent_skill_projection_state WHERE singleton_id = 1"
+        ).fetchone()
+        previous = int(row["local_revision"] if row else 0)
+        epoch_ms = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
+        revision = max(previous + 1, epoch_ms)
+        cursor.execute(
+            """
+            UPDATE agent_skill_projection_state
+            SET local_revision = ?, sync_status = 'pending',
+                last_error_code = NULL, last_error_message = NULL
+            WHERE singleton_id = 1
+            """,
+            (revision,),
+        )
+        return revision
+
+    @staticmethod
+    def _agent_skill_source_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "backend": row["backend"],
+            "source_kind": row["source_kind"],
+            "display_name": row["display_name"],
+            "runtime_target_id": row["runtime_target_id"],
+            "protected_locator_ref": row["protected_locator_ref"],
+            "precedence": row["precedence"],
+            "enabled": bool(row["enabled"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def create_agent_skill_source(
+        self,
+        *,
+        backend: str,
+        source_kind: str,
+        display_name: str,
+        runtime_target_id: str,
+        protected_locator_ref: str,
+        actor_id: str,
+        precedence: int = 100,
+        enabled: bool = True,
+        correlation_id: str | None = None,
+    ) -> Dict[str, Any]:
+        valid_pairs = {
+            ("codex_cli", "codex_directory"),
+            ("openclaw_cli", "openclaw_agent_inventory"),
+        }
+        if (backend, source_kind) not in valid_pairs:
+            raise ValueError("Unsupported Agent skill backend/source kind")
+        source_id = str(uuid.uuid4())
+        now = self._agent_skill_now()
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO agent_skill_sources (
+                    id, backend, source_kind, display_name, runtime_target_id,
+                    protected_locator_ref, precedence, enabled, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    source_id,
+                    backend,
+                    source_kind,
+                    display_name.strip(),
+                    runtime_target_id.strip(),
+                    protected_locator_ref.strip(),
+                    int(precedence),
+                    1 if enabled else 0,
+                    now,
+                    now,
+                ),
+            )
+            self._mark_agent_skill_projection_pending(cursor)
+            self._record_agent_skill_audit(
+                cursor,
+                actor_id=actor_id,
+                action="agent_skill_source.created",
+                source_id=source_id,
+                after={"backend": backend, "enabled": enabled, "display_name": display_name},
+                correlation_id=correlation_id,
+            )
+        return self.get_agent_skill_source(source_id)
+
+    def get_agent_skill_source(self, source_id: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            "SELECT * FROM agent_skill_sources WHERE id = ?", (source_id,)
+        ).fetchone()
+        return self._agent_skill_source_from_row(row) if row else None
+
+    def list_agent_skill_sources(self) -> List[Dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM agent_skill_sources ORDER BY precedence, display_name, id"
+        ).fetchall()
+        return [self._agent_skill_source_from_row(row) for row in rows]
+
+    def update_agent_skill_source(
+        self,
+        source_id: str,
+        *,
+        actor_id: str,
+        display_name: str | None = None,
+        precedence: int | None = None,
+        enabled: bool | None = None,
+        correlation_id: str | None = None,
+    ) -> Dict[str, Any]:
+        before = self.get_agent_skill_source(source_id)
+        if not before:
+            raise ValueError("Agent skill source not found")
+        after = {
+            **before,
+            "display_name": display_name.strip() if display_name is not None else before["display_name"],
+            "precedence": int(precedence) if precedence is not None else before["precedence"],
+            "enabled": bool(enabled) if enabled is not None else before["enabled"],
+            "updated_at": self._agent_skill_now(),
+        }
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                UPDATE agent_skill_sources
+                SET display_name = ?, precedence = ?, enabled = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    after["display_name"],
+                    after["precedence"],
+                    1 if after["enabled"] else 0,
+                    after["updated_at"],
+                    source_id,
+                ),
+            )
+            if any(after[key] != before[key] for key in ("display_name", "precedence", "enabled")):
+                self._mark_agent_skill_projection_pending(cursor)
+            self._record_agent_skill_audit(
+                cursor,
+                actor_id=actor_id,
+                action="agent_skill_source.updated",
+                source_id=source_id,
+                before={key: before[key] for key in ("display_name", "precedence", "enabled")},
+                after={key: after[key] for key in ("display_name", "precedence", "enabled")},
+                correlation_id=correlation_id,
+            )
+        return self.get_agent_skill_source(source_id)
+
+    def _latest_agent_skill_approval(self, agent_skill_id: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT * FROM agent_skill_approvals
+            WHERE agent_skill_id = ?
+            ORDER BY approved_at DESC, rowid DESC LIMIT 1
+            """,
+            (agent_skill_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return dict(row)
+
+    def _agent_skill_catalog_from_row(self, row: sqlite3.Row) -> Dict[str, Any]:
+        item = {
+            "id": row["id"],
+            "agent_skill_id": row["id"],
+            "backend": row["backend"],
+            "runtime_target_id": row["runtime_target_id"],
+            "source_id": row["source_id"],
+            "provider_skill_name": row["provider_skill_name"],
+            "display_name": row["display_name"],
+            "description": row["description"],
+            "content_fingerprint": row["content_fingerprint"],
+            "discovery_status": row["discovery_status"],
+            "model_visible": bool(row["model_visible"]),
+            "user_invocable": bool(row["user_invocable"]),
+            "direct_tool_dispatch": bool(row["direct_tool_dispatch"]),
+            "missing_requirements": json.loads(row["missing_requirements_json"] or "{}"),
+            "provider_metadata": json.loads(row["provider_metadata_json"] or "{}"),
+            "discovered_at": row["discovered_at"],
+            "last_seen_at": row["last_seen_at"],
+            "updated_at": row["updated_at"],
+        }
+        source = self.get_agent_skill_source(item["source_id"])
+        approval = self._latest_agent_skill_approval(item["id"])
+        if source and not source["enabled"]:
+            governance_state = "source_disabled"
+        elif item["discovery_status"] != "available":
+            governance_state = "unavailable"
+        elif not approval:
+            governance_state = "pending_review"
+        elif approval["state"] == "revoked":
+            governance_state = "revoked"
+        elif approval["state"] == "approved" and approval["approved_fingerprint"] == item["content_fingerprint"]:
+            governance_state = "approved"
+        else:
+            governance_state = "changed_pending_review"
+        item["governance_state"] = governance_state
+        item["approval"] = approval
+        return item
+
+    def get_agent_skill_catalog_item(self, agent_skill_id: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            "SELECT * FROM agent_skill_catalog WHERE id = ?", (agent_skill_id,)
+        ).fetchone()
+        return self._agent_skill_catalog_from_row(row) if row else None
+
+    def list_agent_skill_catalog(self, source_id: str | None = None) -> List[Dict[str, Any]]:
+        if source_id:
+            rows = self.conn.execute(
+                "SELECT * FROM agent_skill_catalog WHERE source_id = ? ORDER BY display_name, id",
+                (source_id,),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM agent_skill_catalog ORDER BY display_name, id"
+            ).fetchall()
+        return [self._agent_skill_catalog_from_row(row) for row in rows]
+
+    def refresh_agent_skill_catalog(
+        self,
+        *,
+        source_id: str,
+        candidates: List[Dict[str, Any]],
+        actor_id: str,
+        correlation_id: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        source = self.get_agent_skill_source(source_id)
+        if not source:
+            raise ValueError("Agent skill source not found")
+        now = self._agent_skill_now()
+        seen_names: set[str] = set()
+        changed = False
+        with self.conn:
+            cursor = self.conn.cursor()
+            for candidate in candidates:
+                if candidate.get("backend") != source["backend"]:
+                    raise ValueError("Discovered Agent skill backend does not match source")
+                if candidate.get("runtime_target_id") != source["runtime_target_id"]:
+                    raise ValueError("Discovered Agent skill runtime target does not match source")
+                provider_name = str(candidate.get("provider_skill_name", "")).strip()
+                if not provider_name:
+                    raise ValueError("Discovered Agent skill name is required")
+                seen_names.add(provider_name)
+                existing = cursor.execute(
+                    """
+                    SELECT * FROM agent_skill_catalog
+                    WHERE backend = ? AND runtime_target_id = ? AND source_id = ?
+                      AND provider_skill_name = ?
+                    """,
+                    (source["backend"], source["runtime_target_id"], source_id, provider_name),
+                ).fetchone()
+                item_id = existing["id"] if existing else str(candidate.get("agent_skill_id") or uuid.uuid4())
+                if not existing and cursor.execute(
+                    "SELECT 1 FROM agent_skill_catalog WHERE id = ?", (item_id,)
+                ).fetchone():
+                    item_id = str(uuid.uuid4())
+                values = (
+                    source["backend"],
+                    source["runtime_target_id"],
+                    source_id,
+                    provider_name,
+                    str(candidate.get("display_name") or provider_name),
+                    str(candidate.get("description") or ""),
+                    str(candidate.get("content_fingerprint") or ""),
+                    str(candidate.get("discovery_status") or "invalid"),
+                    1 if candidate.get("model_visible") else 0,
+                    1 if candidate.get("user_invocable") else 0,
+                    1 if candidate.get("direct_tool_dispatch") else 0,
+                    self._agent_skill_json(candidate.get("missing_requirements") or {}),
+                    self._agent_skill_json(candidate.get("provider_metadata") or {}),
+                    str(candidate.get("discovered_at") or now),
+                    str(candidate.get("last_seen_at") or now),
+                    now,
+                )
+                if existing:
+                    old_values = tuple(existing[key] for key in (
+                        "backend", "runtime_target_id", "source_id", "provider_skill_name",
+                        "display_name", "description", "content_fingerprint", "discovery_status",
+                        "model_visible", "user_invocable", "direct_tool_dispatch",
+                        "missing_requirements_json", "provider_metadata_json", "discovered_at",
+                        "last_seen_at", "updated_at",
+                    ))
+                    changed = changed or old_values[:-1] != values[:-1]
+                    cursor.execute(
+                        """
+                        UPDATE agent_skill_catalog SET
+                            backend=?, runtime_target_id=?, source_id=?, provider_skill_name=?,
+                            display_name=?, description=?, content_fingerprint=?, discovery_status=?,
+                            model_visible=?, user_invocable=?, direct_tool_dispatch=?,
+                            missing_requirements_json=?, provider_metadata_json=?, discovered_at=?,
+                            last_seen_at=?, updated_at=? WHERE id=?
+                        """,
+                        (*values, item_id),
+                    )
+                else:
+                    changed = True
+                    cursor.execute(
+                        """
+                        INSERT INTO agent_skill_catalog (
+                            id, backend, runtime_target_id, source_id, provider_skill_name,
+                            display_name, description, content_fingerprint, discovery_status,
+                            model_visible, user_invocable, direct_tool_dispatch,
+                            missing_requirements_json, provider_metadata_json, discovered_at,
+                            last_seen_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (item_id, *values),
+                    )
+            existing_rows = cursor.execute(
+                "SELECT id, provider_skill_name, discovery_status FROM agent_skill_catalog WHERE source_id = ?",
+                (source_id,),
+            ).fetchall()
+            for row in existing_rows:
+                if row["provider_skill_name"] not in seen_names and row["discovery_status"] != "missing":
+                    changed = True
+                    cursor.execute(
+                        "UPDATE agent_skill_catalog SET discovery_status = 'missing', updated_at = ? WHERE id = ?",
+                        (now, row["id"]),
+                    )
+            if changed:
+                self._mark_agent_skill_projection_pending(cursor)
+            self._record_agent_skill_audit(
+                cursor,
+                actor_id=actor_id,
+                action="agent_skill_catalog.refreshed",
+                source_id=source_id,
+                after={"candidate_count": len(candidates), "changed": changed},
+                correlation_id=correlation_id,
+            )
+        return self.list_agent_skill_catalog(source_id)
+
+    def approve_agent_skill(
+        self,
+        *,
+        agent_skill_id: str,
+        expected_fingerprint: str,
+        approved_by: str,
+        review_notes: str = "",
+        correlation_id: str | None = None,
+    ) -> Dict[str, Any]:
+        skill = self.get_agent_skill_catalog_item(agent_skill_id)
+        if not skill:
+            raise ValueError("Agent skill not found")
+        if skill["content_fingerprint"] != expected_fingerprint:
+            raise ValueError("AGENT_SKILL_FINGERPRINT_CHANGED")
+        if skill["discovery_status"] != "available":
+            raise ValueError("Agent skill is not available")
+        approval_id = str(uuid.uuid4())
+        now = self._agent_skill_now()
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                UPDATE agent_skill_approvals SET state = 'superseded', updated_at = ?
+                WHERE agent_skill_id = ? AND state = 'approved'
+                """,
+                (now, agent_skill_id),
+            )
+            cursor.execute(
+                """
+                INSERT INTO agent_skill_approvals (
+                    id, agent_skill_id, approved_fingerprint, state, review_notes,
+                    approved_by, approved_at, updated_at
+                ) VALUES (?, ?, ?, 'approved', ?, ?, ?, ?)
+                """,
+                (approval_id, agent_skill_id, expected_fingerprint, review_notes, approved_by, now, now),
+            )
+            self._mark_agent_skill_projection_pending(cursor)
+            self._record_agent_skill_audit(
+                cursor,
+                actor_id=approved_by,
+                action="agent_skill.approved",
+                agent_skill_id=agent_skill_id,
+                approval_id=approval_id,
+                after={"approved_fingerprint": expected_fingerprint, "state": "approved"},
+                correlation_id=correlation_id,
+            )
+        return dict(self.conn.execute(
+            "SELECT * FROM agent_skill_approvals WHERE id = ?", (approval_id,)
+        ).fetchone())
+
+    def revoke_agent_skill(
+        self,
+        *,
+        agent_skill_id: str,
+        actor_id: str,
+        review_notes: str = "",
+        correlation_id: str | None = None,
+    ) -> Dict[str, Any]:
+        skill = self.get_agent_skill_catalog_item(agent_skill_id)
+        if not skill:
+            raise ValueError("Agent skill not found")
+        approval_id = str(uuid.uuid4())
+        now = self._agent_skill_now()
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "UPDATE agent_skill_approvals SET state = 'superseded', updated_at = ? WHERE agent_skill_id = ? AND state = 'approved'",
+                (now, agent_skill_id),
+            )
+            cursor.execute(
+                """
+                INSERT INTO agent_skill_approvals (
+                    id, agent_skill_id, approved_fingerprint, state, review_notes,
+                    approved_by, approved_at, updated_at
+                ) VALUES (?, ?, ?, 'revoked', ?, ?, ?, ?)
+                """,
+                (approval_id, agent_skill_id, skill["content_fingerprint"], review_notes, actor_id, now, now),
+            )
+            self._mark_agent_skill_projection_pending(cursor)
+            self._record_agent_skill_audit(
+                cursor,
+                actor_id=actor_id,
+                action="agent_skill.revoked",
+                agent_skill_id=agent_skill_id,
+                approval_id=approval_id,
+                after={"state": "revoked"},
+                correlation_id=correlation_id,
+            )
+        return dict(self.conn.execute(
+            "SELECT * FROM agent_skill_approvals WHERE id = ?", (approval_id,)
+        ).fetchone())
+
+    @staticmethod
+    def _app_agent_skill_binding_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "app_id": row["app_id"],
+            "agent_skill_id": row["agent_skill_id"],
+            "enabled": bool(row["enabled"]),
+            "created_by": row["created_by"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def create_app_agent_skill_binding(
+        self,
+        *,
+        app_id: str,
+        agent_skill_id: str,
+        created_by: str,
+        enabled: bool = True,
+        correlation_id: str | None = None,
+    ) -> Dict[str, Any]:
+        if not self.get_application(app_id):
+            raise ValueError("Application not found")
+        skill = self.get_agent_skill_catalog_item(agent_skill_id)
+        if not skill or skill["governance_state"] != "approved":
+            raise ValueError("Agent skill must have a current approval before binding")
+        existing = self.conn.execute(
+            "SELECT * FROM app_agent_skill_bindings WHERE app_id = ? AND agent_skill_id = ?",
+            (app_id, agent_skill_id),
+        ).fetchone()
+        if existing:
+            return self._app_agent_skill_binding_from_row(existing)
+        binding_id = str(uuid.uuid4())
+        now = self._agent_skill_now()
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO app_agent_skill_bindings (
+                    id, app_id, agent_skill_id, enabled, created_by, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (binding_id, app_id, agent_skill_id, 1 if enabled else 0, created_by, now, now),
+            )
+            self._mark_agent_skill_projection_pending(cursor)
+            self._record_agent_skill_audit(
+                cursor,
+                actor_id=created_by,
+                action="app_agent_skill_binding.created",
+                agent_skill_id=agent_skill_id,
+                binding_id=binding_id,
+                app_id=app_id,
+                after={"enabled": enabled},
+                correlation_id=correlation_id,
+            )
+        return self.get_app_agent_skill_binding(binding_id)
+
+    def get_app_agent_skill_binding(self, binding_id: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            "SELECT * FROM app_agent_skill_bindings WHERE id = ?", (binding_id,)
+        ).fetchone()
+        return self._app_agent_skill_binding_from_row(row) if row else None
+
+    def list_app_agent_skill_bindings(self, app_id: str) -> List[Dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM app_agent_skill_bindings WHERE app_id = ? ORDER BY created_at, id",
+            (app_id,),
+        ).fetchall()
+        return [self._app_agent_skill_binding_from_row(row) for row in rows]
+
+    def update_app_agent_skill_binding(
+        self,
+        binding_id: str,
+        *,
+        enabled: bool,
+        actor_id: str,
+        correlation_id: str | None = None,
+    ) -> Dict[str, Any]:
+        before = self.get_app_agent_skill_binding(binding_id)
+        if not before:
+            raise ValueError("Agent skill binding not found")
+        now = self._agent_skill_now()
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "UPDATE app_agent_skill_bindings SET enabled = ?, updated_at = ? WHERE id = ?",
+                (1 if enabled else 0, now, binding_id),
+            )
+            if before["enabled"] != enabled:
+                self._mark_agent_skill_projection_pending(cursor)
+            self._record_agent_skill_audit(
+                cursor,
+                actor_id=actor_id,
+                action="app_agent_skill_binding.updated",
+                agent_skill_id=before["agent_skill_id"],
+                binding_id=binding_id,
+                app_id=before["app_id"],
+                before={"enabled": before["enabled"]},
+                after={"enabled": enabled},
+                correlation_id=correlation_id,
+            )
+        return self.get_app_agent_skill_binding(binding_id)
+
+    def delete_app_agent_skill_binding(
+        self,
+        binding_id: str,
+        *,
+        actor_id: str,
+        correlation_id: str | None = None,
+    ) -> bool:
+        before = self.get_app_agent_skill_binding(binding_id)
+        if not before:
+            return False
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM app_agent_skill_bindings WHERE id = ?", (binding_id,))
+            self._mark_agent_skill_projection_pending(cursor)
+            self._record_agent_skill_audit(
+                cursor,
+                actor_id=actor_id,
+                action="app_agent_skill_binding.deleted",
+                agent_skill_id=before["agent_skill_id"],
+                binding_id=binding_id,
+                app_id=before["app_id"],
+                before={"enabled": before["enabled"]},
+                correlation_id=correlation_id,
+            )
+        return True
+
+    def list_agent_skill_audit_events(self, limit: int = 100) -> List[Dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM agent_skill_audit_events ORDER BY occurred_at DESC, rowid DESC LIMIT ?",
+            (max(1, min(int(limit), 500)),),
+        ).fetchall()
+        return [
+            {
+                **dict(row),
+                "before": json.loads(row["before_json"]) if row["before_json"] else None,
+                "after": json.loads(row["after_json"]) if row["after_json"] else None,
+            }
+            for row in rows
+        ]
+
+    def configure_agent_skill_projection(self, builder_instance_id: str) -> Dict[str, Any]:
+        state = self.get_agent_skill_projection_state()
+        current = state.get("builder_instance_id")
+        if current and current != builder_instance_id and state.get("published_revision") is not None:
+            raise ValueError("Builder instance identity cannot change after publication")
+        if current != builder_instance_id or int(state["local_revision"]) == 0:
+            with self.conn:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    "UPDATE agent_skill_projection_state SET builder_instance_id = ? WHERE singleton_id = 1",
+                    (builder_instance_id,),
+                )
+                if int(state["local_revision"]) == 0:
+                    self._mark_agent_skill_projection_pending(cursor)
+        return self.get_agent_skill_projection_state()
+
+    def get_agent_skill_projection_state(self) -> Dict[str, Any]:
+        row = self.conn.execute(
+            "SELECT * FROM agent_skill_projection_state WHERE singleton_id = 1"
+        ).fetchone()
+        return dict(row)
+
+    def list_agent_skill_projection_items(self) -> List[Dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT b.app_id, b.enabled AS binding_enabled,
+                   c.*, s.enabled AS source_enabled,
+                   a.approved_fingerprint, a.state AS approval_state
+            FROM app_agent_skill_bindings b
+            JOIN agent_skill_catalog c ON c.id = b.agent_skill_id
+            JOIN agent_skill_sources s ON s.id = c.source_id
+            JOIN agent_skill_approvals a ON a.id = (
+                SELECT a2.id FROM agent_skill_approvals a2
+                WHERE a2.agent_skill_id = c.id
+                ORDER BY a2.approved_at DESC, a2.rowid DESC LIMIT 1
+            )
+            ORDER BY b.app_id, c.backend, c.runtime_target_id, c.source_id,
+                     c.provider_skill_name, c.id
+            """
+        ).fetchall()
+        return [
+            {
+                "app_id": row["app_id"],
+                "agent_skill_id": row["id"],
+                "backend": row["backend"],
+                "runtime_target_id": row["runtime_target_id"],
+                "source_id": row["source_id"],
+                "protected_locator_ref": self.get_agent_skill_source(row["source_id"])["protected_locator_ref"],
+                "provider_skill_name": row["provider_skill_name"],
+                "display_name": row["display_name"],
+                "description": row["description"],
+                "current_fingerprint": row["content_fingerprint"],
+                "approved_fingerprint": row["approved_fingerprint"],
+                "source_enabled": bool(row["source_enabled"]) and row["discovery_status"] == "available",
+                "approval_state": row["approval_state"],
+                "binding_enabled": bool(row["binding_enabled"]),
+                "model_visible": bool(row["model_visible"]),
+                "user_invocable": bool(row["user_invocable"]),
+                "direct_tool_dispatch": bool(row["direct_tool_dispatch"]),
+            }
+            for row in rows
+        ]
+
+    def mark_agent_skill_projection_attempt(self) -> None:
+        with self.conn:
+            self.conn.execute(
+                "UPDATE agent_skill_projection_state SET last_attempt_at = ? WHERE singleton_id = 1",
+                (self._agent_skill_now(),),
+            )
+
+    def mark_agent_skill_projection_synchronized(
+        self, *, builder_instance_id: str, revision: int, digest: str
+    ) -> Dict[str, Any]:
+        state = self.get_agent_skill_projection_state()
+        if (
+            state["builder_instance_id"] != builder_instance_id
+            or state["local_revision"] != revision
+        ):
+            raise ValueError("Projection acknowledgment does not match current Builder state")
+        now = self._agent_skill_now()
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE agent_skill_projection_state
+                SET published_revision = ?, published_digest = ?, sync_status = 'synchronized',
+                    last_success_at = ?, last_error_code = NULL, last_error_message = NULL
+                WHERE singleton_id = 1
+                """,
+                (revision, digest, now),
+            )
+        return self.get_agent_skill_projection_state()
+
+    def mark_agent_skill_projection_failed(self, *, code: str, message: str) -> Dict[str, Any]:
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE agent_skill_projection_state
+                SET sync_status = 'failed', last_error_code = ?, last_error_message = ?
+                WHERE singleton_id = 1
+                """,
+                (str(code)[:128], str(message)[:1024]),
+            )
+        return self.get_agent_skill_projection_state()
 
 
 _BASE_DIR = Path(__file__).resolve().parent
