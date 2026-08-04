@@ -1074,6 +1074,30 @@ def _agent_expected_outputs_from_request(payload: ChatRequest) -> list[dict[str,
     )
 
 
+def _agent_skill_ref_from_request(payload: ChatRequest) -> dict[str, str] | None:
+    request_payload = _structured_execution_request(payload)
+    value = request_payload.get("agent_skill_ref")
+    if value is None:
+        value = request_payload.get("agentSkillRef")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail="agent_skill_ref must be an object.")
+    agent_skill_id = str(value.get("agent_skill_id") or value.get("agentSkillId") or "").strip()
+    approved_fingerprint = str(
+        value.get("approved_fingerprint") or value.get("approvedFingerprint") or ""
+    ).strip()
+    if not agent_skill_id or not approved_fingerprint:
+        raise HTTPException(
+            status_code=400,
+            detail="agent_skill_ref requires agent_skill_id and approved_fingerprint.",
+        )
+    return {
+        "agent_skill_id": agent_skill_id,
+        "approved_fingerprint": approved_fingerprint,
+    }
+
+
 def _safe_agent_output_display_name(value: str) -> str:
     normalized = " ".join(str(value or "").strip().split())
     normalized = normalized.replace("\\", "-").replace("/", "-").replace(":", "-")
@@ -1766,10 +1790,20 @@ def _handle_exec_agent_turn(
     if route.error:
         raise HTTPException(status_code=400, detail=route.error)
     command = str(route.command or "codex").strip().lower()
+    structured_request = _structured_execution_request(payload)
+    structured_backend = str(structured_request.get("agent_backend") or "").strip()
+    if structured_backend and structured_backend not in {"codex_cli", "openclaw_cli"}:
+        raise HTTPException(status_code=400, detail="Unsupported structured Agent backend.")
     agent_backend = (
-        str(route.agent_backend or "").strip()
+        structured_backend
+        or str(route.agent_backend or "").strip()
         or ("openclaw_cli" if command == "openclaw" else "codex_cli")
     )
+    structured_execution_mode = str(structured_request.get("execution_mode") or "").strip().lower()
+    if structured_execution_mode and structured_execution_mode not in {"sync", "async"}:
+        raise HTTPException(status_code=400, detail="Unsupported structured execution mode.")
+    execution_mode = structured_execution_mode or str(route.execution_mode or "sync").strip() or "sync"
+    agent_skill_ref = _agent_skill_ref_from_request(payload)
     provider_label = "OpenClaw" if agent_backend == "openclaw_cli" else "Codex"
     agent_query = str(route.agent_query or "").strip()
     if not agent_query:
@@ -1784,7 +1818,7 @@ def _handle_exec_agent_turn(
         create_from_latest_message=False,
     )
     context_payload: Dict[str, Any] = {
-        "execution_mode": str(route.execution_mode or "sync").strip() or "sync",
+        "execution_mode": execution_mode,
     }
     if snapshot is not None:
         context_payload["approved_content"] = {
@@ -1804,12 +1838,13 @@ def _handle_exec_agent_turn(
         agent_query=agent_query,
         agent_backend=agent_backend,
         agent_skill_hint=str(route.agent_skill_hint or "").strip() or None,
+        agent_skill_ref=agent_skill_ref,
         approved_content_id=snapshot.get("approved_content_id") if snapshot else None,
         approved_revision_id=snapshot.get("revision_id") if snapshot else None,
         artifact_refs=artifact_refs,
         expected_outputs=expected_outputs,
         context_payload=context_payload,
-        execution_mode=str(route.execution_mode or "sync").strip() or "sync",
+        execution_mode=execution_mode,
     )
     submit_result = _enrich_execution_result_artifacts(
         session_id=session_id,
@@ -1821,14 +1856,16 @@ def _handle_exec_agent_turn(
         lane_state["content_lane"]["latest_approved_content_id"] = snapshot.get("approved_content_id")
         lane_state["content_lane"]["latest_revision_id"] = snapshot.get("revision_id")
     lane_state["execution_lane"]["latest_execution_request_skill_id"] = (
-        f"{agent_backend}:{route.agent_skill_hint}"
+        f"{agent_backend}:{agent_skill_ref['agent_skill_id']}"
+        if agent_skill_ref
+        else f"{agent_backend}:{route.agent_skill_hint}"
         if str(route.agent_skill_hint or "").strip()
         else agent_backend
     )
     lane_state["execution_lane"]["latest_execution_request_query"] = payload.user_query
     lane_state["execution_lane"]["latest_execution_result"] = submit_result
     _record_confirmation_lane_state(lane_state, result_payload=submit_result)
-    lane_state["execution_lane"]["latest_execution_mode"] = str(route.execution_mode or "sync").strip() or "sync"
+    lane_state["execution_lane"]["latest_execution_mode"] = execution_mode
     lane_state["execution_lane"]["latest_agent_backend"] = agent_backend
     _record_login_requirement(lane_state, result_payload=submit_result)
     if submit_result.get("execution_id"):
@@ -1841,6 +1878,7 @@ def _handle_exec_agent_turn(
         "target_id": agent_backend,
         "skill_id": lane_state["execution_lane"]["latest_execution_request_skill_id"],
         "agent_skill_hint": str(route.agent_skill_hint or "").strip() or None,
+        "agent_skill_ref": agent_skill_ref,
         "agent_backend": agent_backend,
     }
     chat_repo.append(session_id, "user", payload.user_query, retrieval_summary=retrieval_summary)
@@ -1867,6 +1905,7 @@ def _handle_exec_agent_turn(
             "skill_id": lane_state["execution_lane"]["latest_execution_request_skill_id"],
             "agent_query": agent_query,
             "agent_skill_hint": str(route.agent_skill_hint or "").strip() or None,
+            "agent_skill_ref": agent_skill_ref,
             "agent_backend": agent_backend,
             "approved_content_id": snapshot.get("approved_content_id") if snapshot else None,
             "approved_revision_id": snapshot.get("revision_id") if snapshot else None,
@@ -2992,6 +3031,48 @@ async def list_exec_tools(app_id: str | None = None):
 async def list_exec_skills(app_id: str | None = None, visibility: str | None = None):
     runtime_visibility = visibility or "user"
     return {"items": _combined_skill_inventory_items(app_id=app_id, runtime_visibility=runtime_visibility)}
+
+
+@app.get("/sessions/{session_id}/exec/agent-skills")
+async def list_session_agent_skills(
+    session_id: str,
+    app_id: str,
+    user_id: str,
+    backend: str,
+):
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    if backend not in {"codex_cli", "openclaw_cli"}:
+        raise HTTPException(status_code=422, detail="Unsupported Agent backend.")
+    payload = execution_client.get_agent_skill_inventory(
+        app_id=app_id,
+        backend=backend,
+    ) or {}
+    if payload.get("_transport_error") or isinstance(payload.get("error"), dict):
+        error_payload = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+        raise HTTPException(
+            status_code=int(payload.get("_http_status") or 502),
+            detail=str(error_payload.get("message") or "Agent Skill inventory is unavailable."),
+        )
+    public_fields = (
+        "agent_skill_id",
+        "approved_fingerprint",
+        "availability",
+        "backend",
+        "description",
+        "display_name",
+        "provider_skill_name",
+    )
+    raw_items = payload.get("items", [])
+    items = [
+        {key: item.get(key) for key in public_fields}
+        for item in raw_items
+        if isinstance(item, dict) and item.get("backend") == backend
+    ] if isinstance(raw_items, list) else []
+    return {
+        "inventory_revision": payload.get("inventory_revision"),
+        "items": items,
+        "projection_status": str(payload.get("projection_status") or "unavailable"),
+    }
 
 
 @app.get("/sessions/{session_id}/approved-content")

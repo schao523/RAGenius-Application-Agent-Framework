@@ -651,7 +651,7 @@ git commit -m "feat(builder): manage and bind agent skills"
 - Produces: `GET /sessions/{session_id}/exec/agent-skills`.
 - Produces: `ExecutionSubsystemClient.get_agent_skill_inventory` and `submit_agent(..., agent_skill_ref=...)`.
 
-- [ ] **Step 1: Add failing backend tests**
+- [x] **Step 1: Add failing backend tests**
 
 Test session/app/user mismatch, backend validation, public field allowlist, unavailable projection, opaque inventory revision, structured submission, matching legacy combination, and no Builder call.
 
@@ -662,24 +662,24 @@ assert captured["agent_skill_ref"] == {
 }
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 ```powershell
 cd D:\GitHub\Codex-RAGenius-System\ragenius_app_skeleton
 python -m pytest backend/tests/test_execution_subsystem_client.py backend/tests/test_agent_skill_inventory.py backend/tests/test_chat_exec_routing.py -q
 ```
 
-- [ ] **Step 3: Implement transport and scope checks**
+- [x] **Step 3: Implement transport and scope checks**
 
 Call `_require_session_scope` before inventory lookup. Allowlist only contract public fields. Preserve typed `@exec codex use <name>` and add equivalent OpenClaw legacy parsing, but treat Composer's structured request as authoritative.
 
-- [ ] **Step 4: Verify backend execution regressions**
+- [x] **Step 4: Verify backend execution regressions**
 
 ```powershell
 python -m pytest backend/tests/test_execution_subsystem_client.py backend/tests/test_agent_skill_inventory.py backend/tests/test_chat_exec_routing.py backend/tests/test_exec_router.py -q
 ```
 
-- [ ] **Step 5: Commit app backend transport**
+- [x] **Step 5: Commit app backend transport**
 
 ```powershell
 git add ragenius_app_skeleton/backend/app ragenius_app_skeleton/backend/tests
