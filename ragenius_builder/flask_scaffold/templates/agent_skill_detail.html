@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="flex items-start justify-between gap-4 mb-5">
+  <div>
+    <p class="text-sm text-gray-600">{{ agent_skill.backend }} | {{ agent_skill.provider_skill_name }}</p>
+    <h1 class="text-3xl font-bold text-gray-950">{{ agent_skill.display_name }}</h1>
+    <p class="mt-1 text-gray-700">{{ agent_skill.description }}</p>
+  </div>
+  <a href="{{ url_for('agent_skills') }}" class="text-blue-700 font-semibold">Back to Agent Skills</a>
+</div>
+
+{% if projection_state.sync_status != 'synchronized' %}
+  <div class="mb-5 border border-amber-300 bg-amber-50 text-amber-950 rounded-lg p-4">
+    <p class="font-semibold">Pending synchronization</p>
+    <p class="text-sm">Runtime may still be using revision {{ projection_state.published_revision or 'none' }}.</p>
+  </div>
+{% endif %}
+
+<div class="grid lg:grid-cols-3 gap-5">
+  <section class="lg:col-span-2 space-y-5">
+    <article class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+      <div class="flex flex-wrap gap-2 mb-4">
+        <span class="px-2 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-800">{{ agent_skill.governance_state }}</span>
+        <span class="px-2 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-800">{{ agent_skill.discovery_status }}</span>
+      </div>
+      <dl class="grid md:grid-cols-2 gap-4 text-sm">
+        <div><dt class="font-semibold text-gray-600">Current fingerprint</dt><dd class="break-all font-mono mt-1">{{ agent_skill.content_fingerprint }}</dd></div>
+        <div><dt class="font-semibold text-gray-600">Approved fingerprint</dt><dd class="break-all font-mono mt-1">{{ agent_skill.approved_fingerprint or 'Not approved' }}</dd></div>
+        <div><dt class="font-semibold text-gray-600">Runtime target</dt><dd class="mt-1">{{ agent_skill.runtime_target_id }}</dd></div>
+        <div><dt class="font-semibold text-gray-600">Invocation</dt><dd class="mt-1">{{ 'user invocable' if agent_skill.user_invocable else 'not user invocable' }}</dd></div>
+      </dl>
+    </article>
+    <article class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+      <h2 class="text-lg font-bold">Missing requirements</h2>
+      <div class="grid md:grid-cols-4 gap-3 mt-3 text-sm">
+        {% for category, values in agent_skill.missing_requirements.items() %}
+          <div><p class="font-semibold">{{ category }}</p><p class="text-gray-600">{{ values|join(', ') if values else 'None' }}</p></div>
+        {% endfor %}
+      </div>
+    </article>
+    <article class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+      <h2 class="text-lg font-bold">Application bindings</h2>
+      <ul class="mt-3 divide-y divide-gray-200">
+        {% for binding in bindings %}
+          <li class="py-3 flex items-center justify-between gap-3">
+            <div><p>{{ binding.app_name }}</p><p class="text-sm text-gray-600">{{ 'enabled' if binding.enabled else 'disabled' }}</p></div>
+            <div class="flex items-center gap-3">
+              <form method="post" action="{{ url_for('toggle_agent_skill_binding_form', agent_skill_id=agent_skill.id, binding_id=binding.id) }}">
+                <input type="hidden" name="enabled" value="{{ 'false' if binding.enabled else 'true' }}">
+                <button type="submit" class="text-sm text-blue-700 underline">{{ 'Disable' if binding.enabled else 'Enable' }}</button>
+              </form>
+              <form method="post" action="{{ url_for('delete_agent_skill_binding_form', agent_skill_id=agent_skill.id, binding_id=binding.id) }}">
+                <button type="submit" class="text-sm text-red-700 underline">Unbind</button>
+              </form>
+            </div>
+          </li>
+        {% else %}
+          <li class="py-3 text-gray-600">Not bound to an application.</li>
+        {% endfor %}
+      </ul>
+    </article>
+  </section>
+
+  <aside class="space-y-5">
+    <section class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+      <h2 class="text-lg font-bold">Review decision</h2>
+      <form class="mt-3 space-y-3" method="post" action="{{ url_for('approve_agent_skill_form', agent_skill_id=agent_skill.id) }}">
+        <input type="hidden" name="expected_fingerprint" value="{{ agent_skill.content_fingerprint }}">
+        <label for="review_notes" class="block text-sm font-medium">Notes</label>
+        <textarea id="review_notes" name="review_notes" class="w-full rounded border-gray-300" rows="3"></textarea>
+        <button type="submit" class="w-full px-4 py-2 rounded bg-emerald-700 text-white hover:bg-emerald-800">Approve this fingerprint</button>
+      </form>
+      <form class="mt-3" method="post" action="{{ url_for('revoke_agent_skill_form', agent_skill_id=agent_skill.id) }}">
+        <button type="submit" class="w-full px-4 py-2 rounded border border-red-300 text-red-800 hover:bg-red-50">Revoke approval</button>
+      </form>
+    </section>
+    <section class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+      <h2 class="text-lg font-bold">Bind to app</h2>
+      <form class="mt-3 space-y-3" method="post" action="{{ url_for('bind_agent_skill_form', agent_skill_id=agent_skill.id) }}">
+        <select name="app_id" class="w-full rounded border-gray-300">
+          {% for app in apps %}<option value="{{ app.id }}">{{ app.name }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="w-full px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700">Create binding</button>
+      </form>
+    </section>
+  </aside>
+</div>
+{% endblock %}

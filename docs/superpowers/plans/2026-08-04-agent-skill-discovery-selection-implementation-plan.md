@@ -607,28 +607,28 @@ git commit -m "feat(builder): persist and synchronize agent skill governance"
 - Produces: source/discovery/approval/revocation/binding/synchronize routes from the Builder design.
 - Consumes: Task 9 storage/client/publisher.
 
-- [ ] **Step 1: Add failing route and rendering tests**
+- [x] **Step 1: Add failing route and rendering tests**
 
 Test administrator-only mutations, source option selection without raw paths, discovery refresh, fingerprint compare-and-set, app binding, redaction, pending synchronization warning, and `Synchronize now` acknowledgment.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 ```powershell
 python -m unittest discover -s flask_scaffold/tests -p "test_agent_skill_management.py" -v
 ```
 
-- [ ] **Step 3: Implement APIs and server-rendered pages**
+- [x] **Step 3: Implement APIs and server-rendered pages**
 
 Keep `Skills` and `Agent Skills` separate in navigation. Render current/approved fingerprint, requirements, collisions, governance state, binding state, local revision, active execution revision, last success, and bounded error. Never render `protected_locator_ref` or raw provider paths to ordinary users.
 
-- [ ] **Step 4: Verify Builder routes and existing app pages**
+- [x] **Step 4: Verify Builder routes and existing app pages**
 
 ```powershell
 python -m unittest discover -s flask_scaffold/tests -p "test_agent_skill_management.py" -v
 python -m unittest discover -s flask_scaffold/tests -p "test_skill_management.py" -v
 ```
 
-- [ ] **Step 5: Commit Builder administration UX**
+- [x] **Step 5: Commit Builder administration UX**
 
 ```powershell
 git add ragenius_builder/flask_scaffold/app.py ragenius_builder/flask_scaffold/templates ragenius_builder/flask_scaffold/tests/test_agent_skill_management.py
