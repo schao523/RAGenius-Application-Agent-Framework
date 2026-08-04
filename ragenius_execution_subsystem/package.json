@@ -14,6 +14,7 @@
     "test": "npm run build && node --experimental-test-isolation=none --test-concurrency=1 --test dist/tests/**/*.test.js",
     "smoke:agent-timeout-cleanup": "npm run build && node --experimental-test-isolation=none --test dist/tests/agents/agent-process-supervisor.test.js",
     "smoke:codex-notebooklm": "tsx scripts/smoke-codex-notebooklm-agent.ts",
+    "smoke:codex-agent-skill": "tsx scripts/smoke-codex-agent-skill.ts",
     "smoke:openclaw": "tsx scripts/smoke-openclaw-agent.ts"
   },
   "dependencies": {

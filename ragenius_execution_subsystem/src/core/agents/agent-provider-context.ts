@@ -4,6 +4,21 @@ import type {
 
 import type { ResolvedAgentArtifact } from "./agent-artifact-resolver.js";
 
+export type AgentSkillProviderSelection = {
+  activation_method:
+    | "codex_explicit_reference"
+    | "codex_prompt_guidance"
+    | "openclaw_prompt_guidance";
+  agent_skill_id: string;
+  approved_fingerprint: string;
+  backend: "codex_cli" | "openclaw_cli";
+  display_name: string;
+  observed_fingerprint: string;
+  provider_skill_name: string;
+  runtime_target_id: string;
+  source_id: string;
+};
+
 export type AgentOperationPlanItem = {
   operation_id: string;
   kind: "read" | "workspace_write" | "external_write";
@@ -29,6 +44,7 @@ export type AgentOperationPlanItem = {
 
 export type AgentProviderExecutionContext = {
   execution_id: string;
+  agent_skill_selection?: AgentSkillProviderSelection;
   authorization: {
     state: "not_required" | "confirmed";
     permission_scope: string;

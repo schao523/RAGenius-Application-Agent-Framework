@@ -31,6 +31,7 @@ import {
   type AgentSkillSelectionService
 } from "../agent-skills/agent-skill-selection-service.js";
 import type { ResolvedAgentSkillSelection } from "../agent-skills/agent-skill-types.js";
+import { projectAgentSkillSelection } from "../agent-skills/agent-skill-activation-evidence.js";
 import { PermissionEngine } from "../permissions/permission-engine.js";
 import type { PermissionPolicy } from "../permissions/permission.types.js";
 import type { BuilderSkillClient } from "../skills/builder-skill-client.js";
@@ -234,6 +235,12 @@ export class ExecutionEngine {
               blocked: agentPolicy.mode === "blocked",
               artifacts: request.artifact_refs ?? [],
               expected_outputs: expectedOutputs,
+              ...(resolvedSelection
+                ? {
+                    agent_skill_selection:
+                      projectAgentSkillSelection(resolvedSelection)
+                  }
+                : {}),
               side_effects_executed: false
             },
             logsSummary:
@@ -348,6 +355,9 @@ export class ExecutionEngine {
         }
         const providerContext: AgentProviderExecutionContext = {
           execution_id: executionId,
+          ...(resolvedSelection
+            ? { agent_skill_selection: projectAgentSkillSelection(resolvedSelection) }
+            : {}),
           authorization: {
             state: options?.approvedConfirmation ? "confirmed" : "not_required",
             permission_scope: agentPolicy.permissionScope,
@@ -367,7 +377,7 @@ export class ExecutionEngine {
           expected_outputs: request.expected_outputs ?? []
         };
         const agentResult = await provider.execute(
-          request,
+          policyRequest,
           agentPolicy,
           providerContext
         );

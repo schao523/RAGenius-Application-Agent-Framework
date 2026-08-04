@@ -64,8 +64,13 @@ function expectedOutputLines(outputs: CodexPlannedExpectedOutput[]): string[] {
   ]);
 }
 
-function notebookLmRuntimeLines(request: ExecuteAgentRequest): string[] {
-  if (request.agent_skill_hint?.trim().toLowerCase() !== "notebooklm") {
+function notebookLmRuntimeLines(
+  request: ExecuteAgentRequest,
+  selectedProviderSkillName?: string
+): string[] {
+  const effectiveSkillName =
+    selectedProviderSkillName ?? request.agent_skill_hint;
+  if (effectiveSkillName?.trim().toLowerCase() !== "notebooklm") {
     return [];
   }
 
@@ -101,8 +106,14 @@ export function buildCodexPrompt(input: {
       ? JSON.stringify(publicContext, null, 2)
       : "{}";
   const authorization = input.context.authorization;
+  const selection = input.context.agent_skill_selection;
+  const effectiveSkillName =
+    selection?.provider_skill_name ?? input.request.agent_skill_hint;
 
   return [
+    ...(selection?.activation_method === "codex_explicit_reference"
+      ? [`$${selection.provider_skill_name}`]
+      : []),
     "You are executing inside the RAGenius execution subsystem.",
     "",
     "RAGenius authorization:",
@@ -134,8 +145,16 @@ export function buildCodexPrompt(input: {
     "- Report the same path in the final artifacts array.",
     "- Do not substitute reports/, artifacts/, or another directory.",
     "",
-    `Preferred skill hint: ${input.request.agent_skill_hint ?? "auto"}`,
-    ...notebookLmRuntimeLines(input.request),
+    ...(selection
+      ? [
+          `Selected Agent skill: ${selection.provider_skill_name}`,
+          `Use the installed Codex skill named \`${selection.provider_skill_name}\` for this task.`,
+          "Follow its instructions, but do not extend the approved RAGenius operation plan.",
+          ""
+        ]
+      : []),
+    `Preferred skill hint: ${effectiveSkillName ?? "auto"}`,
+    ...notebookLmRuntimeLines(input.request, selection?.provider_skill_name),
     `App ID: ${input.request.app_id}`,
     `Session ID: ${input.request.session_id}`,
     "Untrusted provider-neutral context:",

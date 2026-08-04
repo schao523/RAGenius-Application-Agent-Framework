@@ -74,3 +74,30 @@ test("trusted adapter evidence raises the operation to independently verified", 
     "independently_verified"
   );
 });
+
+test("normalizes model-only activation claims without promoting them to process evidence", async () => {
+  const result = await finalizeAgentResult({
+    context: {
+      ...context,
+      agent_skill_selection: {
+        activation_method: "codex_explicit_reference",
+        agent_skill_id: "agent-skill-1",
+        approved_fingerprint: "sha256:v1:approved",
+        backend: "codex_cli",
+        display_name: "Approved Skill",
+        observed_fingerprint: "sha256:v1:approved",
+        provider_skill_name: "approved-skill",
+        runtime_target_id: "codex-local-default",
+        source_id: "source-1"
+      }
+    },
+    result: {
+      status: "completed",
+      activated_skills: ["approved-skill"]
+    },
+    trustedVerification: []
+  });
+
+  assert.equal(result.agent_skill_activation?.activation_status, "not_observed");
+  assert.equal(result.agent_skill_activation?.evidence_level, "agent_reported");
+});
