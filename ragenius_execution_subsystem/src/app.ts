@@ -246,6 +246,7 @@ export function createAppServices(
     overrides.executionEngine ??
     new ExecutionEngine({
       builderSkillClient,
+      agentSkillSelectionService,
       confirmationService: configuredConfirmationService,
       agentProviders: new Map<string, AgentProvider>([
         [codexCliProvider.backend, codexCliProvider],

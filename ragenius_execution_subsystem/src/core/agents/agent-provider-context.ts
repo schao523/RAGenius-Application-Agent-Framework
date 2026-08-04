@@ -14,6 +14,17 @@ export type AgentOperationPlanItem = {
     | "process_observed"
     | "provider_reported"
     | "independently_verified";
+  activation_method?:
+    | "codex_explicit_reference"
+    | "codex_prompt_guidance"
+    | "openclaw_prompt_guidance";
+  agent_skill_id?: string;
+  agent_skill_backend?: "codex_cli" | "openclaw_cli";
+  approved_fingerprint?: string;
+  observed_fingerprint?: string;
+  provider_skill_name?: string;
+  runtime_target_id?: string;
+  source_id?: string;
 };
 
 export type AgentProviderExecutionContext = {

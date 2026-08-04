@@ -7,6 +7,15 @@ import type {
   ResolvedAgentSkillSelection
 } from "./agent-skill-types.js";
 
+export function applyResolvedAgentSkillSelection(
+  request: ExecuteAgentRequest,
+  selection: ResolvedAgentSkillSelection | null
+): ExecuteAgentRequest {
+  return selection
+    ? { ...request, agent_skill_hint: selection.provider_skill_name }
+    : request;
+}
+
 export class AgentSkillSelectionError extends AppError {
   constructor(code: string, message: string) {
     super({

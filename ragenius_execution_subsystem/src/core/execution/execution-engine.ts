@@ -25,6 +25,12 @@ import {
 } from "../agents/agent-operation-planner.js";
 import { CodexCliProvider } from "../agents/codex-cli-provider.js";
 import { normalizeOpenClawOptions } from "../agents/openclaw-options.js";
+import {
+  AgentSkillSelectionError,
+  applyResolvedAgentSkillSelection,
+  type AgentSkillSelectionService
+} from "../agent-skills/agent-skill-selection-service.js";
+import type { ResolvedAgentSkillSelection } from "../agent-skills/agent-skill-types.js";
 import { PermissionEngine } from "../permissions/permission-engine.js";
 import type { PermissionPolicy } from "../permissions/permission.types.js";
 import type { BuilderSkillClient } from "../skills/builder-skill-client.js";
@@ -94,6 +100,9 @@ export class ExecutionEngine {
       }) => Promise<string>)
     | undefined;
   private readonly notebookLmProfile: string;
+  private readonly agentSkillSelectionService:
+    | Pick<AgentSkillSelectionService, "resolve">
+    | undefined;
 
   constructor(options?: {
     skillRegistry?: SkillRegistry;
@@ -115,6 +124,7 @@ export class ExecutionEngine {
       sessionId: string;
     }) => Promise<string>;
     notebookLmProfile?: string;
+    agentSkillSelectionService?: Pick<AgentSkillSelectionService, "resolve">;
   }) {
     this.skillRegistry = options?.skillRegistry ?? new SkillRegistry();
     this.builderSkillClient = options?.builderSkillClient;
@@ -127,6 +137,7 @@ export class ExecutionEngine {
       new WorkflowOrchestrator(this.toolRegistry, this.toolEngine);
     this.executionStore = options?.executionStore;
     this.notebookLmProfile = options?.notebookLmProfile?.trim() || "default";
+    this.agentSkillSelectionService = options?.agentSkillSelectionService;
     this.confirmationService =
       options?.confirmationService ??
       new ConfirmationService(new InMemoryConfirmationStore(), {
@@ -162,7 +173,23 @@ export class ExecutionEngine {
       request = executionRequestSchema.parse(requestLike);
       executionId = options?.executionId ?? this.createExecutionId();
       if (request.request_type === "execute_agent") {
-        const agentPolicy = classifyAgentRequest(request, {
+        let resolvedSelection: ResolvedAgentSkillSelection | null;
+        try {
+          resolvedSelection = await this.resolveAgentSkillSelection(request);
+        } catch (error) {
+          if (
+            options?.approvedConfirmation &&
+            error instanceof AgentSkillSelectionError
+          ) {
+            this.throwPolicyChanged();
+          }
+          throw error;
+        }
+        const policyRequest = applyResolvedAgentSkillSelection(
+          request,
+          resolvedSelection
+        );
+        const agentPolicy = classifyAgentRequest(policyRequest, {
           notebookLmProfile: this.notebookLmProfile
         });
         const provider = this.agentProviders.get(request.agent_backend);
@@ -239,7 +266,11 @@ export class ExecutionEngine {
           });
         }
 
-        const operationPlan = createAgentOperationPlan(request, agentPolicy);
+        const operationPlan = createAgentOperationPlan(
+          policyRequest,
+          agentPolicy,
+          resolvedSelection
+        );
         const agentPolicySnapshot = {
           backend: request.agent_backend,
           matched_terms: agentPolicy.matchedTerms,
@@ -720,6 +751,25 @@ export class ExecutionEngine {
 
   private createExecutionId(): string {
     return `execution_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  }
+
+  private async resolveAgentSkillSelection(
+    request: Extract<ExecutionRequest, { request_type: "execute_agent" }>
+  ): Promise<ResolvedAgentSkillSelection | null> {
+    if (this.agentSkillSelectionService) {
+      return this.agentSkillSelectionService.resolve(request);
+    }
+    if (request.agent_skill_ref) {
+      throw new AppError({
+        code: "AGENT_SKILL_RESOLUTION_UNAVAILABLE",
+        message: "Agent skill selection cannot be resolved by this execution engine.",
+        errorClass: "validation",
+        httpStatus: 503,
+        recoverable: true,
+        suggestedAction: "Configure the synchronized Agent skill selection service."
+      });
+    }
+    return null;
   }
 
   private async pauseForConfirmation(input: {
