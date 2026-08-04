@@ -6,6 +6,7 @@ This index covers the repo documentation files found under:
 - `docs/superpowers/`
 - `ragenius_builder/docs/`
 - `ragenius_execution_subsystem/docs/`
+- `ragenius_app_skeleton/docs/`
 - documentation-oriented directories under `ragenius_app/`
 
 Grouping rules used here:
@@ -24,6 +25,7 @@ Additional scan notes:
 
 ### Spec
 
+- [agent-skill-discovery-selection-contract.md](/D:/GitHub/Codex-RAGenius-System/docs/agent-skill-discovery-selection-contract.md)
 - [agent-mode-artifact-creation-reuse-design.md](/D:/GitHub/Codex-RAGenius-System/docs/agent-mode-artifact-creation-reuse-design.md)
 - [artifact-first-chat-reuse-gui-design.md](/D:/GitHub/Codex-RAGenius-System/docs/artifact-first-chat-reuse-gui-design.md)
 - [2026-06-03-ragenius-content-execution-split-contract-v2.md](/D:/GitHub/Codex-RAGenius-System/docs/2026-06-03-ragenius-content-execution-split-contract-v2.md)
@@ -35,6 +37,7 @@ Additional scan notes:
 
 ### Plan
 
+- [2026-08-04-agent-skill-discovery-selection-implementation-plan.md](/D:/GitHub/Codex-RAGenius-System/docs/superpowers/plans/2026-08-04-agent-skill-discovery-selection-implementation-plan.md)
 - [agent-mode-artifact-creation-reuse-implementation-plan.md](/D:/GitHub/Codex-RAGenius-System/docs/agent-mode-artifact-creation-reuse-implementation-plan.md)
 - [2026-05-05-generic-phase-resource-binding-contract.md](/D:/GitHub/Codex-RAGenius-System/docs/superpowers/plans/2026-05-05-generic-phase-resource-binding-contract.md)
 - [2026-05-06-application-instruction-understanding-persistence.md](/D:/GitHub/Codex-RAGenius-System/docs/superpowers/plans/2026-05-06-application-instruction-understanding-persistence.md)
@@ -101,6 +104,7 @@ Additional scan notes:
 
 ### Spec
 
+- [agent-skill-management-design.md](/D:/GitHub/Codex-RAGenius-System/ragenius_builder/docs/agent-skill-management-design.md)
 - [ragenius_builder_skill_management_contract.md](/D:/GitHub/Codex-RAGenius-System/docs/ragenius_builder_skill_management_contract.md)
 
 ### Plan
@@ -115,6 +119,7 @@ Additional scan notes:
 
 ### Spec
 
+- [agent-skill-discovery-activation-design.md](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/agent-skill-discovery-activation-design.md)
 - [api-contract.md](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/api-contract.md)
 - [architecture.md](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/architecture.md)
 - [openclaw-execution-contract.md](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/openclaw-execution-contract.md)
@@ -130,6 +135,21 @@ Additional scan notes:
 - [openclaw-cli-test-checklist.md](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/openclaw-cli-test-checklist.md)
 - [openclaw-cli-test-results-2026-06-13.md](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/openclaw-cli-test-results-2026-06-13.md)
 - [workflow-execution-map.yaml](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/workflow-execution-map.yaml)
+
+## RAGenius App Skeleton
+
+### Spec
+
+- [agent-skill-execution-composer-design.md](/D:/GitHub/Codex-RAGenius-System/ragenius_app_skeleton/docs/agent-skill-execution-composer-design.md)
+- [openclaw-execution-composer-design.md](/D:/GitHub/Codex-RAGenius-System/ragenius_app_skeleton/docs/openclaw-execution-composer-design.md)
+
+### Plan
+
+- No plan files found under `ragenius_app_skeleton/docs/`.
+
+### Other
+
+- No additional app-skeleton docs outside the files listed above were found under `ragenius_app_skeleton/docs/`.
 
 ## RAGenius App
 
