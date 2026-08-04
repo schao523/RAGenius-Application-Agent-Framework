@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/planner_output.schema.json",
+  "title": "PlannerOutput Schema v1.1c",
+  "type": "object",
+  "required": [
+    "intentType",
+    "confidence",
+    "steps",
+    "infoTypes",
+    "retrievalPlan",
+    "systemInstructionSummary",
+    "normalizedQuery",
+    "contextualQuery"
+  ],
+  "properties": {
+    "intentType": { "type": "string" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "goal"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "goal": { "type": "string" },
+          "reasoning": { "type": ["string", "null"] }
+        },
+        "additionalProperties": false
+      }
+    },
+
+    "infoTypes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+
+    "retrievalPlan": {
+      "type": "object",
+      "required": ["query_text", "top_k", "filters"],
+      "properties": {
+        "query_text": { "type": "string" },
+        "top_k": { "type": "integer", "minimum": 1, "maximum": 50 },
+        "filters": { "type": "object" },
+        "explanation": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+
+    "systemInstructionSummary": {
+      "type": "object",
+      "required": ["fromConfigPdf", "fromAdapter", "fromTemplate"],
+      "properties": {
+        "fromConfigPdf": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "fromAdapter": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "fromTemplate": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "normalizedQuery": { "type": "string" },
+    "contextualQuery": { "type": "string" }
+  },
+  "additionalProperties": false
+}
+

@@ -1,0 +1,508 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-semibold text-gray-900">Global Subsystem Settings</h1>
+    <p class="text-sm text-gray-600">Read-only view of the active environment-backed rag_subsystem configuration used by builder.</p>
+  </div>
+</div>
+
+<section class="grid gap-4 lg:grid-cols-2">
+  <article class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+    <h2 class="text-lg font-semibold text-gray-900 mb-3">Vector Store</h2>
+    <dl class="space-y-2 text-sm">
+      <div class="grid grid-cols-[12rem_1fr] gap-3">
+        <dt class="font-medium text-gray-700">Backend</dt>
+        <dd class="text-gray-900 break-all">{{ subsystem.vector_store.backend or '-' }}</dd>
+      </div>
+      <div class="grid grid-cols-[12rem_1fr] gap-3">
+        <dt class="font-medium text-gray-700">DSN</dt>
+        <dd class="text-gray-900 break-all">{{ subsystem.vector_store.dsn or '-' }}</dd>
+      </div>
+      <div class="grid grid-cols-[12rem_1fr] gap-3">
+        <dt class="font-medium text-gray-700">PGVector Fallback</dt>
+        <dd class="text-gray-900 break-all">{{ subsystem.vector_store.pgvector_fallback or '-' }}</dd>
+      </div>
+      <div class="grid grid-cols-[12rem_1fr] gap-3">
+        <dt class="font-medium text-gray-700">Bootstrap Schema</dt>
+        <dd class="text-gray-900 break-all">{{ subsystem.vector_store.bootstrap or '-' }}</dd>
+      </div>
+    </dl>
+  </article>
+
+  <article class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+    <h2 class="text-lg font-semibold text-gray-900 mb-3">Embedding</h2>
+    <dl class="space-y-2 text-sm">
+      <div class="grid grid-cols-[12rem_1fr] gap-3">
+        <dt class="font-medium text-gray-700">Backend</dt>
+        <dd class="text-gray-900 break-all">{{ subsystem.embedding.backend or '-' }}</dd>
+      </div>
+    </dl>
+  </article>
+
+  <article class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+    <h2 class="text-lg font-semibold text-gray-900 mb-3">Process Config</h2>
+    <div class="overflow-auto border border-gray-100 rounded">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50 text-gray-700">
+          <tr>
+            <th class="text-left px-3 py-2">Setting</th>
+            <th class="text-left px-3 py-2">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for key, value in subsystem.process_config.items() %}
+            <tr class="border-t border-gray-100">
+              <td class="px-3 py-2 font-medium text-gray-800">{{ key }}</td>
+              <td class="px-3 py-2 text-gray-900 break-all">{{ value }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+
+  <article class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+    <h2 class="text-lg font-semibold text-gray-900 mb-3">Retrieval Config</h2>
+    <div class="overflow-auto border border-gray-100 rounded">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50 text-gray-700">
+          <tr>
+            <th class="text-left px-3 py-2">Setting</th>
+            <th class="text-left px-3 py-2">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for key, value in subsystem.retrieval_config.items() %}
+            <tr class="border-t border-gray-100">
+              <td class="px-3 py-2 font-medium text-gray-800">{{ key }}</td>
+              <td class="px-3 py-2 text-gray-900 break-all">{{ value }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+</section>
+
+<section class="mt-6 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+  <div class="flex items-start justify-between gap-4 mb-3">
+    <div>
+      <h2 class="text-lg font-semibold text-gray-900">Runtime Integration Inventory</h2>
+      <p class="text-sm text-gray-600">Cross-family view of configured runtime integrations, including MCP, adapter-backed integrations like NotebookLM, and local/runtime-native tool families.</p>
+    </div>
+    <form method="post" action="{{ url_for('export_tools_info') }}">
+      <button type="submit" class="px-3 py-2 rounded bg-gray-800 text-white hover:bg-gray-900">Export tools_info.md</button>
+    </form>
+  </div>
+
+  {% if tools_info_export_status == "written" %}
+    <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+      tools_info.md export written to <code>{{ tools_info_export_path or 'docs/tools_info.md' }}</code>.
+    </div>
+  {% elif tools_info_export_status == "error" %}
+    <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+      tools_info.md export failed. Builder could not retrieve the execution inventory.
+    </div>
+  {% endif %}
+
+  <div class="grid gap-4 lg:grid-cols-2 mb-4">
+    <article class="border border-gray-100 rounded-lg p-4 bg-gray-50">
+      <h3 class="text-sm font-semibold text-gray-900 mb-2">Discovery Overview</h3>
+      <dl class="space-y-2 text-sm">
+        <div class="grid grid-cols-[12rem_1fr] gap-3">
+          <dt class="font-medium text-gray-700">Execution base URL</dt>
+          <dd class="text-gray-900 break-all"><code>{{ runtime_inventory.execution_base_url }}</code></dd>
+        </div>
+        <div class="grid grid-cols-[12rem_1fr] gap-3">
+          <dt class="font-medium text-gray-700">Transport OK</dt>
+          <dd class="text-gray-900">{{ "yes" if runtime_inventory.transport_ok else "no" }}</dd>
+        </div>
+        <div class="grid grid-cols-[12rem_1fr] gap-3">
+          <dt class="font-medium text-gray-700">Startup auto-discovery</dt>
+          <dd class="text-gray-900">{{ "enabled" if runtime_inventory.startup_auto_discovery else "disabled" }}</dd>
+        </div>
+        <div class="grid grid-cols-[12rem_1fr] gap-3">
+          <dt class="font-medium text-gray-700">Configured servers</dt>
+          <dd class="text-gray-900">{{ runtime_inventory.configured_servers }}</dd>
+        </div>
+        <div class="grid grid-cols-[12rem_1fr] gap-3">
+          <dt class="font-medium text-gray-700">Enabled servers</dt>
+          <dd class="text-gray-900">{{ runtime_inventory.enabled_servers }}</dd>
+        </div>
+        <div class="grid grid-cols-[12rem_1fr] gap-3">
+          <dt class="font-medium text-gray-700">Startup completed</dt>
+          <dd class="text-gray-900">{{ "yes" if runtime_inventory.startup_completed else "no" }}</dd>
+        </div>
+        <div class="grid grid-cols-[12rem_1fr] gap-3">
+          <dt class="font-medium text-gray-700">Total integrations</dt>
+          <dd class="text-gray-900">{{ runtime_inventory.integration_summary.total_integrations or 0 }}</dd>
+        </div>
+      </dl>
+    </article>
+
+    <article class="border border-gray-100 rounded-lg p-4 bg-gray-50">
+      <h3 class="text-sm font-semibold text-gray-900 mb-2">Integration Families</h3>
+      {% if runtime_inventory.integration_summary.by_family %}
+        <ul class="space-y-1 text-sm text-gray-900">
+          {% for family_name, count in runtime_inventory.integration_summary.by_family.items() %}
+            <li><code>{{ family_name }}</code>: {{ count }}</li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-sm text-gray-600">No integration summary returned.</p>
+      {% endif %}
+    </article>
+  </div>
+
+  <article class="border border-gray-100 rounded-lg p-4 bg-gray-50 mb-4">
+    <h3 class="text-sm font-semibold text-gray-900 mb-2">Endpoint Status</h3>
+    <div class="overflow-auto border border-gray-100 rounded bg-white">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50 text-gray-700">
+          <tr>
+            <th class="text-left px-3 py-2">Path</th>
+            <th class="text-left px-3 py-2">OK</th>
+            <th class="text-left px-3 py-2">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in runtime_inventory.endpoint_statuses %}
+            <tr class="border-t border-gray-100">
+              <td class="px-3 py-2 text-gray-900"><code>{{ item.path }}</code></td>
+              <td class="px-3 py-2 text-gray-900">{{ "yes" if item.ok else "no" }}</td>
+              <td class="px-3 py-2 text-gray-900">{{ item.status_code if item.status_code is not none else "-" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+
+  {% if runtime_inventory.runtime_error %}
+    <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+      Runtime status lookup failed: {{ runtime_inventory.runtime_error.message or runtime_inventory.runtime_error }}
+    </div>
+  {% endif %}
+
+  <div class="overflow-auto border border-gray-100 rounded mb-6">
+    <table class="min-w-full text-sm">
+      <thead class="bg-gray-50 text-gray-700">
+        <tr>
+          <th class="text-left px-3 py-2">Integration</th>
+          <th class="text-left px-3 py-2">Family</th>
+          <th class="text-left px-3 py-2">Configured</th>
+          <th class="text-left px-3 py-2">Enabled</th>
+          <th class="text-left px-3 py-2">Auth Configured</th>
+          <th class="text-left px-3 py-2">Tools</th>
+          <th class="text-left px-3 py-2">Details</th>
+          <th class="text-left px-3 py-2">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for integration in runtime_inventory.integrations %}
+          <tr class="border-t border-gray-100 align-top">
+            <td class="px-3 py-2 font-medium text-gray-800 break-all">{{ integration.id }}</td>
+            <td class="px-3 py-2 text-gray-900"><code>{{ integration.family }}</code></td>
+            <td class="px-3 py-2 text-gray-900">{{ "yes" if integration.configured else "no" }}</td>
+            <td class="px-3 py-2 text-gray-900">{{ "yes" if integration.enabled else "no" }}</td>
+            <td class="px-3 py-2 text-gray-900">{{ "yes" if integration.auth_configured else "no" }}</td>
+            <td class="px-3 py-2 text-gray-900">
+              <div>{{ integration.tool_count or 0 }}</div>
+              {% if integration.tool_ids %}
+                <ul class="space-y-1 mt-1">
+                  {% for tool_id in integration.tool_ids %}
+                    <li><code>{{ tool_id }}</code></li>
+                  {% endfor %}
+                </ul>
+              {% endif %}
+            </td>
+            <td class="px-3 py-2 text-gray-900">
+              {% if integration.allowed_operations %}
+                <div class="mb-2">
+                  <div class="text-xs font-medium text-gray-700">Allowed operations</div>
+                  <ul class="space-y-1">
+                    {% for operation in integration.allowed_operations %}
+                      <li><code>{{ operation }}</code></li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              {% endif %}
+              {% if integration.allowlisted_tools %}
+                <div class="mb-2">
+                  <div class="text-xs font-medium text-gray-700">Allowlisted tools</div>
+                  <ul class="space-y-1">
+                    {% for tool_name in integration.allowlisted_tools %}
+                      <li><code>{{ tool_name }}</code></li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              {% endif %}
+              {% set health = integration.health or {} %}
+              <div class="text-xs text-gray-700">Status: {{ health.status or "-" }}</div>
+              {% if health.last_error %}
+                <div class="text-xs text-red-700 mt-1">Last error: {{ health.last_error }}</div>
+              {% endif %}
+            </td>
+            <td class="px-3 py-2">
+              {% if integration.family == "mcp" %}
+                <form method="post" action="{{ url_for('refresh_mcp_provider', provider_id=integration.id) }}">
+                  <input type="hidden" name="redirect_to" value="subsystem">
+                  <button type="submit" class="px-3 py-2 rounded bg-gray-800 text-white hover:bg-gray-900">Refresh</button>
+                </form>
+              {% else %}
+                <span class="text-xs text-gray-500">-</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid gap-6 lg:grid-cols-2">
+    <article>
+      <h3 class="text-sm font-semibold text-gray-900 mb-2">Skill Authoring Coverage</h3>
+      <div class="overflow-auto border border-gray-100 rounded bg-white">
+        <table class="min-w-full text-sm">
+          <thead class="bg-gray-50 text-gray-700">
+            <tr>
+              <th class="text-left px-3 py-2">Alias</th>
+              <th class="text-left px-3 py-2">Resolved Tool</th>
+              <th class="text-left px-3 py-2">Family</th>
+              <th class="text-left px-3 py-2">Template Family</th>
+              <th class="text-left px-3 py-2">Support</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in runtime_inventory.authoring_coverage %}
+              <tr class="border-t border-gray-100">
+                <td class="px-3 py-2 font-medium text-gray-800 break-all">{{ row.alias }}</td>
+                <td class="px-3 py-2 text-gray-900 break-all">{{ row.tool_id }}</td>
+                <td class="px-3 py-2 text-gray-900"><code>{{ row.family }}</code></td>
+                <td class="px-3 py-2 text-gray-900 break-all">{{ row.template_family or "-" }}</td>
+                <td class="px-3 py-2 text-gray-900">
+                  <div>{{ row.support_level }}</div>
+                  {% if row.policy_class %}
+                    <div class="text-xs text-gray-600 mt-1">Policy: <code>{{ row.policy_class }}</code></div>
+                  {% endif %}
+                  {% if row.notes %}
+                    <ul class="mt-1 space-y-1 text-xs text-gray-600">
+                      {% for note in row.notes %}
+                        <li>{{ note }}</li>
+                      {% endfor %}
+                    </ul>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article>
+      <h3 class="text-sm font-semibold text-gray-900 mb-2">Runtime Tool Inventory</h3>
+      <div class="overflow-auto border border-gray-100 rounded bg-white">
+        <table class="min-w-full text-sm">
+          <thead class="bg-gray-50 text-gray-700">
+            <tr>
+              <th class="text-left px-3 py-2">Tool</th>
+              <th class="text-left px-3 py-2">Family</th>
+              <th class="text-left px-3 py-2">Provider</th>
+              <th class="text-left px-3 py-2">Policy</th>
+              <th class="text-left px-3 py-2">Behavior</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in runtime_inventory.tool_inventory %}
+              <tr class="border-t border-gray-100 align-top">
+                <td class="px-3 py-2 text-gray-900 break-all"><code>{{ item.tool_id }}</code></td>
+                <td class="px-3 py-2 text-gray-900"><code>{{ item.family }}</code></td>
+                <td class="px-3 py-2 text-gray-900 break-all">{{ item.provider_id }}</td>
+                <td class="px-3 py-2 text-gray-900">
+                  <div>{{ item.policy_class or "-" }}</div>
+                  <div class="text-xs text-gray-600 mt-1">
+                    scopes: {{ item.permission_scopes | join(", ") if item.permission_scopes else "-" }}
+                  </div>
+                </td>
+                <td class="px-3 py-2 text-gray-900">
+                  <div>enabled: {{ "yes" if item.enabled else "no" }}</div>
+                  <div>side-effecting: {{ "yes" if item.side_effecting else "no" }}</div>
+                  <div>timeout: {{ item.timeout_ms if item.timeout_ms is not none else "-" }}</div>
+                  <div>fallback: {{ item.fallback_strategy if item.fallback_capable else "-" }}</div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section class="mt-6 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+  <div class="flex items-start justify-between gap-4 mb-3">
+    <div>
+      <h2 class="text-lg font-semibold text-gray-900">Recent Execution Diagnostics</h2>
+      <p class="text-sm text-gray-600">Recent persisted executions that used fallback paths, so operators can see what actually ran through MCP versus REST fallback.</p>
+    </div>
+  </div>
+
+  {% set summary = runtime_inventory.recent_execution_summary or {} %}
+  <div class="grid gap-4 lg:grid-cols-2 mb-4">
+    <article class="border border-gray-100 rounded-lg p-4 bg-gray-50">
+      <h3 class="text-sm font-semibold text-gray-900 mb-2">Fallback Summary</h3>
+      <dl class="space-y-2 text-sm">
+        <div class="grid grid-cols-[12rem_1fr] gap-3">
+          <dt class="font-medium text-gray-700">Total executions</dt>
+          <dd class="text-gray-900">{{ summary.total_executions or 0 }}</dd>
+        </div>
+        <div class="grid grid-cols-[12rem_1fr] gap-3">
+          <dt class="font-medium text-gray-700">Fallback executions</dt>
+          <dd class="text-gray-900">{{ summary.fallback_executions or 0 }}</dd>
+        </div>
+      </dl>
+    </article>
+
+    <article class="border border-gray-100 rounded-lg p-4 bg-gray-50">
+      <h3 class="text-sm font-semibold text-gray-900 mb-2">Execution Paths</h3>
+      {% if summary.by_execution_path %}
+        <ul class="space-y-1 text-sm text-gray-900">
+          {% for path_name, count in summary.by_execution_path.items() %}
+            <li><code>{{ path_name }}</code>: {{ count }}</li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-sm text-gray-600">No recent execution-path data.</p>
+      {% endif %}
+    </article>
+  </div>
+
+  <div class="grid gap-4 lg:grid-cols-2 mb-4">
+    <article class="border border-gray-100 rounded-lg p-4 bg-gray-50">
+      <h3 class="text-sm font-semibold text-gray-900 mb-2">Provider Totals</h3>
+      {% if summary.by_provider %}
+        <ul class="space-y-1 text-sm text-gray-900">
+          {% for provider_id, count in summary.by_provider.items() %}
+            <li><code>{{ provider_id }}</code>: {{ count }}</li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-sm text-gray-600">No recent provider totals.</p>
+      {% endif %}
+    </article>
+
+    <article class="border border-gray-100 rounded-lg p-4 bg-gray-50">
+      <h3 class="text-sm font-semibold text-gray-900 mb-2">Tool Totals</h3>
+      {% if summary.by_tool %}
+        <ul class="space-y-1 text-sm text-gray-900">
+          {% for tool_id, count in summary.by_tool.items() %}
+            <li><code>{{ tool_id }}</code>: {{ count }}</li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-sm text-gray-600">No recent tool totals.</p>
+      {% endif %}
+    </article>
+  </div>
+
+  <div class="overflow-auto border border-gray-100 rounded">
+    <table class="min-w-full text-sm">
+      <thead class="bg-gray-50 text-gray-700">
+        <tr>
+          <th class="text-left px-3 py-2">Execution</th>
+          <th class="text-left px-3 py-2">Skill</th>
+          <th class="text-left px-3 py-2">Status</th>
+          <th class="text-left px-3 py-2">Paths</th>
+          <th class="text-left px-3 py-2">Fallbacks</th>
+          <th class="text-left px-3 py-2">Providers / Tools</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if runtime_inventory.recent_execution_diagnostics %}
+          {% for item in runtime_inventory.recent_execution_diagnostics %}
+            <tr class="border-t border-gray-100 align-top">
+              <td class="px-3 py-2 text-gray-900">
+                <div class="font-medium">{{ item.execution_id }}</div>
+                <div class="text-xs text-gray-600">{{ item.updated_at or item.created_at or '-' }}</div>
+              </td>
+              <td class="px-3 py-2 text-gray-900 break-all">{{ item.skill_id }}</td>
+              <td class="px-3 py-2 text-gray-900">{{ item.status }}</td>
+              <td class="px-3 py-2 text-gray-900">
+                {% set metadata = item.execution_metadata or {} %}
+                {% if metadata.execution_paths %}
+                  <ul class="space-y-1">
+                    {% for execution_path in metadata.execution_paths %}
+                      <li><code>{{ execution_path }}</code></li>
+                    {% endfor %}
+                  </ul>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td class="px-3 py-2 text-gray-900">
+                {% set metadata = item.execution_metadata or {} %}
+                {% if metadata.used_fallback %}
+                  {{ metadata.fallback_count or 0 }}
+                {% else %}
+                  0
+                {% endif %}
+                <div class="text-xs text-gray-600 mt-1">{{ item.logs_summary }}</div>
+              </td>
+              <td class="px-3 py-2 text-gray-900">
+                {% if metadata.provider_ids %}
+                  <div class="mb-2">
+                    <div class="text-xs font-medium text-gray-700">Providers</div>
+                    <ul class="space-y-1">
+                      {% for provider_id in metadata.provider_ids %}
+                        <li><code>{{ provider_id }}</code></li>
+                      {% endfor %}
+                    </ul>
+                  </div>
+                {% endif %}
+                {% if metadata.tool_ids %}
+                  <div>
+                    <div class="text-xs font-medium text-gray-700">Tools</div>
+                    <ul class="space-y-1">
+                      {% for tool_id in metadata.tool_ids %}
+                        <li><code>{{ tool_id }}</code></li>
+                      {% endfor %}
+                    </ul>
+                  </div>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <tr class="border-t border-gray-100">
+            <td colspan="6" class="px-3 py-4 text-sm text-gray-600">No recent fallback executions were returned.</td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="mt-6 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+  <h2 class="text-lg font-semibold text-gray-900 mb-3">Environment Variables</h2>
+  <div class="overflow-auto border border-gray-100 rounded">
+    <table class="min-w-full text-sm">
+      <thead class="bg-gray-50 text-gray-700">
+        <tr>
+          <th class="text-left px-3 py-2 w-[28%]">Variable</th>
+          <th class="text-left px-3 py-2">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in subsystem.environment %}
+          <tr class="border-t border-gray-100">
+            <td class="px-3 py-2 font-medium text-gray-800 break-all">{{ item.key }}</td>
+            <td class="px-3 py-2 text-gray-900 break-all">{{ item.value or '-' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAG Applications</title>
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen py-8">
+  <div class="container mx-auto px-4">
+    <h1 class="text-3xl font-bold mb-6 text-center">Applications</h1>
+    <div class="flex justify-end mb-4">
+      <a href="app_form.html" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Create New Application</a>
+    </div>
+    <div id="appList" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3"></div>
+  </div>
+  <script>
+    async function loadApps() {
+      const resp = await fetch('/api/apps');
+      const apps = await resp.json();
+      const list = document.getElementById('appList');
+      list.innerHTML = '';
+      apps.forEach(app => {
+        const card = document.createElement('div');
+        card.className = 'bg-white shadow p-4 rounded';
+        card.innerHTML = `
+          <h2 class="text-xl font-semibold mb-2">${app.name}</h2>
+          <p class="text-gray-700 mb-2">${app.description}</p>
+          <div class="flex justify-between items-center">
+            <a href="app_form.html?app_id=${app.id}" class="text-blue-600 hover:underline">Edit</a>
+            <a href="upload.html?app_id=${app.id}" class="text-blue-600 hover:underline">Upload</a>
+            <a href="search.html?app_id=${app.id}" class="text-blue-600 hover:underline">Search</a>
+          </div>
+        `;
+        list.appendChild(card);
+      });
+    }
+    loadApps();
+  </script>
+</body>
+</html>

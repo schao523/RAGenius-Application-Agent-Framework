@@ -1,0 +1,127 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <div>
+    <p class="text-sm text-gray-600">Builder skill management</p>
+    <h1 class="text-2xl font-semibold text-gray-900">Import Skill</h1>
+  </div>
+  <a href="{{ url_for('skills') }}" class="text-blue-700">Back</a>
+</div>
+<div class="grid lg:grid-cols-2 gap-4">
+  <form method="post" enctype="multipart/form-data" class="bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-4">
+    {% if errors %}
+      <div class="rounded border border-red-200 bg-red-50 p-3">
+        {% for err in errors %}
+          <p class="text-sm text-red-700"><code>{{ err.path }}</code>: {{ err.msg }}</p>
+        {% endfor %}
+      </div>
+    {% endif %}
+    <div>
+      <label for="archive" class="block text-sm font-medium text-gray-800">Skill Archive (.zip)</label>
+      <input id="archive" name="archive" type="file" accept=".zip,application/zip" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600" required>
+    </div>
+    <div>
+      <label for="scope" class="block text-sm font-medium text-gray-800">Scope</label>
+      <select id="scope" name="scope" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+        <option value="managed" selected>managed</option>
+        <option value="workspace">workspace</option>
+        <option value="bundled">bundled</option>
+      </select>
+    </div>
+    <div class="flex items-center gap-3">
+      <button type="submit" name="action" value="preview" class="px-4 py-2 bg-gray-800 text-white rounded hover:bg-gray-900">Preview Contract</button>
+      <button type="submit" name="action" value="import" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Import Skill</button>
+    </div>
+  </form>
+  <section class="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
+    <h2 class="text-lg font-semibold text-gray-900 mb-3">Import Preview</h2>
+    {% if preview %}
+      <div class="space-y-3">
+        <div>
+          <p class="text-sm text-gray-600">{{ preview.skill.id }}</p>
+          <p class="text-base font-semibold text-gray-900">{{ preview.skill.name }}</p>
+          <p class="text-sm text-gray-600">{{ preview.version.version }} • {{ preview.version.state }} • validation {{ preview.version.validation_status }}</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          {% if preview.version.policy_class == 'safe_read' %}
+            <span class="px-2 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">{{ preview.version.risk_label }}</span>
+          {% elif preview.version.policy_class == 'review_required' %}
+            <span class="px-2 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">{{ preview.version.risk_label }}</span>
+          {% else %}
+            <span class="px-2 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800">{{ preview.version.risk_label }}</span>
+          {% endif %}
+          <span class="text-xs text-gray-600">Template: {{ preview.version.template_family }}</span>
+          <span class="text-xs text-gray-600">Contract source: {{ preview.version.contract_source }}</span>
+        </div>
+        <p class="text-sm text-gray-700">{{ preview.version.contract_source_note }}</p>
+        <div>
+          {% if preview.version.normalization_confidence == 'high confidence first-class family' %}
+            <p class="text-sm font-semibold text-emerald-800">{{ preview.version.normalization_confidence }}</p>
+          {% elif preview.version.normalization_confidence == 'unsupported composition' %}
+            <p class="text-sm font-semibold text-rose-800">{{ preview.version.normalization_confidence }}</p>
+          {% else %}
+            <p class="text-sm font-semibold text-amber-800">{{ preview.version.normalization_confidence }}</p>
+          {% endif %}
+          <p class="text-sm text-gray-600">{{ preview.version.normalization_confidence_note }}</p>
+        </div>
+        <ul class="list-disc list-inside text-sm text-gray-700">
+          {% for item in preview.version.contract_explanation %}
+            <li>{{ item }}</li>
+          {% else %}
+            <li>No contract explanation available.</li>
+          {% endfor %}
+        </ul>
+        <div class="grid md:grid-cols-2 gap-3">
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900 mb-1">Required Tools</h3>
+            <ul class="list-disc list-inside text-sm text-gray-700">
+              {% for tool in preview.version.required_tools %}
+                <li><code>{{ tool }}</code></li>
+              {% else %}
+                <li>None</li>
+              {% endfor %}
+            </ul>
+          </div>
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900 mb-1">Required Permissions</h3>
+            <ul class="list-disc list-inside text-sm text-gray-700">
+              {% for permission in preview.version.required_permissions %}
+                <li><code>{{ permission }}</code></li>
+              {% else %}
+                <li>None</li>
+              {% endfor %}
+            </ul>
+          </div>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-gray-900 mb-1">Generated Input Notes</h3>
+          <p class="text-sm text-gray-600">{{ preview.test_input_note }}</p>
+          <ul class="list-disc list-inside text-sm text-gray-700 mt-2">
+            {% for item in preview.sample_input_reasons %}
+              <li><code>{{ item.field }}</code>: {{ item.reason }}</li>
+            {% else %}
+              <li>No generated sample fields.</li>
+            {% endfor %}
+          </ul>
+        </div>
+        <div class="grid lg:grid-cols-3 gap-3">
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900 mb-1">Input Schema</h3>
+            <pre class="text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap">{{ preview.version.input_schema_pretty }}</pre>
+          </div>
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900 mb-1">Output Schema</h3>
+            <pre class="text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap">{{ preview.version.output_schema_pretty }}</pre>
+          </div>
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900 mb-1">Workflow Preview</h3>
+            <pre class="text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap">{{ preview.version.workflow_pretty }}</pre>
+          </div>
+        </div>
+      </div>
+    {% else %}
+      <p class="text-gray-600">Upload a skill archive and choose <strong>Preview Contract</strong> to inspect the inferred runtime contract before importing.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

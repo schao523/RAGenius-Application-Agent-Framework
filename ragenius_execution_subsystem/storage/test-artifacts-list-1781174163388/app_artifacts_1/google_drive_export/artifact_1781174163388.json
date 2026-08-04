@@ -1,0 +1,19 @@
+{
+  "artifact_id": "artifact_1781174163388",
+  "artifact_type": "google_drive_export",
+  "display_name": "Execution Summary.pdf",
+  "storage_file_name": "Execution Summary.pdf",
+  "summary": "Google Drive export: Execution Summary.pdf",
+  "app_id": "app_artifacts_1",
+  "created_at": "2026-06-11T10:36:03.390Z",
+  "provider_origin": "local",
+  "mime_type": "application/pdf",
+  "size_bytes": 79,
+  "path": "D:\\GitHub\\Codex-RAGenius-System\\ragenius_execution_subsystem\\storage\\test-artifacts-list-1781174163388\\app_artifacts_1\\google_drive_export\\artifact_1781174163388.json",
+  "status": "ready",
+  "content": {
+    "name": "Execution Summary.pdf",
+    "mime_type": "application/pdf",
+    "content": "cGRm"
+  }
+}

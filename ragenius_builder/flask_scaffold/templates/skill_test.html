@@ -1,0 +1,91 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <div>
+    <p class="text-sm text-gray-600">Runtime verification</p>
+    <h1 class="text-2xl font-semibold text-gray-900">Test {{ skill.name }}</h1>
+  </div>
+  <a href="{{ url_for('skill_detail', skill_id=skill.id) }}" class="text-blue-700">Back</a>
+</div>
+<div class="grid lg:grid-cols-2 gap-4">
+  <form method="post" class="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-4">
+    {% if errors %}
+      <div class="rounded border border-red-200 bg-red-50 p-3">
+        {% for err in errors %}
+          <p class="text-sm text-red-700"><code>{{ err.path }}</code>: {{ err.msg }}</p>
+        {% endfor %}
+      </div>
+    {% endif %}
+    <div>
+      <label for="app_id" class="block text-sm font-medium text-gray-800">Application</label>
+      <select id="app_id" name="app_id" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+        {% for app in apps %}
+          <option value="{{ app.id }}" {% if selected_app_id == app.id %}selected{% endif %}>{{ app.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="skill_version" class="block text-sm font-medium text-gray-800">Version</label>
+      <select id="skill_version" name="skill_version" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+        {% for version in versions %}
+          <option value="{{ version.version }}" {% if selected_version == version.version %}selected{% endif %}>{{ version.version }} ({{ version.state }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="session_id" class="block text-sm font-medium text-gray-800">Session ID</label>
+      <input id="session_id" name="session_id" value="{{ request_payload.session_id }}" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+    </div>
+    <div>
+      <label for="input_json" class="block text-sm font-medium text-gray-800">Input JSON</label>
+      <textarea id="input_json" name="input_json" rows="12" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600 font-mono text-sm">{{ request_payload.input_json }}</textarea>
+    </div>
+    <label class="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" name="dry_run" {% if request_payload.dry_run %}checked{% endif %}> dry_run</label>
+    <label class="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" name="require_confirmation" {% if request_payload.require_confirmation %}checked{% endif %}> require_confirmation</label>
+    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Execute Via Runtime</button>
+  </form>
+  <section class="space-y-4">
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-3">
+      <h2 class="text-lg font-semibold text-gray-900">Inferred Contract</h2>
+      <div class="text-sm text-gray-700 space-y-1">
+        <p><strong>Template family:</strong> {{ test_context.template_family }}</p>
+        <p><strong>Policy class:</strong> {{ test_context.policy_class }}</p>
+        <p><strong>Contract source:</strong> {{ test_context.contract_source }}</p>
+        <p><strong>Normalization confidence:</strong> {{ test_context.normalization_confidence }}</p>
+      </div>
+      <p class="text-sm text-gray-600">{{ test_context.contract_source_note }}</p>
+      <p class="text-sm text-gray-600">{{ test_context.normalization_confidence_note }}</p>
+      <ul class="list-disc list-inside text-sm text-gray-700">
+        {% for item in test_context.contract_explanation %}
+          <li>{{ item }}</li>
+        {% else %}
+          <li>No contract explanation available.</li>
+        {% endfor %}
+      </ul>
+    </div>
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-3">
+      <h2 class="text-lg font-semibold text-gray-900">Generated Input Notes</h2>
+      <p class="text-sm text-gray-600">{{ test_context.test_input_note }}</p>
+      <ul class="list-disc list-inside text-sm text-gray-700">
+        {% for item in test_context.sample_input_reasons %}
+          <li><code>{{ item.field }}</code>: {{ item.reason }}</li>
+        {% else %}
+          <li>No generated sample fields.</li>
+        {% endfor %}
+      </ul>
+    </div>
+    <section class="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
+    <h2 class="text-lg font-semibold text-gray-900 mb-3">Raw Execution Result</h2>
+    {% if result %}
+      <div class="mb-3 text-sm text-gray-700">
+        <p><strong>HTTP status:</strong> {{ result.status_code if result.status_code is not none else 'n/a' }}</p>
+        <p><strong>Transport ok:</strong> {{ result.ok }}</p>
+      </div>
+      <pre class="bg-gray-50 border border-gray-200 rounded p-3 text-xs overflow-auto max-h-[36rem] whitespace-pre-wrap">{{ result.body | tojson(indent=2) }}</pre>
+    {% else %}
+      <p class="text-gray-600">Submit a request to inspect the normalized runtime result.</p>
+    {% endif %}
+    </section>
+  </section>
+</div>
+{% endblock %}

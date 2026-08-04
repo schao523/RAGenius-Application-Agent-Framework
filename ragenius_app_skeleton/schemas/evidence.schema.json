@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/evidence.schema.json",
+  "title": "Evidence Item Schema v1.1c",
+  "type": "object",
+  "required": ["doc_id", "title", "snippet", "score", "metadata"],
+  "properties": {
+    "doc_id": { "type": "string" },
+    "title": { "type": "string" },
+    "snippet": { "type": "string" },
+    "score": { "type": "number" },
+    "metadata": { "type": "object" },
+    "version": { "type": ["string", "null"] },
+    "location": { "type": ["string", "null"] },
+    "chunk_id": { "type": ["string", "null"] }
+  },
+  "additionalProperties": true
+}
+

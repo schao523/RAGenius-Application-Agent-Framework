@@ -1,0 +1,28 @@
+ 
+{
+  "name": "create_final_answer",
+  "description": "Generate final assistant answer with citations and safe-answer behavior.",
+  "parameters": {
+    "type": "object",
+    "required": ["content", "citations", "missing_infoTypes"],
+    "properties": {
+      "content": { "type": "string" },
+      "citations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["docId", "title", "snippet", "score"],
+          "properties": {
+            "docId": { "type": "string" },
+            "title": { "type": "string" },
+            "snippet": { "type": "string" },
+            "score": { "type": "number" },
+            "location": { "type": "string" },
+            "version": { "type": "string" }
+          }
+        }
+      },
+      "missing_infoTypes": { "type": "array", "items": { "type": "string" } }
+    }
+  }
+}

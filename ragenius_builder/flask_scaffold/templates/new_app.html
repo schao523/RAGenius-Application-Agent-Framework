@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1 class="text-2xl font-semibold text-gray-900 mb-4">Create Application</h1>
+<form method="post" class="bg-white border border-gray-200 shadow-sm rounded-lg p-6 space-y-4" aria-describedby="form-help">
+  <p id="form-help" class="text-sm text-gray-600">All fields are required. Starter questions help users begin.</p>
+  <div>
+    <label for="name" class="block text-sm font-medium text-gray-800">Name</label>
+    <input id="name" name="name" value="{{ values.get('name','') }}" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600" aria-describedby="name-error" required>
+    {% for err in errors if err['path'] == 'name' %}
+      <p id="name-error" class="text-sm text-red-700 mt-1">{{ err['msg'] }}</p>
+    {% endfor %}
+  </div>
+  <div>
+    <label for="slug" class="block text-sm font-medium text-gray-800">Slug</label>
+    <input id="slug" name="slug" value="{{ values.get('slug','') }}" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600" aria-describedby="slug-error" required>
+    {% for err in errors if err['path'] == 'slug' %}
+      <p id="slug-error" class="text-sm text-red-700 mt-1">{{ err['msg'] }}</p>
+    {% endfor %}
+  </div>
+  <div>
+    <label for="description" class="block text-sm font-medium text-gray-800">Description</label>
+    <textarea id="description" name="description" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600" rows="3">{{ values.get('description','') }}</textarea>
+  </div>
+  <fieldset class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+    <legend class="text-sm font-semibold text-gray-800">Starter Questions</legend>
+    {% for i in range(4) %}
+      <div>
+        <label for="starter_questions[{{ i }}]" class="block text-sm text-gray-700">Question {{ i+1 }}</label>
+        <input id="starter_questions[{{ i }}]" name="starter_questions[{{ i }}]" value="{{ values.get('starter_questions[{}]'.format(i),'') }}" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+      </div>
+    {% endfor %}
+  </fieldset>
+  <button type="submit" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Create</button>
+</form>
+{% endblock %}

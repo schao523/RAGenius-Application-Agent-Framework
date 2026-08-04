@@ -1,0 +1,80 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <div>
+    <p class="text-sm text-gray-600">Builder skill management</p>
+    <h1 class="text-2xl font-semibold text-gray-900">Skills</h1>
+  </div>
+  <a href="{{ url_for('import_skill') }}" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Import Skill</a>
+</div>
+<form method="get" class="bg-white border border-gray-200 rounded-lg shadow-sm p-4 mb-4 grid md:grid-cols-4 gap-3 items-end">
+  <div>
+    <label for="confidence" class="block text-sm font-medium text-gray-800">Confidence</label>
+    <select id="confidence" name="confidence" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+      <option value="" {% if not filters.confidence %}selected{% endif %}>All</option>
+      <option value="high confidence first-class family" {% if filters.confidence == 'high confidence first-class family' %}selected{% endif %}>high confidence first-class family</option>
+      <option value="default family inference supported" {% if filters.confidence == 'default family inference supported' %}selected{% endif %}>default family inference supported</option>
+      <option value="explicit schema recommended" {% if filters.confidence == 'explicit schema recommended' %}selected{% endif %}>explicit schema recommended</option>
+      <option value="unsupported composition" {% if filters.confidence == 'unsupported composition' %}selected{% endif %}>unsupported composition</option>
+    </select>
+  </div>
+  <div>
+    <label for="policy_class" class="block text-sm font-medium text-gray-800">Policy</label>
+    <select id="policy_class" name="policy_class" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+      <option value="" {% if not filters.policy_class %}selected{% endif %}>All</option>
+      <option value="safe_read" {% if filters.policy_class == 'safe_read' %}selected{% endif %}>safe_read</option>
+      <option value="review_required" {% if filters.policy_class == 'review_required' %}selected{% endif %}>review_required</option>
+      <option value="unsupported" {% if filters.policy_class == 'unsupported' %}selected{% endif %}>unsupported</option>
+    </select>
+  </div>
+  <div>
+    <label for="sort" class="block text-sm font-medium text-gray-800">Sort</label>
+    <select id="sort" name="sort" class="mt-1 w-full rounded border-gray-300 focus:border-blue-600">
+      <option value="confidence_desc" {% if filters.sort == 'confidence_desc' %}selected{% endif %}>confidence then name</option>
+      <option value="name_asc" {% if filters.sort == 'name_asc' %}selected{% endif %}>name ascending</option>
+      <option value="name_desc" {% if filters.sort == 'name_desc' %}selected{% endif %}>name descending</option>
+    </select>
+  </div>
+  <div class="flex items-center gap-3">
+    <button type="submit" class="px-4 py-2 bg-gray-800 text-white rounded hover:bg-gray-900">Apply</button>
+    <a href="{{ url_for('skills') }}" class="text-blue-700 text-sm">Reset</a>
+  </div>
+</form>
+<section class="bg-white border border-gray-200 rounded-lg shadow-sm">
+  <ul class="divide-y divide-gray-200">
+    {% for skill in skills %}
+      <li class="px-4 py-4 flex items-start justify-between gap-4">
+        <div class="space-y-2">
+          <p class="font-semibold text-gray-900">{{ skill.name }}</p>
+          <p class="text-sm text-gray-600">{{ skill.id }} • {{ skill.scope }} • {{ skill.status_summary }}</p>
+          <div class="flex flex-wrap items-center gap-2">
+            {% if skill.policy_class == 'safe_read' %}
+              <span class="px-2 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">{{ skill.risk_label }}</span>
+            {% elif skill.policy_class == 'review_required' %}
+              <span class="px-2 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">{{ skill.risk_label }}</span>
+            {% else %}
+              <span class="px-2 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800">{{ skill.risk_label }}</span>
+            {% endif %}
+            <span class="text-xs text-gray-600">Version: {{ skill.summary_version or 'n/a' }}</span>
+            <span class="text-xs text-gray-600">Template: {{ skill.template_family }}</span>
+            <span class="text-xs text-gray-600">Contract source: {{ skill.contract_source }}</span>
+          </div>
+          <div>
+            {% if skill.normalization_confidence == 'high confidence first-class family' %}
+              <p class="text-sm font-semibold text-emerald-800">{{ skill.normalization_confidence }}</p>
+            {% elif skill.normalization_confidence == 'unsupported composition' %}
+              <p class="text-sm font-semibold text-rose-800">{{ skill.normalization_confidence }}</p>
+            {% else %}
+              <p class="text-sm font-semibold text-amber-800">{{ skill.normalization_confidence }}</p>
+            {% endif %}
+            <p class="text-xs text-gray-600">{{ skill.normalization_confidence_note }}</p>
+          </div>
+        </div>
+        <a href="{{ url_for('skill_detail', skill_id=skill.id) }}" class="text-blue-700">View</a>
+      </li>
+    {% else %}
+      <li class="px-4 py-4 text-gray-600">No skills imported yet.</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

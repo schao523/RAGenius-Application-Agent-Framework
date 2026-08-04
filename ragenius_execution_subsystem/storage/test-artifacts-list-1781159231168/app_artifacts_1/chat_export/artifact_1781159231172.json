@@ -1,0 +1,20 @@
+{
+  "artifact_id": "artifact_1781159231172",
+  "artifact_type": "chat_export",
+  "display_name": "session-export.md",
+  "storage_file_name": "session-export.md",
+  "summary": "Chat export from 1 selected message",
+  "app_id": "app_artifacts_1",
+  "created_at": "2026-06-11T06:27:11.172Z",
+  "provider_origin": "local",
+  "mime_type": "text/markdown",
+  "size_bytes": 9,
+  "path": "D:\\GitHub\\Codex-RAGenius-System\\ragenius_execution_subsystem\\storage\\test-artifacts-list-1781159231168\\app_artifacts_1\\chat_export\\artifact_1781159231172.json",
+  "file_path": "D:\\GitHub\\Codex-RAGenius-System\\ragenius_execution_subsystem\\storage\\test-artifacts-list-1781159231168\\app_artifacts_1\\chat_export\\artifact_1781159231172-session-export.md",
+  "status": "ready",
+  "content": {
+    "content": "## Export",
+    "format": "md",
+    "message_count": 1
+  }
+}

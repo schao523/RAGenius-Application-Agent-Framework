@@ -1,0 +1,27 @@
+{
+  "intentType": "qa",
+  "confidence": 0.85,
+  "steps": [
+    {
+      "id": "1",
+      "title": "Identify intent",
+      "goal": "Understand question",
+      "reasoning": null
+    }
+  ],
+  "infoTypes": ["fact"],
+  "retrievalPlan": {
+    "query_text": "policy requirements",
+    "top_k": 3,
+    "filters": {},
+    "explanation": null
+  },
+  "systemInstructionSummary": {
+    "fromConfigPdf": ["Use policy docs"],
+    "fromAdapter": ["Use domain overrides"],
+    "fromTemplate": ["Use planner template"]
+  },
+  "normalizedQuery": "policy requirements",
+  "contextualQuery": "policy requirements in current context"
+}
+

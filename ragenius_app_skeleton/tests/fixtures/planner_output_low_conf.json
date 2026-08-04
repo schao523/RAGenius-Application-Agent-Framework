@@ -1,0 +1,27 @@
+{
+  "intentType": "qa",
+  "confidence": 0.4,
+  "steps": [
+    {
+      "id": "1",
+      "title": "Initial pass",
+      "goal": "Try to answer",
+      "reasoning": null
+    }
+  ],
+  "infoTypes": ["fact"],
+  "retrievalPlan": {
+    "query_text": "policy requirements",
+    "top_k": 2,
+    "filters": {},
+    "explanation": null
+  },
+  "systemInstructionSummary": {
+    "fromConfigPdf": [],
+    "fromAdapter": [],
+    "fromTemplate": []
+  },
+  "normalizedQuery": "policy requirements",
+  "contextualQuery": "policy requirements"
+}
+
