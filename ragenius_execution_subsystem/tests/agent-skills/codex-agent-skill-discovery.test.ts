@@ -301,4 +301,38 @@ describe("Codex agent skill discovery", () => {
       error.code === "AGENT_SKILL_SOURCE_AMBIGUOUS"
     ));
   });
+
+  it("marks discovery incomplete when a reported plugin source becomes unavailable", async () => {
+    const root = await temporaryRoot();
+    const discovery = new CodexAgentSkillDiscoveryAdapter({
+      limits: { maxDepth: 6, maxFileBytes: 1024, maxFiles: 20, maxTotalBytes: 4096 },
+      sourceOptions: [{
+        display_name: "Approved plugins",
+        discovery_mode: "plugin_inventory",
+        path: root,
+        precedence: 10,
+        protected_locator_ref: "plugin-root",
+        runtime_target_id: "codex-local-default"
+      }]
+    }, {
+      pluginInventory: {
+        list: async () => [{
+          name: "missing-plugin",
+          plugin_id: "missing-plugin@local",
+          source_path: path.join(root, "missing-plugin")
+        }]
+      }
+    });
+
+    const result = await discovery.discover({
+      protected_locator_ref: "plugin-root",
+      runtime_target_id: "codex-local-default",
+      source_id: "source-plugins"
+    });
+
+    assert.equal(result.complete, false);
+    assert.ok(result.errors.some((error) =>
+      error.code === "AGENT_SKILL_SOURCE_UNAVAILABLE"
+    ));
+  });
 });

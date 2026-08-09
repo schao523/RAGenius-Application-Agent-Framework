@@ -743,6 +743,7 @@ class DatabaseStore:
         try:
             self.conn.executescript(
                 """
+                BEGIN IMMEDIATE;
                 DROP TABLE IF EXISTS agent_skill_catalog_new;
                 CREATE TABLE agent_skill_catalog_new (
                     id TEXT PRIMARY KEY,
@@ -784,9 +785,13 @@ class DatabaseStore:
                 FROM agent_skill_catalog;
                 DROP TABLE agent_skill_catalog;
                 ALTER TABLE agent_skill_catalog_new RENAME TO agent_skill_catalog;
+                COMMIT;
                 """
             )
-            self.conn.commit()
+        except Exception:
+            if self.conn.in_transaction:
+                self.conn.rollback()
+            raise
         finally:
             self.conn.execute("PRAGMA foreign_keys = ON")
 

@@ -67,6 +67,19 @@ function selectedActivation(
     observationSource: string;
   }
 ): AgentSkillActivation {
+  if (evidence.providerFailed) {
+    return {
+      requested_agent_skill_id: selection.agent_skill_id,
+      requested_provider_skill_name: selection.provider_skill_name,
+      resolved_agent_skill_id: selection.agent_skill_id,
+      resolved_provider_skill_name: selection.provider_skill_name,
+      resolved_fingerprint: selection.observed_fingerprint,
+      activation_method: selection.activation_method,
+      activation_status: "not_observed",
+      evidence_level: "none",
+      evidence_summary: "The provider run failed before activation could be established."
+    };
+  }
   const evidenceLevel = evidence.processObserved
     ? "process_observed"
     : evidence.providerReferenceResolved
@@ -103,10 +116,19 @@ function normalizedPathText(value: string): string {
   return value.replaceAll("\\", "/").replace(/\/{2,}/g, "/").toLowerCase();
 }
 
-function includesSkillManifest(value: string, providerSkillName: string): boolean {
+function includesSkillManifest(
+  value: string,
+  providerSkillName: string,
+  providerSkillReference = providerSkillName
+): boolean {
   const normalized = normalizedPathText(value);
   const skillName = providerSkillName.trim().toLowerCase();
-  return Boolean(skillName) && normalized.includes(`/${skillName}/skill.md`);
+  const manifestIndex = normalized.indexOf(`/${skillName}/skill.md`);
+  if (!skillName || manifestIndex < 0) return false;
+  const referenceParts = providerSkillReference.trim().toLowerCase().split(":");
+  if (referenceParts.length === 1) return true;
+  if (referenceParts.length !== 2 || referenceParts[1] !== skillName) return false;
+  return normalized.lastIndexOf(`/${referenceParts[0]}/`, manifestIndex) >= 0;
 }
 
 function reportsSkill(value: string, providerSkillName: string): boolean {
@@ -128,7 +150,11 @@ export function activationFromCodex(input: {
   const processObserved = input.commandEvents.some((event) =>
     event.exit_code === 0 &&
     hasCodexReadCommand(event.command) &&
-    includesSkillManifest(event.command, input.selection!.provider_skill_name)
+    includesSkillManifest(
+      event.command,
+      input.selection!.provider_skill_name,
+      input.selection!.provider_skill_reference
+    )
   );
   const agentReported = input.reportedSkillNames.some((name) =>
     name.trim().toLowerCase() === input.selection!.provider_skill_name.trim().toLowerCase()

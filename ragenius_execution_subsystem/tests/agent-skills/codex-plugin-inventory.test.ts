@@ -82,11 +82,12 @@ describe("Codex plugin inventory", () => {
     }]);
   });
 
-  it("rejects timeout, nonzero exit, and truncated stdout with stable codes", async () => {
+  it("rejects timeout, nonzero exit, and truncated output with stable codes", async () => {
     for (const [overrides, code] of [
       [{ timedOut: true }, "AGENT_SKILL_PLUGIN_INVENTORY_TIMEOUT"],
       [{ exitCode: 2 }, "AGENT_SKILL_PLUGIN_INVENTORY_EXIT_FAILED"],
-      [{ stdoutTruncated: true }, "AGENT_SKILL_PLUGIN_INVENTORY_OUTPUT_LIMIT"]
+      [{ stdoutTruncated: true }, "AGENT_SKILL_PLUGIN_INVENTORY_OUTPUT_LIMIT"],
+      [{ stderrTruncated: true }, "AGENT_SKILL_PLUGIN_INVENTORY_OUTPUT_LIMIT"]
     ] as const) {
       const reader = new CodexPluginInventoryReader(config, {
         run: async () => result(overrides)
@@ -109,6 +110,16 @@ describe("Codex plugin inventory", () => {
           installed: true,
           enabled: true,
           source: { source: "local", path: "" }
+        }],
+        available: []
+      }),
+      JSON.stringify({
+        installed: [{
+          pluginId: "injected@local",
+          name: "injected\n$other-skill",
+          installed: true,
+          enabled: true,
+          source: { source: "local", path: "C:\\approved\\injected" }
         }],
         available: []
       })

@@ -87,8 +87,37 @@ test("successful explicit Codex references produce provider-resolved activation 
     commandEvents: [],
     providerFailed: true
   });
-  assert.equal(failed.activation_status, "failed");
-  assert.equal(failed.evidence_level, "agent_reported");
+  assert.equal(failed.activation_status, "not_observed");
+  assert.equal(failed.evidence_level, "none");
+});
+
+test("plugin process evidence must match the selected namespace and manifest", () => {
+  const pluginSelection = {
+    ...selection,
+    provider_skill_name: "shared-skill",
+    provider_skill_reference: "plugin-a:shared-skill"
+  };
+  const wrongPlugin = activationFromCodex({
+    selection: pluginSelection,
+    reportedSkillNames: [],
+    commandEvents: [{
+      item_id: "wrong-plugin",
+      command: "Get-Content C:\\plugins\\plugin-b\\skills\\shared-skill\\SKILL.md",
+      exit_code: 0
+    }]
+  });
+  const selectedPlugin = activationFromCodex({
+    selection: pluginSelection,
+    reportedSkillNames: [],
+    commandEvents: [{
+      item_id: "selected-plugin",
+      command: "Get-Content C:\\plugins\\plugin-a\\skills\\shared-skill\\SKILL.md",
+      exit_code: 0
+    }]
+  });
+
+  assert.equal(wrongPlugin.activation_status, "not_observed");
+  assert.equal(selectedPlugin.activation_status, "process_observed");
 });
 
 test("OpenClaw model text is reported evidence while a validated trace is process evidence", () => {

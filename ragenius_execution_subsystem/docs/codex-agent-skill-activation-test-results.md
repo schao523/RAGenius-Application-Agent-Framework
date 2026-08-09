@@ -34,8 +34,8 @@ with `AGENT_SKILL_SOURCE_NOT_ALLOWED`, as required by the fail-closed policy.
 
 | Method | Result | Duration | Evidence |
 |---|---|---:|---|
-| `$superpowers:systematic-debugging <request>` | passed | 18.1 s | process-observed successful `SKILL.md` read |
-| ordinary explicit guidance | diagnostic pass | 31.7 s | process-observed after filesystem search |
+| `$superpowers:systematic-debugging <request>` | passed | 20.3 s | process-observed successful namespace-bound `SKILL.md` read |
+| ordinary explicit guidance | diagnostic pass | 48.3 s | process-observed after filesystem search |
 
 The explicit method completed with exit code `0`, no timeout, and prompt first
 line `$superpowers:systematic-debugging`. The ordinary-guidance run remains a
@@ -52,7 +52,7 @@ Migration `20260809_codex_plugin_skill_reference` was applied successfully to
 the local `ragenius_execution` PostgreSQL database. Prisma validation passed.
 
 - Execution subsystem: lint, typecheck, and full test suite passed.
-- Builder: 87 tests passed.
+- Builder: 88 tests passed.
 - App Agent-skill inventory boundary: 2 tests passed.
 - Public execution and app inventories omit canonical references, provider
   metadata, protected locators, and filesystem paths.

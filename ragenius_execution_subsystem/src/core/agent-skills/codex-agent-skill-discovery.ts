@@ -297,6 +297,7 @@ export class CodexAgentSkillDiscoveryAdapter
       try {
         pluginRoot = await fs.realpath(plugin.source_path);
       } catch {
+        complete = false;
         errors.push({
           code: "AGENT_SKILL_SOURCE_UNAVAILABLE",
           message: "A Codex plugin source is unavailable.",

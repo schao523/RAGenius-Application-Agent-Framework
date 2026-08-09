@@ -8,7 +8,7 @@ import {
 
 const pluginSchema = z.object({
   pluginId: z.string().trim().min(1),
-  name: z.string().trim().min(1),
+  name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
   marketplaceName: z.string().trim().min(1).optional(),
   version: z.string().trim().min(1).optional(),
   installed: z.boolean(),
@@ -75,7 +75,7 @@ export class CodexPluginInventoryReader {
         "AGENT_SKILL_PLUGIN_INVENTORY_TIMEOUT"
       );
     }
-    if (result.stdoutTruncated) {
+    if (result.stdoutTruncated || result.stderrTruncated) {
       throw new CodexPluginInventoryError(
         "AGENT_SKILL_PLUGIN_INVENTORY_OUTPUT_LIMIT"
       );

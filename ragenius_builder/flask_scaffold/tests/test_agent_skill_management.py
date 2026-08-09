@@ -405,6 +405,24 @@ class AgentSkillAdminRouteTests(unittest.TestCase):
 
         self.assertEqual(source["source_kind"], "codex_plugin_inventory")
 
+    def test_source_update_rejects_client_precedence_override(self) -> None:
+        source, _ = self._create_and_discover()
+
+        rejected = self.client.patch(
+            f"/api/agent-skill-sources/{source['id']}",
+            json={"precedence": 999},
+        )
+        accepted = self.client.patch(
+            f"/api/agent-skill-sources/{source['id']}",
+            json={"precedence": 10, "display_name": "Renamed source"},
+        )
+
+        self.assertEqual(rejected.status_code, 422)
+        self.assertEqual(accepted.status_code, 200)
+        stored = self.store.get_agent_skill_source(source["id"])
+        self.assertEqual(stored["precedence"], 10)
+        self.assertEqual(stored["display_name"], "Renamed source")
+
     def test_approval_binding_and_synchronization_flow(self) -> None:
         _, skill = self._create_and_discover()
         stale = self.client.post(

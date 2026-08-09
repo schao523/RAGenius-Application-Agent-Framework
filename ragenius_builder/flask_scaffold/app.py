@@ -2081,15 +2081,27 @@ def api_create_agent_skill_source():
 def api_update_agent_skill_source(source_id):
     data = request.get_json(force=True, silent=True) or {}
     try:
+        precedence = None
+        if data.get("precedence") is not None:
+            source = store.get_agent_skill_source(source_id)
+            if not source:
+                raise ValueError("Agent skill source not found")
+            option = _match_agent_skill_source_option(source)
+            precedence = int(data["precedence"])
+            if precedence != int(option["precedence"]):
+                raise ValueError(
+                    "Agent skill source precedence is owned by the execution subsystem"
+                )
+            precedence = int(option["precedence"])
         updated = store.update_agent_skill_source(
             source_id,
             display_name=data.get("display_name"),
-            precedence=data.get("precedence"),
+            precedence=precedence,
             enabled=data.get("enabled"),
             actor_id=_agent_skill_actor_id(),
             correlation_id=request.headers.get("X-Request-Id"),
         )
-    except ValueError as exc:
+    except (ValueError, TypeError) as exc:
         status = 404 if str(exc) == "Agent skill source not found" else 422
         return jsonify({"error": {"code": "INVALID_AGENT_SKILL_SOURCE", "message": str(exc)}}), status
     return jsonify(_public_agent_skill_source(updated))
