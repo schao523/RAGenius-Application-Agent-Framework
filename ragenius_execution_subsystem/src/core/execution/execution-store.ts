@@ -17,6 +17,8 @@ export function persistedSkillIdForRequest(request: ExecutionRequest): string {
 
 function persistedAgentSkillIdForRequest(request: ExecuteAgentRequest): string {
   const backend = strOrEmpty(request.agent_backend);
+  const selectedId = strOrEmpty(request.agent_skill_ref?.agent_skill_id);
+  if (selectedId) return `${backend}:${selectedId}`;
   const hint = strOrEmpty(request.agent_skill_hint);
   return hint ? `${backend}:${hint}` : backend;
 }

@@ -4,6 +4,7 @@ import type { ExecuteAgentRequest } from "../../api/schemas/execution-request.sc
 
 import type { AgentOperationPlanItem } from "./agent-provider-context.js";
 import type { AgentPolicyDecision } from "./agent-policy.js";
+import type { ResolvedAgentSkillSelection } from "../agent-skills/agent-skill-types.js";
 
 function stableValue(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -61,42 +62,66 @@ function notebookLmPlan(request: ExecuteAgentRequest): AgentOperationPlanItem[] 
 
 export function createAgentOperationPlan(
   request: ExecuteAgentRequest,
-  policy: AgentPolicyDecision
+  policy: AgentPolicyDecision,
+  selection?: ResolvedAgentSkillSelection | null
 ): AgentOperationPlanItem[] {
+  let operations: AgentOperationPlanItem[];
   if (request.agent_skill_hint?.trim().toLowerCase() === "notebooklm") {
     const knownPlan = notebookLmPlan(request);
     if (knownPlan.length > 0) {
-      return knownPlan;
+      operations = knownPlan;
+      return bindSelection(operations, selection);
     }
   }
 
   if (policy.riskClass === "agent_read_only") {
-    return [{
+    operations = [{
       operation_id: "agent_read",
       kind: "read",
       description: request.agent_query,
       required: true,
       minimum_verification: "process_observed"
     }];
+    return bindSelection(operations, selection);
   }
 
   if (policy.riskClass === "agent_workspace_write") {
-    return [{
+    operations = [{
       operation_id: "agent_workspace_write",
       kind: "workspace_write",
       description: request.agent_query,
       required: true,
       minimum_verification: "process_observed"
     }];
+    return bindSelection(operations, selection);
   }
 
-  return [{
+  operations = [{
     operation_id: "agent_external_write",
     kind: "external_write",
     description: request.agent_query,
     required: true,
     minimum_verification: "provider_reported"
   }];
+  return bindSelection(operations, selection);
+}
+
+function bindSelection(
+  operations: AgentOperationPlanItem[],
+  selection?: ResolvedAgentSkillSelection | null
+): AgentOperationPlanItem[] {
+  if (!selection) return operations;
+  return operations.map((operation) => ({
+    ...operation,
+    activation_method: selection.activation_method,
+    agent_skill_id: selection.agent_skill_id,
+    agent_skill_backend: selection.backend,
+    approved_fingerprint: selection.approved_fingerprint,
+    observed_fingerprint: selection.observed_fingerprint,
+    provider_skill_name: selection.provider_skill_name,
+    runtime_target_id: selection.runtime_target_id,
+    source_id: selection.source_id
+  }));
 }
 
 export function fingerprintAgentPolicy(snapshot: Record<string, unknown>): string {

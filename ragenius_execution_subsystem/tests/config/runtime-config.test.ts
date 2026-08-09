@@ -97,8 +97,13 @@ describe("runtime config", () => {
     assert.equal(runtimeConfig.builder.baseUrl, "http://127.0.0.1:8011");
     assert.deepEqual(runtimeConfig.serviceAuth, {
       required: true,
-      serviceId: "ragenius_app_backend",
-      token: "service-secret"
+      credentials: [
+        {
+          serviceId: "ragenius_app_backend",
+          token: "service-secret",
+          scopes: ["execution"]
+        }
+      ]
     });
     assert.equal(runtimeConfig.network.httpProxy, "http://proxy.local:8080");
     assert.equal(runtimeConfig.fileTools.allowedRoots.length, 2);
@@ -303,6 +308,20 @@ describe("runtime config", () => {
     assert.throws(
       () => validateRuntimeConfig(runtimeConfig),
       /no service token is configured/i
+    );
+  });
+
+  it("rejects malformed scoped service credentials", () => {
+    assert.throws(
+      () =>
+        buildRuntimeConfig(
+          getEnv({
+            DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public",
+            MCP_SERVERS_JSON: "[]",
+            RAGENIUS_EXECUTION_SERVICE_CREDENTIALS_JSON: "not-json"
+          })
+        ),
+      SyntaxError
     );
   });
 });

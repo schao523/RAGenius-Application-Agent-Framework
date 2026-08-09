@@ -65,6 +65,88 @@ const providerContext: AgentProviderExecutionContext = {
   expected_outputs: []
 };
 
+const selectedProviderContext: AgentProviderExecutionContext = {
+  ...providerContext,
+  operation_plan: [{
+    operation_id: "agent_read",
+    kind: "read",
+    description: "Use the approved skill.",
+    required: true,
+    minimum_verification: "process_observed"
+  }],
+  resolved_artifacts: [],
+  agent_skill_selection: {
+    activation_method: "codex_explicit_reference",
+    agent_skill_id: "agent-skill-1",
+    approved_fingerprint: "sha256:v1:approved",
+    backend: "codex_cli",
+    display_name: "Approved Skill",
+    observed_fingerprint: "sha256:v1:approved",
+    provider_skill_name: "approved-skill",
+    runtime_target_id: "codex-local-default",
+    source_id: "source-1"
+  }
+};
+
+test("normalizes successful Codex SKILL.md read events as process-observed activation", async () => {
+  const provider = new CodexCliProvider(
+    config,
+    async (_config, bridgeRequest) => {
+      assert.equal(bridgeRequest.agent_skill_hint, "approved-skill");
+      return {
+      ok: true,
+      result: {
+        thread_id: "thread_skill",
+        turn_status: "completed",
+        final_message: JSON.stringify({
+          task_status: "completed",
+          summary: "Skill used.",
+          activated_skills: ["approved-skill"],
+          operations: [{
+            operation_id: "agent_read",
+            operation: "Use the approved skill.",
+            status: "completed"
+          }],
+          artifacts: [],
+          errors: []
+        }),
+        command_events: [{
+          item_id: "command_skill",
+          command: "Get-Content -Raw C:\\Users\\runner\\.codex\\skills\\approved-skill\\SKILL.md",
+          exit_code: 0
+        }],
+        errors: [],
+        raw_exit_code: 0,
+        malformed_line_count: 0,
+        stdout_truncated: false,
+        stderr_truncated: false
+      }
+    };
+    },
+    {
+      createWorkspace: async () => workspace,
+      stageArtifacts: async () => [],
+      cleanupWorkspaces: async () => undefined
+    }
+  );
+
+  const result = await provider.execute(
+    {
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "session_001",
+      agent_backend: "codex_cli",
+      agent_query: "Use the approved skill."
+    },
+    { ...policy, riskClass: "agent_read_only", mode: "auto_allow" },
+    selectedProviderContext
+  );
+
+  assert.ok("agent_skill_activation" in result);
+  assert.equal(result.agent_skill_activation.activation_status, "process_observed");
+  assert.equal(result.agent_skill_activation.evidence_level, "process_observed");
+});
+
 const workspace: CodexRunWorkspace = {
   root_absolute_path: "D:/runtime/codex-runs/execution_123",
   inputs_absolute_path: "D:/runtime/codex-runs/execution_123/inputs",

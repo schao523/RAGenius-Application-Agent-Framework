@@ -1,4 +1,5 @@
 import type { AgentDiagnostics } from "./agent-diagnostics.js";
+import type { AgentSkillActivation } from "../agent-skills/agent-skill-activation-evidence.js";
 
 export interface CodexCliBridgeRequest {
   app_id: string;
@@ -158,6 +159,7 @@ export interface CodexNormalizedResult {
     stdout_tail?: string;
     stderr_tail?: string;
   };
+  agent_skill_activation?: AgentSkillActivation;
 }
 
 export interface CodexCliBridgeSuccessResponse {

@@ -7,6 +7,7 @@ import { registerHealthRoutes } from "./api/routes/health.routes.js";
 import { registerSkillRoutes } from "./api/routes/skills.routes.js";
 import { registerToolRoutes } from "./api/routes/tools.routes.js";
 import { registerArtifactRoutes } from "./api/routes/artifacts.routes.js";
+import { registerAgentSkillRoutes } from "./api/routes/agent-skills.routes.js";
 import { createPrismaClient } from "./db/prisma.js";
 import type { AgentProvider } from "./core/agents/agent-provider.js";
 import type { AgentProviderExecutionContext } from "./core/agents/agent-provider-context.js";
@@ -58,6 +59,18 @@ import { ToolEngine } from "./core/tools/tool-engine.js";
 import { ToolRegistry } from "./core/tools/tool-registry.js";
 import { WorkflowOrchestrator } from "./core/workflow/workflow-orchestrator.js";
 import type { ToolDefinition } from "./core/tools/tool.types.js";
+import {
+  InMemoryAgentSkillProjectionStore,
+  type AgentSkillProjectionStore
+} from "./core/agent-skills/agent-skill-projection-store.js";
+import {
+  PrismaAgentSkillProjectionStore,
+  type PrismaAgentSkillProjectionClient
+} from "./core/agent-skills/prisma-agent-skill-projection-store.js";
+import { AgentSkillDiscoveryService } from "./core/agent-skills/agent-skill-discovery-service.js";
+import { CodexAgentSkillDiscoveryAdapter } from "./core/agent-skills/codex-agent-skill-discovery.js";
+import { OpenClawAgentSkillDiscoveryAdapter } from "./core/agent-skills/openclaw-agent-skill-discovery.js";
+import { AgentSkillSelectionService } from "./core/agent-skills/agent-skill-selection-service.js";
 
 export interface McpDiscoveryProviderState {
   discoveredToolCount: number;
@@ -74,6 +87,9 @@ export interface McpDiscoveryState {
 
 export interface AppServices {
   agentExecutionQueue: AgentExecutionQueue;
+  agentSkillDiscoveryService: AgentSkillDiscoveryService;
+  agentSkillSelectionService: AgentSkillSelectionService;
+  agentSkillProjectionStore: AgentSkillProjectionStore;
   artifactStore: ArtifactStore;
   confirmationService: ConfirmationService;
   confirmationStore: ConfirmationStore;
@@ -106,6 +122,25 @@ export function createAppServices(
     (dependencies.prismaClient
       ? new PrismaExecutionStore(dependencies.prismaClient)
       : new InMemoryExecutionStore());
+  const agentSkillProjectionStore =
+    overrides.agentSkillProjectionStore ??
+    (dependencies.prismaClient
+      ? new PrismaAgentSkillProjectionStore(
+          dependencies.prismaClient as unknown as PrismaAgentSkillProjectionClient
+        )
+      : new InMemoryAgentSkillProjectionStore());
+  const agentSkillDiscoveryService =
+    overrides.agentSkillDiscoveryService ??
+    new AgentSkillDiscoveryService([
+      new CodexAgentSkillDiscoveryAdapter(runtimeConfig.agentSkills.codex),
+      new OpenClawAgentSkillDiscoveryAdapter(runtimeConfig.agentSkills.openClaw)
+    ]);
+  const agentSkillSelectionService =
+    overrides.agentSkillSelectionService ??
+    new AgentSkillSelectionService({
+      discoveryService: agentSkillDiscoveryService,
+      projectionStore: agentSkillProjectionStore
+    });
   const executionStatusService =
     overrides.executionStatusService ??
     new ExecutionStatusService(executionStore);
@@ -211,6 +246,7 @@ export function createAppServices(
     overrides.executionEngine ??
     new ExecutionEngine({
       builderSkillClient,
+      agentSkillSelectionService,
       confirmationService: configuredConfirmationService,
       agentProviders: new Map<string, AgentProvider>([
         [codexCliProvider.backend, codexCliProvider],
@@ -290,6 +326,9 @@ export function createAppServices(
 
   return {
     agentExecutionQueue,
+    agentSkillDiscoveryService,
+    agentSkillSelectionService,
+    agentSkillProjectionStore,
     artifactStore,
     confirmationService,
     confirmationStore,
@@ -359,6 +398,7 @@ export function buildApp(
   void app.register(registerSkillRoutes, { prefix: "/v1" });
   void app.register(registerToolRoutes, { prefix: "/v1" });
   void app.register(registerArtifactRoutes, { prefix: "/v1" });
+  void app.register(registerAgentSkillRoutes, { prefix: "/v1" });
 
   return app;
 }

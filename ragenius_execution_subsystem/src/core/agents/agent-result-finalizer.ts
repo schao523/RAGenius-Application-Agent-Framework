@@ -3,6 +3,7 @@ import type { AgentProviderResult } from "./agent-provider.js";
 import { mergeAgentDiagnostics, primaryDiagnosticFromLegacy } from "./agent-diagnostics.js";
 import type { TrustedOperationVerification } from "./agent-operation-verifier.js";
 import type { OperationVerification } from "./codex-cli-types.js";
+import { fallbackAgentSkillActivation } from "../agent-skills/agent-skill-activation-evidence.js";
 
 const evidenceRank = {
   none: 0,
@@ -34,12 +35,24 @@ export async function finalizeAgentResult(input: {
   result: AgentProviderResult;
   trustedVerification: TrustedOperationVerification[];
 }): Promise<AgentProviderResult> {
-  const reported = operationRecords(input.result.operation_verification);
+  const result: AgentProviderResult = input.result.agent_skill_activation
+    ? input.result
+    : {
+        ...input.result,
+        agent_skill_activation: fallbackAgentSkillActivation({
+          selection: input.context.agent_skill_selection,
+          reportedSkillNames: input.result.activated_skills ?? [],
+          reportedText:
+            input.result.output_text ?? input.result.final_message ?? "",
+          providerFailed: input.result.status === "failed"
+        })
+      };
+  const reported = operationRecords(result.operation_verification);
   if (reported.length === 0) {
     return {
-      ...input.result,
+      ...result,
       verification_results: [
-        ...(input.result.verification_results ?? []),
+        ...(result.verification_results ?? []),
         ...input.trustedVerification
       ]
     };
@@ -69,28 +82,28 @@ export async function finalizeAgentResult(input: {
     !["failed", "not_run"].includes(evidence.status) &&
     evidenceRank[evidence.level] >= evidenceRank[plan.minimum_verification]
   );
-  const primary = primaryDiagnosticFromLegacy(input.result.diagnostics);
-  const fatalProviderFailure = input.result.status === "failed" &&
+  const primary = primaryDiagnosticFromLegacy(result.diagnostics);
+  const fatalProviderFailure = result.status === "failed" &&
     Boolean(primary?.code) && !evidenceOnlyFailureCodes.has(primary!.code);
   if (fatalProviderFailure) {
     return {
-      ...input.result,
+      ...result,
       operation_verification: reconciled,
       verification_results: [
-        ...(input.result.verification_results ?? []),
+        ...(result.verification_results ?? []),
         ...input.trustedVerification
       ]
     };
   }
 
-  const { diagnostics: _diagnostics, ...withoutDiagnostics } = input.result;
+  const { diagnostics: _diagnostics, ...withoutDiagnostics } = result;
   if (met.length === required.length) {
     return {
       ...withoutDiagnostics,
       status: "completed",
       operation_verification: reconciled,
       verification_results: [
-        ...(input.result.verification_results ?? []),
+        ...(result.verification_results ?? []),
         ...input.trustedVerification
       ]
     };
@@ -102,7 +115,7 @@ export async function finalizeAgentResult(input: {
     status,
     operation_verification: reconciled,
     verification_results: [
-      ...(input.result.verification_results ?? []),
+      ...(result.verification_results ?? []),
       ...input.trustedVerification
     ],
     diagnostics: mergeAgentDiagnostics({

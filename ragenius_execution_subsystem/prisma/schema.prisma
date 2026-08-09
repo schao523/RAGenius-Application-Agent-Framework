@@ -180,3 +180,58 @@ model ExecutionLog {
   @@index([executionId], map: "idx_execution_logs_execution_id")
   @@map("execution_logs")
 }
+
+model AgentSkillProjectionRevision {
+  id                String   @id
+  builderInstanceId String   @map("builder_instance_id")
+  revision          BigInt
+  digest            String
+  generatedAt       DateTime @map("generated_at")
+  receivedAt        DateTime @default(now()) @map("received_at")
+  status            String
+
+  items ProjectedAgentSkillGovernance[]
+  head  AgentSkillProjectionHead?
+
+  @@unique([builderInstanceId, revision], map: "agent_skill_projection_builder_revision_key")
+  @@index([status], map: "idx_agent_skill_projection_revisions_status")
+  @@map("agent_skill_projection_revisions")
+}
+
+model ProjectedAgentSkillGovernance {
+  id                     String  @id @default(uuid())
+  projectionRevisionId   String  @map("projection_revision_id")
+  appId                  String  @map("app_id")
+  agentSkillId           String  @map("agent_skill_id")
+  backend                String
+  runtimeTargetId        String  @map("runtime_target_id")
+  sourceId               String  @map("source_id")
+  protectedLocatorRef    String  @map("protected_locator_ref")
+  providerSkillName      String  @map("provider_skill_name")
+  displayName            String  @map("display_name")
+  description            String
+  currentFingerprint     String  @map("current_fingerprint")
+  approvedFingerprint    String  @map("approved_fingerprint")
+  sourceEnabled          Boolean @map("source_enabled")
+  approvalState          String  @map("approval_state")
+  bindingEnabled         Boolean @map("binding_enabled")
+  modelVisible           Boolean @map("model_visible")
+  userInvocable          Boolean @map("user_invocable")
+  directToolDispatch     Boolean @map("direct_tool_dispatch")
+
+  projectionRevision AgentSkillProjectionRevision @relation(fields: [projectionRevisionId], references: [id], onDelete: Cascade)
+
+  @@unique([projectionRevisionId, appId, agentSkillId], map: "projected_agent_skill_revision_app_skill_key")
+  @@index([projectionRevisionId, appId, backend], map: "idx_projected_agent_skill_revision_app_backend")
+  @@index([projectionRevisionId, appId, agentSkillId], map: "idx_projected_agent_skill_revision_app_skill")
+  @@map("projected_agent_skill_governance")
+}
+
+model AgentSkillProjectionHead {
+  id               String @id
+  activeRevisionId String @unique @map("active_revision_id")
+
+  activeRevision AgentSkillProjectionRevision @relation(fields: [activeRevisionId], references: [id], onDelete: Restrict)
+
+  @@map("agent_skill_projection_head")
+}

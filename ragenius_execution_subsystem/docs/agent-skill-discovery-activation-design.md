@@ -498,20 +498,22 @@ same executable, home, arguments, sandbox, and prompt envelope as production.
 The test must compare an explicit provider-supported reference, when available,
 with ordinary prompt guidance and verify the exact effective `SKILL.md` load.
 
-If that test selects prompt guidance, the Codex prompt builder receives the
-resolved selection and emits a bounded instruction before the user task:
+The production-equivalent comparison completed on 2026-08-04 with Codex CLI
+`0.146.0`. Both methods produced a process-observed read of the exact selected
+`SKILL.md`; the MVP selects the provider-supported explicit reference. The
+Codex prompt starts with:
 
 ```text
+$notebooklm
 Selected Agent skill: notebooklm
 Use the installed Codex skill named `notebooklm` for this task.
 Follow its instructions, but do not extend the approved RAGenius operation plan.
 ```
 
-If a tested provider-supported explicit reference is more reliable, the bridge
-projects that reference without weakening the rest of the prompt envelope. The
-chosen method is recorded as `codex_explicit_reference` or
-`codex_prompt_guidance` in normalized evidence. The implementation must not
-guess syntax or choose a method before this regression test passes.
+The bridge projects this reference without weakening the rest of the prompt
+envelope. Normalized evidence records `codex_explicit_reference`. Ordinary
+guidance remains a tested design fallback, but runtime execution must not
+silently change activation method for one request.
 
 Neither method includes the source path. Existing NotebookLM runtime guidance
 remains conditional on the resolved skill's provider name during the

@@ -33,6 +33,7 @@ import type {
   CodexOutputVerification,
   CodexStagedArtifact
 } from "./codex-cli-types.js";
+import { activationFromCodex } from "../agent-skills/agent-skill-activation-evidence.js";
 
 type CodexCliBridgeExecutor = (
   config: CodexCliProviderConfig,
@@ -134,6 +135,9 @@ export class CodexCliProvider implements AgentProvider {
         });
       }
       const expectedOutputs = planCodexExpectedOutputs(request);
+      const effectiveSkillName =
+        context.agent_skill_selection?.provider_skill_name ??
+        request.agent_skill_hint;
       const prompt = (this.dependencies.buildPrompt ?? buildCodexPrompt)({
         request,
         context,
@@ -146,8 +150,8 @@ export class CodexCliProvider implements AgentProvider {
         app_id: request.app_id,
         session_id: request.session_id,
         agent_query: request.agent_query,
-        ...(request.agent_skill_hint
-          ? { agent_skill_hint: request.agent_skill_hint }
+        ...(effectiveSkillName
+          ? { agent_skill_hint: effectiveSkillName }
           : {}),
         ...(request.approved_content_id
           ? { approved_content_id: request.approved_content_id }
@@ -207,14 +211,21 @@ export class CodexCliProvider implements AgentProvider {
       }
 
       if (!("turn_status" in response.result)) {
-        return response.result;
+        return {
+          ...response.result,
+          agent_skill_activation: activationFromCodex({
+            selection: context.agent_skill_selection,
+            commandEvents: [],
+            reportedSkillNames: response.result.activated_skills ?? []
+          })
+        };
       }
       let normalized = (this.dependencies.evaluateResult ?? evaluateCodexResult)({
         context,
         protocol: response.result,
         stagedInputs: stagedArtifacts,
-        ...(request.agent_skill_hint
-          ? { agentSkillHint: request.agent_skill_hint }
+        ...(effectiveSkillName
+          ? { agentSkillHint: effectiveSkillName }
           : {})
       });
       normalized.provider_metadata = {
@@ -222,6 +233,12 @@ export class CodexCliProvider implements AgentProvider {
         provider_state_access: policy.providerStateAccess,
         provider_state_labels: policy.providerStateLabels
       };
+      normalized.agent_skill_activation = activationFromCodex({
+        selection: context.agent_skill_selection,
+        commandEvents: response.result.command_events,
+        reportedSkillNames: normalized.activated_skills,
+        providerFailed: normalized.status === "failed"
+      });
       if (this.dependencies.finalizeResult) {
         normalized = await this.dependencies.finalizeResult({
           request,

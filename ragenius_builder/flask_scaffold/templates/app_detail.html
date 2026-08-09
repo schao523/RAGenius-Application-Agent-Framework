@@ -43,4 +43,28 @@
     </ul>
   </article>
 </section>
+<section class="mt-4 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+  <div class="flex items-center justify-between gap-3 mb-3">
+    <div>
+      <h2 class="text-lg font-semibold text-gray-900">Agent Skill Bindings</h2>
+      <p class="text-sm text-gray-600">Administrator-approved provider skills available to this application after synchronization.</p>
+    </div>
+    <a href="{{ url_for('agent_skills') }}" class="text-blue-700 text-sm font-semibold">Manage Agent Skills</a>
+  </div>
+  <ul class="divide-y divide-gray-200">
+    {% for binding in agent_skill_bindings %}
+      <li class="py-3 flex items-center justify-between gap-3">
+        <div>
+          <p class="font-semibold text-gray-900">{{ binding.agent_skill.display_name if binding.agent_skill else binding.agent_skill_id }}</p>
+          <p class="text-sm text-gray-600">{{ binding.agent_skill.backend if binding.agent_skill else 'unknown backend' }} | {{ 'enabled' if binding.enabled else 'disabled' }}</p>
+        </div>
+        {% if binding.agent_skill %}
+          <a href="{{ url_for('agent_skill_detail', agent_skill_id=binding.agent_skill_id) }}" class="text-blue-700">Inspect</a>
+        {% endif %}
+      </li>
+    {% else %}
+      <li class="py-3 text-gray-600">No Agent Skills are bound to this application.</li>
+    {% endfor %}
+  </ul>
+</section>
 {% endblock %}

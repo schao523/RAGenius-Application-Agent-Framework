@@ -4,6 +4,7 @@ import test from "node:test";
 import { OpenClawCliProvider } from "../../src/core/agents/openclaw-cli-provider.js";
 import type { AgentPolicyDecision } from "../../src/core/agents/agent-policy.js";
 import type { ResolvedAgentArtifact } from "../../src/core/agents/agent-artifact-resolver.js";
+import type { AgentProviderExecutionContext } from "../../src/core/agents/agent-provider-context.js";
 
 const baseConfig = {
   enabled: true,
@@ -13,6 +14,98 @@ const baseConfig = {
   workspaceRoot: "/home/openclaw/.openclaw/workspace",
   timeoutMs: 120000
 };
+
+const selectedContext: AgentProviderExecutionContext = {
+  execution_id: "execution_selected",
+  authorization: {
+    state: "not_required",
+    permission_scope: "agent.read",
+    policy_fingerprint: "a".repeat(64)
+  },
+  access_policy: {
+    workspace_access: "none",
+    provider_state_access: "scoped_write",
+    provider_state_labels: ["openclaw_agent_state"],
+    network_access: "allowlisted"
+  },
+  operation_plan: [{
+    operation_id: "agent_read",
+    kind: "read",
+    description: "Use the selected skill.",
+    required: true,
+    minimum_verification: "process_observed"
+  }],
+  resolved_artifacts: [],
+  expected_outputs: [],
+  agent_skill_selection: {
+    activation_method: "openclaw_prompt_guidance",
+    agent_skill_id: "agent-skill-1",
+    approved_fingerprint: "sha256:v1:approved",
+    backend: "openclaw_cli",
+    display_name: "Approved Skill",
+    observed_fingerprint: "sha256:v1:approved",
+    provider_skill_name: "approved-skill",
+    runtime_target_id: "main",
+    source_id: "source-1"
+  }
+};
+
+test("projects canonical OpenClaw guidance and normalizes contained session evidence", async () => {
+  let capturedPrompt = "";
+  let inspectedSessionFile = "";
+  const provider = new OpenClawCliProvider(baseConfig, {
+    bridge: async ({ prompt }) => {
+      capturedPrompt = prompt;
+      const json = {
+        status: "ok",
+        result: {
+          finalAssistantVisibleText: "I used approved-skill.",
+          meta: {
+            agentMeta: {
+              sessionFile: "/home/openclaw/.openclaw/agents/main/sessions/session.jsonl"
+            }
+          }
+        }
+      };
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify(json),
+        stderr: "",
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        json,
+        jsonParseStatus: "parsed"
+      };
+    },
+    readActivationTrace: async ({ sessionFile }) => {
+      inspectedSessionFile = sessionFile;
+      return '{"tool":"read","path":"/home/openclaw/.openclaw/skills/approved-skill/SKILL.md"}';
+    }
+  });
+
+  const result = await provider.execute(
+    {
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "openclaw_cli",
+      agent_query: "Use the selected skill."
+    },
+    fakeAgentPolicy(),
+    selectedContext
+  );
+
+  assert.match(capturedPrompt, /Selected Agent skill: approved-skill/);
+  assert.match(capturedPrompt, /installed OpenClaw skill named `approved-skill`/);
+  assert.doesNotMatch(capturedPrompt, /protected-source-ref/);
+  assert.equal(
+    inspectedSessionFile,
+    "/home/openclaw/.openclaw/agents/main/sessions/session.jsonl"
+  );
+  assert.equal(result.agent_skill_activation.activation_status, "process_observed");
+  assert.equal(result.agent_skill_activation.evidence_level, "process_observed");
+});
 
 function fakeAgentPolicy(riskClass = "agent_read_only"): AgentPolicyDecision {
   return {

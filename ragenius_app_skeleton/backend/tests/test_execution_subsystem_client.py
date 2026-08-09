@@ -143,6 +143,40 @@ def test_execute_agent_forwards_public_artifact_fields_without_trusted_context(m
     assert "policy_fingerprint" not in payload
 
 
+def test_agent_inventory_and_submission_forward_structured_skill_reference(monkeypatch):
+    captured = []
+
+    def fake_urlopen(http_request, timeout=None):
+        captured.append(http_request)
+        return _JsonResponse({"items": [], "projection_status": "active"})
+
+    monkeypatch.setattr(client_module.request, "urlopen", fake_urlopen)
+    client = ExecutionSubsystemClient("http://execution.local/v1")
+
+    client.get_agent_skill_inventory(app_id="app 1", backend="openclaw_cli")
+    client.submit_agent(
+        app_id="app 1",
+        session_id="session 1",
+        agent_query="Summarize the approved content.",
+        agent_backend="openclaw_cli",
+        agent_skill_ref={
+            "agent_skill_id": "agent-skill-1",
+            "approved_fingerprint": "sha256:v1:abc",
+        },
+    )
+
+    assert parse_qs(urlparse(captured[0].full_url).query) == {
+        "app_id": ["app 1"],
+        "backend": ["openclaw_cli"],
+    }
+    assert urlparse(captured[0].full_url).path.endswith("/agent-skills/inventory")
+    submitted = json.loads(captured[1].data.decode("utf-8"))
+    assert submitted["agent_skill_ref"] == {
+        "agent_skill_id": "agent-skill-1",
+        "approved_fingerprint": "sha256:v1:abc",
+    }
+
+
 def test_client_normalizes_response_timeout(monkeypatch):
     def fake_urlopen(_http_request, timeout=None):
         assert timeout == 7

@@ -6,6 +6,8 @@ import {
 } from "../../src/api/schemas/execution-request.schema.js";
 import type { AgentProvider } from "../../src/core/agents/agent-provider.js";
 import type { AgentProviderExecutionContext } from "../../src/core/agents/agent-provider-context.js";
+import type { AgentSkillSelectionService } from "../../src/core/agent-skills/agent-skill-selection-service.js";
+import type { ResolvedAgentSkillSelection } from "../../src/core/agent-skills/agent-skill-types.js";
 import {
   createAgentOperationPlan
 } from "../../src/core/agents/agent-operation-planner.js";
@@ -15,6 +17,20 @@ import { persistedSkillIdForRequest } from "../../src/core/execution/execution-s
 import { buildApp } from "../../src/app.js";
 
 describe("execute_agent requests", () => {
+  const approvedSelection: ResolvedAgentSkillSelection = {
+    activation_method: "codex_explicit_reference",
+    agent_skill_id: "agent-skill-1",
+    approved_fingerprint: "sha256:v1:approved",
+    backend: "codex_cli",
+    display_name: "Approved Skill",
+    observed_fingerprint: "sha256:v1:approved",
+    protected_locator_ref: "protected-source-ref",
+    provider_skill_name: "approved-skill",
+    resolved_at: "2026-08-04T00:00:00.000Z",
+    runtime_target_id: "codex-local-default",
+    source_id: "source-1"
+  };
+
   it("accepts openclaw_cli as an execute_agent backend", () => {
     const parsed = executionRequestSchema.parse({
       request_type: "execute_agent",
@@ -166,6 +182,96 @@ describe("execute_agent requests", () => {
     assert.deepEqual(result.execution_metadata?.provider_ids, ["openclaw_cli"]);
   });
 
+  it("resolves an approved skill before planning and binds its identity to every operation", async () => {
+    const lifecycle: string[] = [];
+    let capturedContext: AgentProviderExecutionContext | undefined;
+    let capturedSkillHint = "";
+    const selectionService = {
+      async resolve() {
+        lifecycle.push("resolve");
+        return approvedSelection;
+      }
+    } as unknown as AgentSkillSelectionService;
+    const provider: AgentProvider = {
+      backend: "codex_cli",
+      async execute(providerRequest, _policy, context) {
+        lifecycle.push("provider");
+        capturedSkillHint = providerRequest.agent_skill_hint ?? "";
+        capturedContext = context;
+        return { status: "completed" };
+      }
+    };
+    const engine = new ExecutionEngine({
+      agentProviders: new Map([["codex_cli", provider]]),
+      agentSkillSelectionService: selectionService
+    });
+
+    const result = await engine.execute({
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "codex_cli",
+      agent_query: "Inspect the workspace without changing it.",
+      agent_skill_ref: {
+        agent_skill_id: "agent-skill-1",
+        approved_fingerprint: "sha256:v1:approved"
+      }
+    });
+
+    assert.equal(result.status, "completed");
+    assert.deepEqual(lifecycle, ["resolve", "provider"]);
+    assert.equal(capturedSkillHint, "approved-skill");
+    assert.equal(capturedContext?.operation_plan[0]?.agent_skill_id, "agent-skill-1");
+    assert.equal(capturedContext?.operation_plan[0]?.provider_skill_name, "approved-skill");
+    assert.equal(
+      capturedContext?.operation_plan[0]?.approved_fingerprint,
+      "sha256:v1:approved"
+    );
+    assert.equal(
+      capturedContext?.operation_plan[0]?.observed_fingerprint,
+      "sha256:v1:approved"
+    );
+    assert.equal(capturedContext?.operation_plan[0]?.runtime_target_id, "codex-local-default");
+    assert.equal(capturedContext?.operation_plan[0]?.activation_method, "codex_explicit_reference");
+    assert.equal(capturedContext?.agent_skill_selection?.agent_skill_id, "agent-skill-1");
+    assert.equal(
+      JSON.stringify(capturedContext?.agent_skill_selection).includes("protected-source-ref"),
+      false
+    );
+  });
+
+  it("returns the safe resolved selection in explicit Agent dry runs", async () => {
+    const engine = new ExecutionEngine({
+      agentProviders: new Map([[
+        "codex_cli",
+        { backend: "codex_cli", execute: async () => ({ status: "completed" }) }
+      ]]),
+      agentSkillSelectionService: {
+        resolve: async () => approvedSelection
+      }
+    });
+
+    const result = await engine.execute({
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "codex_cli",
+      agent_query: "Inspect the workspace.",
+      agent_skill_ref: {
+        agent_skill_id: "agent-skill-1",
+        approved_fingerprint: "sha256:v1:approved"
+      },
+      execution_options: { dry_run: true }
+    });
+
+    const dryRunSelection = result.result.agent_skill_selection as Record<string, unknown>;
+    assert.equal(dryRunSelection.agent_skill_id, "agent-skill-1");
+    assert.equal(
+      JSON.stringify(dryRunSelection).includes("protected-source-ref"),
+      false
+    );
+  });
+
   it("uses the provider terminal status as the top-level status", async () => {
     const failedProvider: AgentProvider = {
       backend: "openclaw_cli",
@@ -295,6 +401,21 @@ describe("execute_agent requests", () => {
         agent_skill_hint: "notebooklm"
       }),
       "codex_cli:notebooklm"
+    );
+
+    assert.equal(
+      persistedSkillIdForRequest({
+        request_type: "execute_agent",
+        app_id: "app_001",
+        session_id: "sess_001",
+        agent_backend: "codex_cli",
+        agent_query: "Use the approved skill.",
+        agent_skill_ref: {
+          agent_skill_id: "agent-skill-1",
+          approved_fingerprint: "sha256:v1:approved"
+        }
+      }),
+      "codex_cli:agent-skill-1"
     );
   });
 

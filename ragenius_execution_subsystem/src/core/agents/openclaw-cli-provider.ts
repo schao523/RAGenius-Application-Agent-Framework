@@ -29,6 +29,11 @@ import {
   transferOpenClawInputViaWsl,
   verifyOpenClawOutputs
 } from "./openclaw-workspace.js";
+import {
+  activationFromOpenClaw,
+  extractOpenClawSessionFile,
+  readContainedOpenClawSessionTrace
+} from "../agent-skills/agent-skill-activation-evidence.js";
 
 type PersistedAgentOutputArtifact = {
   artifact_id: string;
@@ -89,6 +94,12 @@ export type OpenClawCliProviderDependencies = {
     context: AgentProviderExecutionContext;
     result: OpenClawProviderResult;
   }) => Promise<OpenClawProviderResult>;
+  readActivationTrace?: (input: {
+    wslDistro: string;
+    agentId: string;
+    sessionFile: string;
+    workspaceRoot?: string;
+  }) => Promise<string>;
 };
 
 export class OpenClawCliProvider implements AgentProvider {
@@ -166,7 +177,10 @@ export class OpenClawCliProvider implements AgentProvider {
     const prompt = buildOpenClawPrompt({
       request,
       workspaceRoot: runWorkspaceRoot,
-      options
+      options,
+      ...(context && "execution_id" in context && context.agent_skill_selection
+        ? { selection: context.agent_skill_selection }
+        : {})
     });
     const bridge = this.dependencies.bridge ?? ((bridgeInput) =>
       executeOpenClawCliBridge(bridgeInput));
@@ -237,6 +251,25 @@ export class OpenClawCliProvider implements AgentProvider {
         .length,
       runWorkspaceRoot
     });
+    const trustedContext = context && "execution_id" in context
+      ? context
+      : undefined;
+    let validatedSessionTrace: string | undefined;
+    const sessionFile = extractOpenClawSessionFile(bridgeResult.json);
+    if (trustedContext?.agent_skill_selection && sessionFile) {
+      try {
+        validatedSessionTrace = await (
+          this.dependencies.readActivationTrace ?? readContainedOpenClawSessionTrace
+        )({
+          wslDistro: this.config.wslDistro,
+          agentId: this.config.agentId,
+          sessionFile,
+          workspaceRoot: this.config.workspaceRoot
+        });
+      } catch {
+        validatedSessionTrace = undefined;
+      }
+    }
     const result: OpenClawProviderResult = {
       status,
       summary:
@@ -328,7 +361,13 @@ export class OpenClawCliProvider implements AgentProvider {
       raw: {
         ...(bridgeResult.json !== undefined ? { json: bridgeResult.json } : {}),
         exit_code: bridgeResult.exitCode
-      }
+      },
+      agent_skill_activation: activationFromOpenClaw({
+        selection: trustedContext?.agent_skill_selection,
+        reportedText: outputText,
+        ...(validatedSessionTrace ? { validatedSessionTrace } : {}),
+        providerFailed: status === "failed"
+      })
     };
     if (this.dependencies.finalizeResult && context && "execution_id" in context) {
       return this.dependencies.finalizeResult({

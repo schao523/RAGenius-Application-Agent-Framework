@@ -20,6 +20,8 @@ from storage import (
     DEFAULT_APP_CONFIG_SCHEMA,
 )
 from execution_client import ExecutionSubsystemClient
+from agent_skill_execution_client import AgentSkillExecutionClient
+from agent_skill_projection import synchronize_agent_skill_projection
 from instruction_model_adapter import InstructionModelAdapter
 from policy import get_template_family_policy
 from skill_normalization import AUTHOR_TOOL_ALIAS_MAP, EXPLICIT_REQUIRED_TOOL_TEMPLATE_MAP
@@ -512,6 +514,159 @@ def parse_skill(skill_id: str):
 def _execution_client() -> ExecutionSubsystemClient:
     base_url = os.environ.get("RAGENIUS_EXECUTION_BASE_URL", _DEFAULT_EXECUTION_BASE_URL)
     return ExecutionSubsystemClient(base_url)
+
+
+def _agent_skill_execution_client() -> AgentSkillExecutionClient:
+    base_url = os.environ.get("RAGENIUS_EXECUTION_BASE_URL", _DEFAULT_EXECUTION_BASE_URL)
+    token = os.environ.get("RAGENIUS_BUILDER_EXECUTION_SERVICE_TOKEN", "")
+    timeout_seconds = float(os.environ.get("RAGENIUS_BUILDER_EXECUTION_TIMEOUT_SECONDS", "30"))
+    return AgentSkillExecutionClient(base_url, token, timeout_seconds=timeout_seconds)
+
+
+def _agent_skill_actor_id() -> str:
+    return (request.headers.get("X-RAGenius-Admin-Id") or "builder-admin").strip()[:128]
+
+
+def _agent_skill_builder_instance_id() -> str:
+    return (os.environ.get("RAGENIUS_BUILDER_INSTANCE_ID") or "builder-local-default").strip()
+
+
+def _public_agent_skill_source(source_obj):
+    return {
+        key: source_obj[key]
+        for key in (
+            "id",
+            "backend",
+            "source_kind",
+            "display_name",
+            "runtime_target_id",
+            "precedence",
+            "enabled",
+            "created_at",
+            "updated_at",
+        )
+    }
+
+
+def _public_agent_skill(skill_obj):
+    approval = skill_obj.get("approval") or {}
+    return {
+        key: skill_obj[key]
+        for key in (
+            "id",
+            "agent_skill_id",
+            "backend",
+            "runtime_target_id",
+            "source_id",
+            "provider_skill_name",
+            "display_name",
+            "description",
+            "content_fingerprint",
+            "discovery_status",
+            "model_visible",
+            "user_invocable",
+            "direct_tool_dispatch",
+            "missing_requirements",
+            "discovered_at",
+            "last_seen_at",
+            "updated_at",
+            "governance_state",
+        )
+    } | {
+        "approved_fingerprint": approval.get("approved_fingerprint"),
+        "approval_state": approval.get("state"),
+    }
+
+
+def _agent_skill_source_options():
+    try:
+        response = _agent_skill_execution_client().get_source_options()
+    except (ValueError, OSError) as exc:
+        return [], str(exc)
+    body = response.get("body", {}) if isinstance(response, dict) else {}
+    items = body.get("items", []) if isinstance(body, dict) else []
+    if not response.get("ok") or not isinstance(items, list):
+        error = body.get("error", {}) if isinstance(body, dict) else {}
+        return [], str(error.get("message") or "Execution source options are unavailable.")
+    allowed = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if all(
+            isinstance(item.get(key), str) and item.get(key).strip()
+            for key in (
+                "backend",
+                "source_kind",
+                "display_name",
+                "runtime_target_id",
+                "protected_locator_ref",
+            )
+        ):
+            allowed.append(dict(item))
+    return allowed, None
+
+
+def _match_agent_skill_source_option(payload):
+    options, error = _agent_skill_source_options()
+    if error:
+        raise ValueError(error)
+    for option in options:
+        if all(
+            str(payload.get(key, "")).strip() == option[key]
+            for key in (
+                "backend",
+                "source_kind",
+                "runtime_target_id",
+                "protected_locator_ref",
+            )
+        ):
+            return option
+    raise ValueError("Agent skill source is not configured by the execution subsystem")
+
+
+def _discover_agent_skill_source(source_id):
+    source = store.get_agent_skill_source(source_id)
+    if not source:
+        return None, ({"error": {"code": "NOT_FOUND", "message": "Agent skill source not found."}}, 404)
+    response = _agent_skill_execution_client().discover(
+        {
+            "source_id": source["id"],
+            "backend": source["backend"],
+            "runtime_target_id": source["runtime_target_id"],
+            "protected_locator_ref": source["protected_locator_ref"],
+        }
+    )
+    body = response.get("body", {}) if isinstance(response, dict) else {}
+    valid = (
+        response.get("ok")
+        and isinstance(body, dict)
+        and body.get("complete") is True
+        and body.get("backend") == source["backend"]
+        and body.get("runtime_target_id") == source["runtime_target_id"]
+        and body.get("source_id") == source["id"]
+        and isinstance(body.get("items"), list)
+    )
+    if not valid:
+        error = body.get("error", {}) if isinstance(body, dict) else {}
+        return None, (
+            {
+                "error": {
+                    "code": str(error.get("code") or "AGENT_SKILL_DISCOVERY_FAILED"),
+                    "message": str(error.get("message") or "Agent skill discovery returned an incomplete response."),
+                }
+            },
+            502,
+        )
+    try:
+        items = store.refresh_agent_skill_catalog(
+            source_id=source_id,
+            candidates=body["items"],
+            actor_id=_agent_skill_actor_id(),
+            correlation_id=request.headers.get("X-Request-Id"),
+        )
+    except ValueError as exc:
+        return None, ({"error": {"code": "INVALID_DISCOVERY_RESPONSE", "message": str(exc)}}, 502)
+    return items, None
 
 
 def _sample_value_from_schema(prop_name: str, schema_obj):
@@ -1258,6 +1413,168 @@ def skills():
     return render_template("skills_list.html", skills=skills_view, filters=filters)
 
 
+@app.route("/agent-skills")
+def agent_skills():
+    source_options, source_options_error = _agent_skill_source_options()
+    display_options = [
+        {
+            "index": index,
+            "backend": option["backend"],
+            "source_kind": option["source_kind"],
+            "display_name": option["display_name"],
+            "runtime_target_id": option["runtime_target_id"],
+        }
+        for index, option in enumerate(source_options)
+    ]
+    return render_template(
+        "agent_skills.html",
+        sources=[_public_agent_skill_source(item) for item in store.list_agent_skill_sources()],
+        agent_skills=[_public_agent_skill(item) for item in store.list_agent_skill_catalog()],
+        source_options=display_options,
+        source_options_error=source_options_error,
+        projection_state=store.get_agent_skill_projection_state(),
+    )
+
+
+@app.route("/agent-skill-sources", methods=["POST"])
+def create_agent_skill_source_form():
+    options, error = _agent_skill_source_options()
+    try:
+        option_index = int(request.form.get("source_option_index", "-1"))
+        if error or option_index < 0 or option_index >= len(options):
+            raise ValueError(error or "Select a configured Agent skill source")
+        option = options[option_index]
+        store.create_agent_skill_source(
+            backend=option["backend"],
+            source_kind=option["source_kind"],
+            display_name=(request.form.get("display_name") or option["display_name"]).strip(),
+            runtime_target_id=option["runtime_target_id"],
+            protected_locator_ref=option["protected_locator_ref"],
+            precedence=int(request.form.get("precedence") or 100),
+            actor_id=_agent_skill_actor_id(),
+        )
+    except (ValueError, TypeError) as exc:
+        return jsonify({"errors": [validation_error("source", str(exc), "invalid")]}), 422
+    return redirect(url_for("agent_skills"))
+
+
+@app.route("/agent-skill-sources/<source_id>/discover", methods=["POST"])
+def discover_agent_skill_source_form(source_id):
+    items, error = _discover_agent_skill_source(source_id)
+    if error:
+        return jsonify(error[0]), error[1]
+    return redirect(url_for("agent_skills"))
+
+
+@app.route("/agent-skill-sources/<source_id>/toggle", methods=["POST"])
+def toggle_agent_skill_source_form(source_id):
+    try:
+        store.update_agent_skill_source(
+            source_id,
+            enabled=(request.form.get("enabled") or "").strip().lower() == "true",
+            actor_id=_agent_skill_actor_id(),
+        )
+    except ValueError as exc:
+        return jsonify({"errors": [validation_error("source", str(exc), "invalid")]}), 422
+    return redirect(url_for("agent_skills"))
+
+
+@app.route("/agent-skills/<agent_skill_id>")
+def agent_skill_detail(agent_skill_id):
+    skill = store.get_agent_skill_catalog_item(agent_skill_id)
+    if not skill:
+        abort(404)
+    bindings = []
+    apps_by_id = {item["id"]: item for item in store.list_applications()}
+    for app_id, app_obj in apps_by_id.items():
+        for binding in store.list_app_agent_skill_bindings(app_id):
+            if binding["agent_skill_id"] == agent_skill_id:
+                bindings.append({**binding, "app_name": app_obj["name"]})
+    return render_template(
+        "agent_skill_detail.html",
+        agent_skill=_public_agent_skill(skill),
+        bindings=bindings,
+        apps=list(apps_by_id.values()),
+        projection_state=store.get_agent_skill_projection_state(),
+    )
+
+
+@app.route("/agent-skills/<agent_skill_id>/approve", methods=["POST"])
+def approve_agent_skill_form(agent_skill_id):
+    try:
+        store.approve_agent_skill(
+            agent_skill_id=agent_skill_id,
+            expected_fingerprint=(request.form.get("expected_fingerprint") or "").strip(),
+            approved_by=_agent_skill_actor_id(),
+            review_notes=(request.form.get("review_notes") or "").strip(),
+        )
+    except ValueError as exc:
+        status = 409 if str(exc) == "AGENT_SKILL_FINGERPRINT_CHANGED" else 422
+        return jsonify({"errors": [validation_error("approval", str(exc), "invalid")]}), status
+    return redirect(url_for("agent_skill_detail", agent_skill_id=agent_skill_id))
+
+
+@app.route("/agent-skills/<agent_skill_id>/revoke", methods=["POST"])
+def revoke_agent_skill_form(agent_skill_id):
+    try:
+        store.revoke_agent_skill(
+            agent_skill_id=agent_skill_id,
+            actor_id=_agent_skill_actor_id(),
+            review_notes=(request.form.get("review_notes") or "").strip(),
+        )
+    except ValueError as exc:
+        return jsonify({"errors": [validation_error("approval", str(exc), "invalid")]}), 422
+    return redirect(url_for("agent_skill_detail", agent_skill_id=agent_skill_id))
+
+
+@app.route("/agent-skills/<agent_skill_id>/bind", methods=["POST"])
+def bind_agent_skill_form(agent_skill_id):
+    try:
+        store.create_app_agent_skill_binding(
+            app_id=(request.form.get("app_id") or "").strip(),
+            agent_skill_id=agent_skill_id,
+            created_by=_agent_skill_actor_id(),
+        )
+    except ValueError as exc:
+        return jsonify({"errors": [validation_error("binding", str(exc), "invalid")]}), 422
+    return redirect(url_for("agent_skill_detail", agent_skill_id=agent_skill_id))
+
+
+@app.route("/agent-skills/<agent_skill_id>/bindings/<binding_id>/toggle", methods=["POST"])
+def toggle_agent_skill_binding_form(agent_skill_id, binding_id):
+    binding = store.get_app_agent_skill_binding(binding_id)
+    if not binding or binding["agent_skill_id"] != agent_skill_id:
+        abort(404)
+    store.update_app_agent_skill_binding(
+        binding_id,
+        enabled=(request.form.get("enabled") or "").strip().lower() == "true",
+        actor_id=_agent_skill_actor_id(),
+    )
+    return redirect(url_for("agent_skill_detail", agent_skill_id=agent_skill_id))
+
+
+@app.route("/agent-skills/<agent_skill_id>/bindings/<binding_id>/delete", methods=["POST"])
+def delete_agent_skill_binding_form(agent_skill_id, binding_id):
+    binding = store.get_app_agent_skill_binding(binding_id)
+    if not binding or binding["agent_skill_id"] != agent_skill_id:
+        abort(404)
+    store.delete_app_agent_skill_binding(binding_id, actor_id=_agent_skill_actor_id())
+    return redirect(url_for("agent_skill_detail", agent_skill_id=agent_skill_id))
+
+
+@app.route("/agent-skills/synchronize", methods=["POST"])
+def synchronize_agent_skills_form():
+    try:
+        synchronize_agent_skill_projection(
+            store,
+            _agent_skill_execution_client(),
+            _agent_skill_builder_instance_id(),
+        )
+    except (ValueError, OSError) as exc:
+        return jsonify({"errors": [validation_error("synchronization", str(exc), "invalid")]}), 502
+    return redirect(url_for("agent_skills"))
+
+
 @app.route("/skills/import", methods=["GET", "POST"])
 def import_skill():
     errors = []
@@ -1506,7 +1823,23 @@ def new_app():
 def view_app(app_id):
     app_obj = parse_app(app_id)
     docs = store.list_documents(app_id)
-    return render_template("app_detail.html", app=app_obj, docs=docs)
+    agent_skills_by_id = {
+        item["id"]: _public_agent_skill(item)
+        for item in store.list_agent_skill_catalog()
+    }
+    agent_skill_bindings = [
+        {
+            **binding,
+            "agent_skill": agent_skills_by_id.get(binding["agent_skill_id"]),
+        }
+        for binding in store.list_app_agent_skill_bindings(app_id)
+    ]
+    return render_template(
+        "app_detail.html",
+        app=app_obj,
+        docs=docs,
+        agent_skill_bindings=agent_skill_bindings,
+    )
 
 
 @app.route("/apps/<app_id>/config", methods=["GET", "POST"])
@@ -1708,6 +2041,201 @@ def api_list_apps():
 @app.route("/api/skills")
 def api_list_skills():
     return jsonify({"items": store.list_skills()})
+
+
+@app.route("/api/agent-skill-sources")
+def api_list_agent_skill_sources():
+    return jsonify({
+        "items": [
+            _public_agent_skill_source(item)
+            for item in store.list_agent_skill_sources()
+        ]
+    })
+
+
+@app.route("/api/agent-skill-sources", methods=["POST"])
+def api_create_agent_skill_source():
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        option = _match_agent_skill_source_option(data)
+        created = store.create_agent_skill_source(
+            backend=option["backend"],
+            source_kind=option["source_kind"],
+            display_name=str(data.get("display_name") or option["display_name"]).strip(),
+            runtime_target_id=option["runtime_target_id"],
+            protected_locator_ref=option["protected_locator_ref"],
+            precedence=int(data.get("precedence", 100)),
+            enabled=bool(data.get("enabled", True)),
+            actor_id=_agent_skill_actor_id(),
+            correlation_id=request.headers.get("X-Request-Id"),
+        )
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": {"code": "INVALID_AGENT_SKILL_SOURCE", "message": str(exc)}}), 422
+    return jsonify(_public_agent_skill_source(created)), 201
+
+
+@app.route("/api/agent-skill-sources/<source_id>", methods=["PATCH"])
+def api_update_agent_skill_source(source_id):
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        updated = store.update_agent_skill_source(
+            source_id,
+            display_name=data.get("display_name"),
+            precedence=data.get("precedence"),
+            enabled=data.get("enabled"),
+            actor_id=_agent_skill_actor_id(),
+            correlation_id=request.headers.get("X-Request-Id"),
+        )
+    except ValueError as exc:
+        status = 404 if str(exc) == "Agent skill source not found" else 422
+        return jsonify({"error": {"code": "INVALID_AGENT_SKILL_SOURCE", "message": str(exc)}}), status
+    return jsonify(_public_agent_skill_source(updated))
+
+
+@app.route("/api/agent-skill-sources/<source_id>/discover", methods=["POST"])
+def api_discover_agent_skill_source(source_id):
+    try:
+        items, error = _discover_agent_skill_source(source_id)
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": {"code": "AGENT_SKILL_DISCOVERY_FAILED", "message": str(exc)}}), 502
+    if error:
+        return jsonify(error[0]), error[1]
+    return jsonify({"items": [_public_agent_skill(item) for item in items]})
+
+
+@app.route("/api/agent-skills")
+def api_list_agent_skills():
+    source_id = (request.args.get("source_id") or "").strip() or None
+    return jsonify({
+        "items": [
+            _public_agent_skill(item)
+            for item in store.list_agent_skill_catalog(source_id)
+        ],
+        "projection_state": store.get_agent_skill_projection_state(),
+    })
+
+
+@app.route("/api/agent-skills/<agent_skill_id>")
+def api_agent_skill_detail(agent_skill_id):
+    skill = store.get_agent_skill_catalog_item(agent_skill_id)
+    if not skill:
+        return jsonify({"error": {"code": "NOT_FOUND", "message": "Agent skill not found."}}), 404
+    return jsonify(_public_agent_skill(skill))
+
+
+@app.route("/api/agent-skills/<agent_skill_id>/approve", methods=["POST"])
+def api_approve_agent_skill(agent_skill_id):
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        approval = store.approve_agent_skill(
+            agent_skill_id=agent_skill_id,
+            expected_fingerprint=str(data.get("expected_fingerprint") or "").strip(),
+            approved_by=_agent_skill_actor_id(),
+            review_notes=str(data.get("review_notes") or "").strip(),
+            correlation_id=request.headers.get("X-Request-Id"),
+        )
+    except ValueError as exc:
+        code = str(exc)
+        status = 409 if code == "AGENT_SKILL_FINGERPRINT_CHANGED" else 422
+        return jsonify({"error": {"code": code, "message": str(exc)}}), status
+    return jsonify({
+        "id": approval["id"],
+        "agent_skill_id": approval["agent_skill_id"],
+        "approved_fingerprint": approval["approved_fingerprint"],
+        "state": approval["state"],
+        "approved_at": approval["approved_at"],
+    })
+
+
+@app.route("/api/agent-skills/<agent_skill_id>/revoke", methods=["POST"])
+def api_revoke_agent_skill(agent_skill_id):
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        approval = store.revoke_agent_skill(
+            agent_skill_id=agent_skill_id,
+            actor_id=_agent_skill_actor_id(),
+            review_notes=str(data.get("review_notes") or "").strip(),
+            correlation_id=request.headers.get("X-Request-Id"),
+        )
+    except ValueError as exc:
+        return jsonify({"error": {"code": "INVALID_AGENT_SKILL", "message": str(exc)}}), 422
+    return jsonify({
+        "id": approval["id"],
+        "agent_skill_id": approval["agent_skill_id"],
+        "approved_fingerprint": approval["approved_fingerprint"],
+        "state": approval["state"],
+        "approved_at": approval["approved_at"],
+    })
+
+
+@app.route("/api/apps/<app_id>/agent-skill-bindings")
+def api_list_app_agent_skill_bindings(app_id):
+    if not store.get_application(app_id):
+        return jsonify({"error": {"code": "NOT_FOUND", "message": "Application not found."}}), 404
+    return jsonify({"items": store.list_app_agent_skill_bindings(app_id)})
+
+
+@app.route("/api/apps/<app_id>/agent-skill-bindings", methods=["POST"])
+def api_create_app_agent_skill_binding(app_id):
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        binding = store.create_app_agent_skill_binding(
+            app_id=app_id,
+            agent_skill_id=str(data.get("agent_skill_id") or "").strip(),
+            enabled=bool(data.get("enabled", True)),
+            created_by=_agent_skill_actor_id(),
+            correlation_id=request.headers.get("X-Request-Id"),
+        )
+    except ValueError as exc:
+        return jsonify({"error": {"code": "INVALID_AGENT_SKILL_BINDING", "message": str(exc)}}), 422
+    return jsonify(binding), 201
+
+
+@app.route("/api/apps/<app_id>/agent-skill-bindings/<binding_id>", methods=["PATCH"])
+def api_update_app_agent_skill_binding(app_id, binding_id):
+    binding = store.get_app_agent_skill_binding(binding_id)
+    if not binding or binding["app_id"] != app_id:
+        return jsonify({"error": {"code": "NOT_FOUND", "message": "Agent skill binding not found."}}), 404
+    data = request.get_json(force=True, silent=True) or {}
+    updated = store.update_app_agent_skill_binding(
+        binding_id,
+        enabled=bool(data.get("enabled", binding["enabled"])),
+        actor_id=_agent_skill_actor_id(),
+        correlation_id=request.headers.get("X-Request-Id"),
+    )
+    return jsonify(updated)
+
+
+@app.route("/api/apps/<app_id>/agent-skill-bindings/<binding_id>", methods=["DELETE"])
+def api_delete_app_agent_skill_binding(app_id, binding_id):
+    binding = store.get_app_agent_skill_binding(binding_id)
+    if not binding or binding["app_id"] != app_id:
+        return jsonify({"error": {"code": "NOT_FOUND", "message": "Agent skill binding not found."}}), 404
+    store.delete_app_agent_skill_binding(
+        binding_id,
+        actor_id=_agent_skill_actor_id(),
+        correlation_id=request.headers.get("X-Request-Id"),
+    )
+    return "", 204
+
+
+@app.route("/api/agent-skills/synchronize", methods=["POST"])
+def api_synchronize_agent_skills():
+    try:
+        state = synchronize_agent_skill_projection(
+            store,
+            _agent_skill_execution_client(),
+            _agent_skill_builder_instance_id(),
+        )
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": {"code": "AGENT_SKILL_PROJECTION_SYNC_FAILED", "message": str(exc)}}), 502
+    status = 200 if state["sync_status"] == "synchronized" else 502
+    return jsonify(state), status
+
+
+@app.route("/api/agent-skills/synchronize", methods=["GET"])
+def api_synchronize_agent_skills_get_not_allowed():
+    abort(405)
 
 
 @app.route("/api/skills/<skill_id>")

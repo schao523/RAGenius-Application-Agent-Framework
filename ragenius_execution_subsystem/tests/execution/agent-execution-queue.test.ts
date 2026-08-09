@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { ExecuteAgentRequest } from "../../src/api/schemas/execution-request.schema.js";
+import type { AgentProvider } from "../../src/core/agents/agent-provider.js";
+import type { AgentSkillSelectionService } from "../../src/core/agent-skills/agent-skill-selection-service.js";
+import { AgentSkillSelectionError } from "../../src/core/agent-skills/agent-skill-selection-service.js";
 import { AgentExecutionQueue } from "../../src/core/execution/agent-execution-queue.js";
+import { ExecutionEngine } from "../../src/core/execution/execution-engine.js";
 import { InMemoryExecutionStore } from "../../src/core/execution/execution-store.js";
 
 const request: ExecuteAgentRequest = {
@@ -83,4 +87,70 @@ test("restart reconciliation fails queued and running records", async () => {
   assert.equal(count, 1);
   assert.equal(record?.status, "failed");
   assert.equal(record?.errors[0]?.code, "AGENT_EXECUTION_INTERRUPTED");
+});
+
+test("queued execution revalidates synchronized revocation before provider invocation", async () => {
+  const store = new InMemoryExecutionStore();
+  let revoked = false;
+  let providerCalls = 0;
+  const selectionService = {
+    async resolve() {
+      if (revoked) {
+        throw new AgentSkillSelectionError(
+          "AGENT_SKILL_NOT_BOUND",
+          "Agent skill binding was revoked."
+        );
+      }
+      return {
+        activation_method: "codex_explicit_reference" as const,
+        agent_skill_id: "agent-skill-1",
+        approved_fingerprint: "sha256:v1:approved",
+        backend: "codex_cli" as const,
+        display_name: "Approved Skill",
+        observed_fingerprint: "sha256:v1:approved",
+        protected_locator_ref: "protected-source-ref",
+        provider_skill_name: "approved-skill",
+        resolved_at: "2026-08-04T00:00:00.000Z",
+        runtime_target_id: "codex-local-default",
+        source_id: "source-1"
+      };
+    }
+  } as unknown as AgentSkillSelectionService;
+  const provider: AgentProvider = {
+    backend: "codex_cli",
+    async execute() {
+      providerCalls += 1;
+      return { status: "completed" };
+    }
+  };
+  const engine = new ExecutionEngine({
+    agentProviders: new Map([["codex_cli", provider]]),
+    agentSkillSelectionService: selectionService,
+    executionStore: store
+  });
+  const selectedRequest: ExecuteAgentRequest = {
+    ...request,
+    agent_skill_ref: {
+      agent_skill_id: "agent-skill-1",
+      approved_fingerprint: "sha256:v1:approved"
+    }
+  };
+  const queue = new AgentExecutionQueue(
+    store,
+    (queuedRequest, options) => engine.execute(queuedRequest, options)
+  );
+
+  await queue.enqueue({ executionId: "execution_revoked", request: selectedRequest });
+  revoked = true;
+  queue.start();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const record = await store.get({
+    appId: "app_001",
+    sessionId: "session_001",
+    executionId: "execution_revoked"
+  });
+  assert.equal(record?.status, "failed");
+  assert.equal(record?.errors[0]?.code, "AGENT_SKILL_NOT_BOUND");
+  assert.equal(providerCalls, 0);
 });

@@ -1020,6 +1020,15 @@ function buildThreadKey(appId, sessionId) {
   return `${appId || "no-app"}::${sessionId || "no-session"}`;
 }
 
+export function buildAgentSkillInventoryKey(appId, sessionId, userId, backend) {
+  return JSON.stringify([
+    String(appId || "").trim(),
+    String(sessionId || "").trim(),
+    String(userId || "").trim(),
+    String(backend || "").trim(),
+  ]);
+}
+
 export function resolveActiveAppDisplay(selectedApp, appInfo, selectedAppId) {
   const selected = selectedApp && selectedApp.id === selectedAppId ? selectedApp : null;
   const detailed = appInfo && appInfo.id === selectedAppId ? appInfo : null;
@@ -1098,6 +1107,9 @@ export function buildExecCommand({ commandKind, targetId, args = {}, executionMo
     const skillHint = String(args.skillHint || "").trim();
     const execPrefix = executionMode === "async" ? "@exec async" : "@exec";
     if (targetId === "openclaw_cli") {
+      if (skillHint) {
+        return `${execPrefix} openclaw use ${skillHint} "${requestText.replace(/"/g, '\\"')}"`.trim();
+      }
       return `${execPrefix} openclaw "${requestText.replace(/"/g, '\\"')}"`.trim();
     }
     if (skillHint) {
@@ -1167,19 +1179,36 @@ function normalizeComposerExpectedOutputs(value) {
     .filter(Boolean);
 }
 
+function normalizeComposerAgentSkillRef(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const agentSkillId = String(value.agent_skill_id || value.agentSkillId || "").trim();
+  const approvedFingerprint = String(value.approved_fingerprint || value.approvedFingerprint || "").trim();
+  if (!agentSkillId || !approvedFingerprint) {
+    return null;
+  }
+  return {
+    agent_skill_id: agentSkillId,
+    approved_fingerprint: approvedFingerprint,
+  };
+}
+
 export function buildExecutionRequestForComposer({ commandKind, targetId, args = {}, executionMode = "sync" }) {
   if (commandKind !== "agent") {
     return null;
   }
   const artifactRefs = normalizeComposerArtifactRefs(args.artifactRefs || args.artifact_refs);
   const expectedOutputs = normalizeComposerExpectedOutputs(args.expectedOutputs || args.expected_outputs);
-  if (artifactRefs.length === 0 && expectedOutputs.length === 0) {
+  const agentSkillRef = normalizeComposerAgentSkillRef(args.agentSkillRef || args.agent_skill_ref);
+  if (artifactRefs.length === 0 && expectedOutputs.length === 0 && !agentSkillRef) {
     return null;
   }
   return {
     request_type: "execute_agent",
     agent_backend: String(targetId || "codex_cli").trim() || "codex_cli",
     execution_mode: executionMode === "async" ? "async" : "sync",
+    ...(agentSkillRef ? { agent_skill_ref: agentSkillRef } : {}),
     ...(artifactRefs.length > 0 ? { artifact_refs: artifactRefs } : {}),
     ...(expectedOutputs.length > 0 ? { expected_outputs: expectedOutputs } : {}),
   };
@@ -1905,6 +1934,10 @@ function ChatPanel({
   onSelectApprovedContent,
   toolInventory,
   skillInventory,
+  agentSkillInventory,
+  agentSkillInventoryLoading,
+  agentSkillInventoryError,
+  agentSkillProjectionStatusByBackend,
   artifactInventory,
   artifactInventoryLoading,
   artifactInventoryError,
@@ -2402,8 +2435,13 @@ function ChatPanel({
         {showExecutionComposer && (
           <div style={styles.executionComposerShelf}>
             <ExecutionComposer
+              key={`${appId}:${sessionId}:${userId}`}
               toolInventory={toolInventory}
               skillInventory={skillInventory}
+              agentSkillInventory={agentSkillInventory}
+              agentSkillInventoryLoading={agentSkillInventoryLoading}
+              agentSkillInventoryError={agentSkillInventoryError}
+              agentSkillProjectionStatusByBackend={agentSkillProjectionStatusByBackend}
               artifactInventory={artifactInventory}
               initialArtifactSuggestion={artifactSuggestionForComposer}
               initialArtifactSuggestions={artifactSuggestionsForComposer}
@@ -2519,6 +2557,10 @@ export default function App() {
   const [sessionUploadsBySession, setSessionUploadsBySession] = useState({});
   const [execToolInventory, setExecToolInventory] = useState([]);
   const [execSkillInventory, setExecSkillInventory] = useState([]);
+  const [execAgentSkillInventoryByScope, setExecAgentSkillInventoryByScope] = useState({});
+  const [execAgentSkillInventoryErrorByScope, setExecAgentSkillInventoryErrorByScope] = useState({});
+  const [execAgentSkillInventoryLoadingByScope, setExecAgentSkillInventoryLoadingByScope] = useState({});
+  const agentSkillInventoryRequestSequence = useRef({});
   const [execArtifactInventory, setExecArtifactInventory] = useState([]);
   const [execArtifactInventoryLoading, setExecArtifactInventoryLoading] = useState(false);
   const [execArtifactInventoryError, setExecArtifactInventoryError] = useState("");
@@ -2559,6 +2601,26 @@ export default function App() {
   const activeSessionUploads = sessionUploadsBySession[activeThreadKey] || [];
   const activeSelectedExportMessageIds = selectedExportMessageIdsBySession[activeThreadKey] || [];
   const currentSession = sessions.find((session) => session.id === sessionId) || null;
+  const activeAgentSkillScopeKeys = ["codex_cli", "openclaw_cli"].map((backend) => [
+    backend,
+    buildAgentSkillInventoryKey(selectedAppId, sessionId, userId, backend),
+  ]);
+  const activeAgentSkillInventory = activeAgentSkillScopeKeys.flatMap(([, key]) => (
+    Array.isArray(execAgentSkillInventoryByScope[key]?.items)
+      ? execAgentSkillInventoryByScope[key].items
+      : []
+  ));
+  const activeAgentSkillProjectionStatusByBackend = Object.fromEntries(
+    activeAgentSkillScopeKeys.map(([backend, key]) => [
+      backend,
+      String(execAgentSkillInventoryByScope[key]?.projection_status || "unavailable"),
+    ]),
+  );
+  const activeAgentSkillInventoryError = activeAgentSkillScopeKeys
+    .map(([, key]) => String(execAgentSkillInventoryErrorByScope[key] || "").trim())
+    .find(Boolean) || "";
+  const activeAgentSkillInventoryLoading = activeAgentSkillScopeKeys
+    .some(([, key]) => execAgentSkillInventoryLoadingByScope[key] === true);
   const filteredSessions = useMemo(() => {
     const needle = sessionSearch.trim().toLowerCase();
     if (!needle) {
@@ -2635,6 +2697,62 @@ export default function App() {
       setExecArtifactInventoryError(String(error?.message || error || "Unknown error."));
     } finally {
       setExecArtifactInventoryLoading(false);
+    }
+  };
+
+  const loadAgentSkillInventory = async (
+    backend,
+    appIdOverride = selectedAppId,
+    sessionIdOverride = sessionId,
+    userIdOverride = userId,
+  ) => {
+    if (!appIdOverride || !sessionIdOverride || !userIdOverride || !backend) {
+      return;
+    }
+    const scopeKey = buildAgentSkillInventoryKey(
+      appIdOverride,
+      sessionIdOverride,
+      userIdOverride,
+      backend,
+    );
+    const sequence = (agentSkillInventoryRequestSequence.current[scopeKey] || 0) + 1;
+    agentSkillInventoryRequestSequence.current[scopeKey] = sequence;
+    setExecAgentSkillInventoryLoadingByScope((previous) => ({ ...previous, [scopeKey]: true }));
+    setExecAgentSkillInventoryErrorByScope((previous) => ({ ...previous, [scopeKey]: "" }));
+    try {
+      const data = await fetchJson(
+        `${baseUrl}/sessions/${sessionIdOverride}/exec/agent-skills`
+        + `?app_id=${encodeURIComponent(appIdOverride)}`
+        + `&user_id=${encodeURIComponent(userIdOverride)}`
+        + `&backend=${encodeURIComponent(backend)}`,
+      );
+      if (agentSkillInventoryRequestSequence.current[scopeKey] !== sequence) {
+        return;
+      }
+      setExecAgentSkillInventoryByScope((previous) => ({
+        ...previous,
+        [scopeKey]: {
+          items: Array.isArray(data?.items) ? data.items : [],
+          inventory_revision: data?.inventory_revision ?? null,
+          projection_status: String(data?.projection_status || "unavailable"),
+        },
+      }));
+    } catch (error) {
+      if (agentSkillInventoryRequestSequence.current[scopeKey] !== sequence) {
+        return;
+      }
+      setExecAgentSkillInventoryByScope((previous) => ({
+        ...previous,
+        [scopeKey]: { items: [], inventory_revision: null, projection_status: "unavailable" },
+      }));
+      setExecAgentSkillInventoryErrorByScope((previous) => ({
+        ...previous,
+        [scopeKey]: String(error?.message || error || "Unable to load approved Agent Skills."),
+      }));
+    } finally {
+      if (agentSkillInventoryRequestSequence.current[scopeKey] === sequence) {
+        setExecAgentSkillInventoryLoadingByScope((previous) => ({ ...previous, [scopeKey]: false }));
+      }
     }
   };
 
@@ -3226,6 +3344,16 @@ export default function App() {
   }, [baseUrl, selectedAppId, sessionId, userId, currentSession?.id]);
 
   useEffect(() => {
+    if (!currentSession) {
+      return;
+    }
+    void Promise.all([
+      loadAgentSkillInventory("codex_cli", selectedAppId, sessionId, userId),
+      loadAgentSkillInventory("openclaw_cli", selectedAppId, sessionId, userId),
+    ]);
+  }, [baseUrl, selectedAppId, sessionId, userId, currentSession?.id]);
+
+  useEffect(() => {
     let cancelled = false;
     const probeBuilder = async () => {
       const reachable = await checkUrlReachable(builderBaseUrl);
@@ -3457,6 +3585,10 @@ export default function App() {
               onSelectApprovedContent={selectApprovedContentForSession}
               toolInventory={execToolInventory}
               skillInventory={execSkillInventory}
+              agentSkillInventory={activeAgentSkillInventory}
+              agentSkillInventoryLoading={activeAgentSkillInventoryLoading}
+              agentSkillInventoryError={activeAgentSkillInventoryError}
+              agentSkillProjectionStatusByBackend={activeAgentSkillProjectionStatusByBackend}
               artifactInventory={execArtifactInventory}
               artifactInventoryLoading={execArtifactInventoryLoading}
               artifactInventoryError={execArtifactInventoryError}

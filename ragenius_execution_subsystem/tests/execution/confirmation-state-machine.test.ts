@@ -5,6 +5,11 @@ import type { FastifyInstance } from "fastify";
 
 import { buildApp } from "../../src/app.js";
 import type { AgentProvider } from "../../src/core/agents/agent-provider.js";
+import {
+  AgentSkillSelectionError,
+  type AgentSkillSelectionService
+} from "../../src/core/agent-skills/agent-skill-selection-service.js";
+import type { ResolvedAgentSkillSelection } from "../../src/core/agent-skills/agent-skill-types.js";
 import { ConfirmationService } from "../../src/core/execution/confirmation-service.js";
 import { InMemoryConfirmationStore } from "../../src/core/execution/confirmation-store.js";
 import { ExecutionEngine } from "../../src/core/execution/execution-engine.js";
@@ -224,5 +229,83 @@ describe("single-use confirmation state machine", () => {
 
     assert.equal(wrongScope.statusCode, 404);
     assert.deepEqual(wrongScope.json(), unknown.json());
+  });
+
+  it("invalidates confirmation when the resolved skill fingerprint changes", async () => {
+    let providerCalls = 0;
+    let observedFingerprint = "sha256:v1:approved";
+    const selectionService = {
+      async resolve(): Promise<ResolvedAgentSkillSelection> {
+        if (observedFingerprint !== "sha256:v1:approved") {
+          throw new AgentSkillSelectionError(
+            "AGENT_SKILL_FINGERPRINT_CHANGED",
+            "Agent skill content changed after approval."
+          );
+        }
+        return {
+          activation_method: "codex_explicit_reference",
+          agent_skill_id: "agent-skill-1",
+          approved_fingerprint: "sha256:v1:approved",
+          backend: "codex_cli",
+          display_name: "Approved Skill",
+          observed_fingerprint: observedFingerprint,
+          protected_locator_ref: "protected-source-ref",
+          provider_skill_name: "approved-skill",
+          resolved_at: new Date().toISOString(),
+          runtime_target_id: "codex-local-default",
+          source_id: "source-1"
+        };
+      }
+    } as unknown as AgentSkillSelectionService;
+    const executionStore = new InMemoryExecutionStore();
+    const confirmationStore = new InMemoryConfirmationStore();
+    const confirmationService = new ConfirmationService(confirmationStore, {
+      createId: () => "confirmation_skill_fingerprint",
+      ttlMs: 60000
+    });
+    const engine = new ExecutionEngine({
+      agentProviders: new Map([[
+        "codex_cli",
+        createAgentProvider(async () => { providerCalls += 1; })
+      ]]),
+      agentSkillSelectionService: selectionService,
+      confirmationService,
+      executionStore
+    });
+    app = buildApp({
+      agentSkillSelectionService: selectionService,
+      confirmationService,
+      confirmationStore,
+      executionEngine: engine,
+      executionStore
+    });
+
+    const pending = await app.inject({
+      method: "POST",
+      url: "/v1/executions",
+      payload: {
+        request_type: "execute_agent",
+        agent_backend: "codex_cli",
+        app_id: "app_001",
+        session_id: "sess_001",
+        agent_query: "Create a draft.",
+        agent_skill_ref: {
+          agent_skill_id: "agent-skill-1",
+          approved_fingerprint: "sha256:v1:approved"
+        }
+      }
+    });
+    assert.equal(pending.statusCode, 202);
+    observedFingerprint = "sha256:v1:changed";
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/executions/${pending.json().execution_id}/confirm?app_id=app_001&session_id=sess_001`,
+      payload: { confirmation_id: pending.json().result.confirmation_id }
+    });
+
+    assert.equal(response.statusCode, 500);
+    assert.equal(response.json().error.code, "CONFIRMATION_POLICY_CHANGED");
+    assert.equal(providerCalls, 0);
   });
 });

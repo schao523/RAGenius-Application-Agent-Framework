@@ -24,6 +24,37 @@ const confirmedContext: AgentProviderExecutionContext = {
   expected_outputs: []
 };
 
+test("projects an explicit canonical Codex skill reference without a protected path", () => {
+  const prompt = buildCodexPrompt({
+    request: {
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "session_001",
+      agent_backend: "codex_cli",
+      agent_query: "Follow the selected skill for this read-only request."
+    },
+    context: {
+      ...confirmedContext,
+      agent_skill_selection: {
+        activation_method: "codex_explicit_reference",
+        agent_skill_id: "agent-skill-1",
+        approved_fingerprint: "sha256:v1:approved",
+        backend: "codex_cli",
+        display_name: "Approved Skill",
+        observed_fingerprint: "sha256:v1:approved",
+        provider_skill_name: "approved-skill",
+        runtime_target_id: "codex-local-default",
+        source_id: "source-1"
+      }
+    },
+    stagedArtifacts: []
+  });
+
+  assert.match(prompt, /^\$approved-skill\b/);
+  assert.match(prompt, /Selected Agent skill: approved-skill/);
+  assert.doesNotMatch(prompt, /protected-source-ref|\.codex[\\/]skills/);
+});
+
 test("projects trusted confirmation, operations, and staged relative paths", () => {
   const prompt = buildCodexPrompt({
     request: {
@@ -180,4 +211,35 @@ test("requires the repository wrapper for selected NotebookLM runs", () => {
   assert.match(prompt, /Do not run authentication preflight unless the requested command fails/);
   assert.match(prompt, /Submit report generation without waiting for completion/);
   assert.match(prompt, /verify a source add with one source list command/);
+});
+
+test("uses resolved NotebookLM selection for compatibility guidance without a client hint", () => {
+  const prompt = buildCodexPrompt({
+    request: {
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "session_001",
+      agent_backend: "codex_cli",
+      agent_query: "List notebooks."
+    },
+    context: {
+      ...confirmedContext,
+      agent_skill_selection: {
+        activation_method: "codex_explicit_reference",
+        agent_skill_id: "agent-skill-notebooklm",
+        approved_fingerprint: "sha256:v1:notebooklm",
+        backend: "codex_cli",
+        display_name: "NotebookLM",
+        observed_fingerprint: "sha256:v1:notebooklm",
+        provider_skill_name: "notebooklm",
+        runtime_target_id: "codex-local-default",
+        source_id: "source-notebooklm"
+      }
+    },
+    stagedArtifacts: []
+  });
+
+  assert.match(prompt, /^\$notebooklm\b/);
+  assert.match(prompt, /notebooklm_with_env\.ps1/);
+  assert.match(prompt, /Preferred skill hint: notebooklm/);
 });

@@ -133,4 +133,5 @@ export type OpenClawProviderResult = {
     json?: unknown;
     exit_code: number | null;
   };
+  agent_skill_activation: import("../agent-skills/agent-skill-activation-evidence.js").AgentSkillActivation;
 };

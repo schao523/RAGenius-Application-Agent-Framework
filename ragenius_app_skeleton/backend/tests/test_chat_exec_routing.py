@@ -671,6 +671,58 @@ def test_exec_openclaw_turn_submits_agent_execution(monkeypatch):
     assert payload["session_lane_state"]["execution_lane"]["latest_execution_request_skill_id"] == "openclaw_cli"
 
 
+def test_exec_agent_turn_prefers_structured_skill_reference(monkeypatch):
+    session_repo, _ = _install_temp_repos(monkeypatch)
+    session_repo.get_or_create(
+        "session-1",
+        collection_id="app-1",
+        user_id="user-1",
+        config_version=1,
+        adapter_version=1,
+        template_version=1,
+    )
+    captured = {}
+
+    class FakeExecutionClient:
+        def submit_agent(self, **kwargs):
+            captured.update(kwargs)
+            return {"status": "completed", "execution_id": "execution_selected_1"}
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+    response = client.post(
+        "/sessions/session-1/chat",
+        json={
+            "user_id": "user-1",
+            "app_id": "app-1",
+            "user_query": '@exec codex use stale-text-hint "Summarize this."',
+            "execution_request": {
+                "request_type": "execute_agent",
+                "agent_backend": "openclaw_cli",
+                "agent_skill_ref": {
+                    "agent_skill_id": "agent-skill-1",
+                    "approved_fingerprint": "sha256:v1:abc",
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["agent_backend"] == "openclaw_cli"
+    assert captured["agent_skill_ref"] == {
+        "agent_skill_id": "agent-skill-1",
+        "approved_fingerprint": "sha256:v1:abc",
+    }
+
+
+def test_parse_exec_openclaw_turn_with_legacy_skill_hint():
+    decision = parse_exec_turn('@exec openclaw use summarizer "Summarize this."')
+
+    assert decision.agent_backend == "openclaw_cli"
+    assert decision.agent_skill_hint == "summarizer"
+    assert decision.agent_query == "Summarize this."
+
+
 def test_exec_openclaw_turn_passes_structured_artifact_refs_and_expected_outputs(monkeypatch):
     session_repo, _ = _install_temp_repos(monkeypatch)
     session_repo.get_or_create(

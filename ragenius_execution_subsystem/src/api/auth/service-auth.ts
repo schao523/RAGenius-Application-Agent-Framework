@@ -1,11 +1,12 @@
 import { timingSafeEqual } from "node:crypto";
 
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 
 import type { ServiceAuthRuntimeConfig } from "../../config/runtime-config.js";
 
 export interface ExecutionPrincipal {
   serviceId: string;
+  scopes: string[];
   type: "service";
 }
 
@@ -21,7 +22,7 @@ export function registerServiceAuth(
 ): void {
   app.decorateRequest("executionPrincipal", null);
 
-  if (!config.required && !config.token) {
+  if (!config.required && config.credentials.length === 0) {
     return;
   }
 
@@ -30,7 +31,10 @@ export function registerServiceAuth(
       return;
     }
 
-    if (!config.token || !tokenMatches(request.headers.authorization, config.token)) {
+    const credential = config.credentials.find((candidate) =>
+      tokenMatches(request.headers.authorization, candidate.token)
+    );
+    if (!credential) {
       return reply.status(401).send({
         error: {
           code: "SERVICE_AUTH_REQUIRED",
@@ -42,8 +46,16 @@ export function registerServiceAuth(
     }
 
     request.executionPrincipal = {
-      serviceId: config.serviceId,
+      serviceId: credential.serviceId,
+      scopes: credential.scopes,
       type: "service"
     };
   });
+}
+
+export function hasServiceScope(
+  request: FastifyRequest,
+  scope: string
+): boolean {
+  return request.executionPrincipal?.scopes.includes(scope) === true;
 }

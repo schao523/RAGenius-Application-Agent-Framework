@@ -1,17 +1,27 @@
 import type { ExecuteAgentRequest } from "../../api/schemas/execution-request.schema.js";
 
 import type { NormalizedOpenClawProviderOptions } from "./openclaw-cli-types.js";
+import type { AgentSkillProviderSelection } from "./agent-provider-context.js";
 
 export function buildOpenClawPrompt(input: {
   request: ExecuteAgentRequest;
   workspaceRoot: string;
   options: NormalizedOpenClawProviderOptions;
+  selection?: AgentSkillProviderSelection;
 }): string {
   const lines = [
     "You are executing a RAGenius OpenClaw task.",
     `Workspace root: ${input.workspaceRoot}`,
     "Use only paths inside the workspace root.",
     "Do not use Windows paths, /mnt/c, or /mnt/d.",
+    ...(input.selection
+      ? [
+          "",
+          `Selected Agent skill: ${input.selection.provider_skill_name}`,
+          `Use the installed OpenClaw skill named \`${input.selection.provider_skill_name}\` for this task.`,
+          "Follow its instructions, but do not extend the approved RAGenius operation plan."
+        ]
+      : []),
     "",
     "User task:",
     input.request.agent_query

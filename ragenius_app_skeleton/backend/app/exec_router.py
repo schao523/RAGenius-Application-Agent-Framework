@@ -251,7 +251,7 @@ def parse_exec_turn(user_query: str) -> ExecRouteDecision:
         )
     if command == "openclaw":
         try:
-            _agent_skill_hint, agent_query = _parse_agent_query(rest)
+            agent_skill_hint, agent_query = _parse_agent_query(rest)
         except Exception as exc:
             return ExecRouteDecision(
                 is_exec_turn=True,
@@ -271,12 +271,15 @@ def parse_exec_turn(user_query: str) -> ExecRouteDecision:
         parsed_args = {"agent_backend": "openclaw_cli"}
         if execution_mode:
             parsed_args["execution_mode"] = execution_mode
+        if agent_skill_hint:
+            parsed_args["agent_skill_hint"] = agent_skill_hint
         return ExecRouteDecision(
             is_exec_turn=True,
             command="openclaw",
             agent_backend="openclaw_cli",
             execution_mode=execution_mode,
             agent_query=agent_query,
+            agent_skill_hint=agent_skill_hint,
             raw_args=rest,
             parsed_args=parsed_args,
         )

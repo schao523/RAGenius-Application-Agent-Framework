@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { ExecutionScope } from "../../core/execution/execution-store.js";
 import { executionRequestSchema } from "../schemas/execution-request.schema.js";
 import { classifyAgentRequest } from "../../core/agents/agent-policy.js";
+import { applyResolvedAgentSkillSelection } from "../../core/agent-skills/agent-skill-selection-service.js";
 
 function asyncRequested(request: ReturnType<typeof executionRequestSchema.parse>): boolean {
   return request.request_type === "execute_agent" && (
@@ -73,7 +74,14 @@ export async function registerExecutionRoutes(
         });
       }
       if (parsedRequest.request_type === "execute_agent") {
-        const policy = classifyAgentRequest(parsedRequest, {
+        const resolvedSelection = await app.services.agentSkillSelectionService.resolve(
+          parsedRequest
+        );
+        const policyRequest = applyResolvedAgentSkillSelection(
+          parsedRequest,
+          resolvedSelection
+        );
+        const policy = classifyAgentRequest(policyRequest, {
           notebookLmProfile:
             app.services.runtimeConfig.providers.notebooklm.profile ?? "default"
         });

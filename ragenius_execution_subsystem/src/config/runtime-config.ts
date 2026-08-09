@@ -23,9 +23,11 @@ import {
   buildDefaultRuntimePolicyConfig,
   type RuntimePolicyConfig
 } from "./policy-config.js";
+import { z } from "zod";
 
 export interface RuntimeConfig {
   agentAsync: { enabled: boolean; concurrency: number };
+  agentSkills: AgentSkillRuntimeConfig;
   adapters: AdapterRuntimeConfig;
   artifactStore: ArtifactStoreRuntimeConfig;
   builder: BuilderRuntimeConfig;
@@ -42,8 +44,97 @@ export interface RuntimeConfig {
 
 export interface ServiceAuthRuntimeConfig {
   required: boolean;
-  serviceId: string;
-  token?: string;
+  credentials: Array<{
+    serviceId: string;
+    token: string;
+    scopes: string[];
+  }>;
+}
+
+export interface AgentSkillRuntimeConfig {
+  codex: {
+    limits: {
+      maxDepth: number;
+      maxFileBytes: number;
+      maxFiles: number;
+      maxTotalBytes: number;
+    };
+    sourceOptions: Array<{
+      display_name: string;
+      path: string;
+      protected_locator_ref: string;
+      runtime_target_id: string;
+    }>;
+  };
+  openClaw: {
+    command: string;
+    limits: {
+      maxDepth: number;
+      maxFileBytes: number;
+      maxFiles: number;
+      maxTotalBytes: number;
+    };
+    maxStderrBytes: number;
+    maxStdoutBytes: number;
+    targets: Array<{
+      agent_id: string;
+      display_name: string;
+      protected_locator_ref: string;
+      runtime_target_id: string;
+      skill_roots: string[];
+      wsl_distro: string;
+    }>;
+    timeoutMs: number;
+  };
+  projection: {
+    maxBytes: number;
+    maxItems: number;
+    trustedBuilderInstanceId: string;
+  };
+}
+
+const codexAgentSkillSourceSchema = z.object({
+  display_name: z.string().trim().min(1),
+  path: z.string().trim().min(1),
+  protected_locator_ref: z.string().trim().min(1),
+  runtime_target_id: z.string().trim().min(1)
+}).strict();
+
+const openClawAgentSkillTargetSchema = z.object({
+  agent_id: z.string().trim().min(1),
+  display_name: z.string().trim().min(1),
+  protected_locator_ref: z.string().trim().min(1),
+  runtime_target_id: z.string().trim().min(1),
+  skill_roots: z.array(z.string().trim().startsWith("/")).min(1),
+  wsl_distro: z.string().trim().min(1)
+}).strict();
+
+const serviceCredentialSchema = z.object({
+  service_id: z.string().trim().min(1),
+  token: z.string().trim().min(1),
+  scopes: z.array(z.string().trim().min(1)).default([])
+}).strict();
+
+function buildServiceAuthRuntimeConfig(env: AppEnv): ServiceAuthRuntimeConfig {
+  const configured = z.array(serviceCredentialSchema).parse(
+    JSON.parse(env.RAGENIUS_EXECUTION_SERVICE_CREDENTIALS_JSON)
+  );
+  const credentials = configured.map((credential) => ({
+    serviceId: credential.service_id,
+    token: credential.token,
+    scopes: [...new Set(credential.scopes)]
+  }));
+  if (env.RAGENIUS_EXECUTION_SERVICE_TOKEN) {
+    credentials.push({
+      serviceId: env.RAGENIUS_EXECUTION_SERVICE_ID,
+      token: env.RAGENIUS_EXECUTION_SERVICE_TOKEN,
+      scopes: ["execution"]
+    });
+  }
+  return {
+    required: env.RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED,
+    credentials
+  };
 }
 
 export interface RuntimeConfigDiagnostics {
@@ -107,6 +198,39 @@ export function buildRuntimeConfig(
       enabled: env.AGENT_ASYNC_EXECUTION_ENABLED,
       concurrency: env.AGENT_ASYNC_CONCURRENCY
     },
+    agentSkills: {
+      codex: {
+        limits: {
+          maxDepth: env.CODEX_AGENT_SKILL_MAX_DEPTH,
+          maxFileBytes: env.CODEX_AGENT_SKILL_MAX_FILE_BYTES,
+          maxFiles: env.CODEX_AGENT_SKILL_MAX_FILES,
+          maxTotalBytes: env.CODEX_AGENT_SKILL_MAX_TOTAL_BYTES
+        },
+        sourceOptions: z.array(codexAgentSkillSourceSchema).parse(
+          JSON.parse(env.CODEX_AGENT_SKILL_SOURCES_JSON)
+        )
+      },
+      openClaw: {
+        command: env.OPENCLAW_CLI_COMMAND,
+        limits: {
+          maxDepth: env.OPENCLAW_AGENT_SKILL_MAX_DEPTH,
+          maxFileBytes: env.OPENCLAW_AGENT_SKILL_MAX_FILE_BYTES,
+          maxFiles: env.OPENCLAW_AGENT_SKILL_MAX_FILES,
+          maxTotalBytes: env.OPENCLAW_AGENT_SKILL_MAX_TOTAL_BYTES
+        },
+        maxStderrBytes: env.OPENCLAW_MAX_STDERR_BYTES,
+        maxStdoutBytes: env.OPENCLAW_MAX_STDOUT_BYTES,
+        targets: z.array(openClawAgentSkillTargetSchema).parse(
+          JSON.parse(env.OPENCLAW_AGENT_SKILL_ALLOWED_TARGETS_JSON)
+        ),
+        timeoutMs: env.OPENCLAW_DEFAULT_TIMEOUT_MS
+      },
+      projection: {
+        maxBytes: env.AGENT_SKILL_PROJECTION_MAX_BYTES,
+        maxItems: env.AGENT_SKILL_PROJECTION_MAX_ITEMS,
+        trustedBuilderInstanceId: env.AGENT_SKILL_TRUSTED_BUILDER_INSTANCE_ID
+      }
+    },
     adapters: buildAdapterRuntimeConfig(env),
     artifactStore: buildArtifactStoreRuntimeConfig(env),
     builder: buildBuilderRuntimeConfig(env),
@@ -117,13 +241,7 @@ export function buildRuntimeConfig(
     network: buildNetworkRuntimeConfig(env),
     policy: buildDefaultRuntimePolicyConfig(),
     providers: buildProviderRuntimeConfig(env),
-    serviceAuth: {
-      required: env.RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED,
-      serviceId: env.RAGENIUS_EXECUTION_SERVICE_ID,
-      ...(env.RAGENIUS_EXECUTION_SERVICE_TOKEN
-        ? { token: env.RAGENIUS_EXECUTION_SERVICE_TOKEN }
-        : {})
-    },
+    serviceAuth: buildServiceAuthRuntimeConfig(env),
     tools: buildToolToggleRuntimeConfig(env)
   };
 }
@@ -195,7 +313,7 @@ export function inspectRuntimeConfig(
       }
     },
     serviceAuth: {
-      configured: Boolean(runtimeConfig.serviceAuth.token),
+      configured: runtimeConfig.serviceAuth.credentials.length > 0,
       required: runtimeConfig.serviceAuth.required
     },
     tools: {
@@ -220,7 +338,10 @@ function isInvalidDiscardProxyTarget(value: string): boolean {
 }
 
 export function validateRuntimeConfig(runtimeConfig: RuntimeConfig): void {
-  if (runtimeConfig.serviceAuth.required && !runtimeConfig.serviceAuth.token) {
+  if (
+    runtimeConfig.serviceAuth.required &&
+    runtimeConfig.serviceAuth.credentials.length === 0
+  ) {
     throw new Error(
       "Execution service authentication is required but no service token is configured."
     );

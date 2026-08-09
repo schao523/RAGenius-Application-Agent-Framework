@@ -556,7 +556,7 @@ git commit -m "feat(execution): activate selected agent skills with evidence"
 - Consumes: execution source-options/discover/inspect/projection APIs.
 - Produces: separate source/catalog/approval/binding/audit/projection-state storage methods.
 
-- [ ] **Step 1: Write failing storage and publisher tests**
+- [x] **Step 1: Write failing storage and publisher tests**
 
 Cover stable catalog identity, fingerprint change, compare-and-set approval, unique app binding, audit events, monotonic revision, canonical digest, idempotent acknowledgment, failed synchronization, and restart retry.
 
@@ -566,18 +566,18 @@ self.assertGreater(snapshot["revision"], previous_revision)
 self.assertEqual(store.get_agent_skill_projection_state()["sync_status"], "pending")
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 ```powershell
 cd D:\GitHub\Codex-RAGenius-System\ragenius_builder
 python -m unittest discover -s flask_scaffold/tests -p "test_agent_skill_*.py" -v
 ```
 
-- [ ] **Step 3: Implement tables, storage methods, canonical snapshot, and HTTP client**
+- [x] **Step 3: Implement tables, storage methods, canonical snapshot, and HTTP client**
 
 Add the five governance tables plus `agent_skill_projection_state`. Every runtime-affecting mutation increments `max(previous + 1, utc_epoch_ms)` and marks pending in the same transaction. Publish a complete sorted snapshot with SHA-256 digest and mark synchronized only after instance/revision/digest acknowledgment.
 
-- [ ] **Step 4: Verify Builder persistence in isolation**
+- [x] **Step 4: Verify Builder persistence in isolation**
 
 ```powershell
 python -m unittest discover -s flask_scaffold/tests -p "test_agent_skill_*.py" -v
@@ -586,7 +586,7 @@ python -m unittest discover -s flask_scaffold/tests -p "test_skill_management.py
 
 Expected: existing executable skill storage remains unchanged.
 
-- [ ] **Step 5: Commit Builder governance core**
+- [x] **Step 5: Commit Builder governance core**
 
 ```powershell
 git add ragenius_builder/flask_scaffold/storage.py ragenius_builder/flask_scaffold/agent_skill_execution_client.py ragenius_builder/flask_scaffold/agent_skill_projection.py ragenius_builder/flask_scaffold/tests
@@ -607,28 +607,28 @@ git commit -m "feat(builder): persist and synchronize agent skill governance"
 - Produces: source/discovery/approval/revocation/binding/synchronize routes from the Builder design.
 - Consumes: Task 9 storage/client/publisher.
 
-- [ ] **Step 1: Add failing route and rendering tests**
+- [x] **Step 1: Add failing route and rendering tests**
 
 Test administrator-only mutations, source option selection without raw paths, discovery refresh, fingerprint compare-and-set, app binding, redaction, pending synchronization warning, and `Synchronize now` acknowledgment.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 ```powershell
 python -m unittest discover -s flask_scaffold/tests -p "test_agent_skill_management.py" -v
 ```
 
-- [ ] **Step 3: Implement APIs and server-rendered pages**
+- [x] **Step 3: Implement APIs and server-rendered pages**
 
 Keep `Skills` and `Agent Skills` separate in navigation. Render current/approved fingerprint, requirements, collisions, governance state, binding state, local revision, active execution revision, last success, and bounded error. Never render `protected_locator_ref` or raw provider paths to ordinary users.
 
-- [ ] **Step 4: Verify Builder routes and existing app pages**
+- [x] **Step 4: Verify Builder routes and existing app pages**
 
 ```powershell
 python -m unittest discover -s flask_scaffold/tests -p "test_agent_skill_management.py" -v
 python -m unittest discover -s flask_scaffold/tests -p "test_skill_management.py" -v
 ```
 
-- [ ] **Step 5: Commit Builder administration UX**
+- [x] **Step 5: Commit Builder administration UX**
 
 ```powershell
 git add ragenius_builder/flask_scaffold/app.py ragenius_builder/flask_scaffold/templates ragenius_builder/flask_scaffold/tests/test_agent_skill_management.py
@@ -651,7 +651,7 @@ git commit -m "feat(builder): manage and bind agent skills"
 - Produces: `GET /sessions/{session_id}/exec/agent-skills`.
 - Produces: `ExecutionSubsystemClient.get_agent_skill_inventory` and `submit_agent(..., agent_skill_ref=...)`.
 
-- [ ] **Step 1: Add failing backend tests**
+- [x] **Step 1: Add failing backend tests**
 
 Test session/app/user mismatch, backend validation, public field allowlist, unavailable projection, opaque inventory revision, structured submission, matching legacy combination, and no Builder call.
 
@@ -662,24 +662,24 @@ assert captured["agent_skill_ref"] == {
 }
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 ```powershell
 cd D:\GitHub\Codex-RAGenius-System\ragenius_app_skeleton
 python -m pytest backend/tests/test_execution_subsystem_client.py backend/tests/test_agent_skill_inventory.py backend/tests/test_chat_exec_routing.py -q
 ```
 
-- [ ] **Step 3: Implement transport and scope checks**
+- [x] **Step 3: Implement transport and scope checks**
 
 Call `_require_session_scope` before inventory lookup. Allowlist only contract public fields. Preserve typed `@exec codex use <name>` and add equivalent OpenClaw legacy parsing, but treat Composer's structured request as authoritative.
 
-- [ ] **Step 4: Verify backend execution regressions**
+- [x] **Step 4: Verify backend execution regressions**
 
 ```powershell
 python -m pytest backend/tests/test_execution_subsystem_client.py backend/tests/test_agent_skill_inventory.py backend/tests/test_chat_exec_routing.py backend/tests/test_exec_router.py -q
 ```
 
-- [ ] **Step 5: Commit app backend transport**
+- [x] **Step 5: Commit app backend transport**
 
 ```powershell
 git add ragenius_app_skeleton/backend/app ragenius_app_skeleton/backend/tests
@@ -700,7 +700,7 @@ git commit -m "feat(app): proxy scoped agent skill inventory"
 - Consumes: session-scoped public inventory and normalized activation evidence.
 - Produces: Composer `args.agentSkillRef` and backend-specific picker.
 
-- [ ] **Step 1: Write failing UI tests**
+- [x] **Step 1: Write failing UI tests**
 
 Cover Auto, Codex/OpenClaw filtering, hardcoded NotebookLM removal, explicit id/fingerprint submission, backend/session reset, missing projection, inventory failure, artifact/output composition, and activation evidence labels.
 
@@ -711,25 +711,25 @@ expect(screen.queryByRole("option", { name: "NotebookLM" })).not.toBeInTheDocume
 expect(onSubmit.mock.calls[0][0].args.agentSkillRef.agent_skill_id).toBe("agent-skill-1");
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 ```powershell
 cd D:\GitHub\Codex-RAGenius-System\ragenius_app_skeleton\frontend
 npm test -- ExecutionComposer.test.jsx App.test.jsx ExecutionInspector.test.jsx
 ```
 
-- [ ] **Step 3: Implement scoped state and picker**
+- [x] **Step 3: Implement scoped state and picker**
 
 Store inventory by `(appId, sessionId, userId, backend)`, ignore stale responses, reset selection to Auto on scope/backend changes, and change `buildExecutionRequestForComposer` so a skill reference alone produces structured context. Render `requested`, `activation not observed`, or `process observed` only from normalized evidence.
 
-- [ ] **Step 4: Verify frontend suite and build**
+- [x] **Step 4: Verify frontend suite and build**
 
 ```powershell
 npm test -- ExecutionComposer.test.jsx App.test.jsx ExecutionInspector.test.jsx
 npm run build
 ```
 
-- [ ] **Step 5: Commit Composer selection UX**
+- [x] **Step 5: Commit Composer selection UX**
 
 ```powershell
 git add ragenius_app_skeleton/frontend/src/App.jsx ragenius_app_skeleton/frontend/src/components
@@ -752,7 +752,7 @@ git commit -m "feat(app): select approved agent skills in Composer"
 - Consumes: all previous milestones.
 - Produces: reproducible operator setup and acceptance evidence.
 
-- [ ] **Step 1: Run all automated subsystem gates**
+- [x] **Step 1: Run all automated subsystem gates**
 
 ```powershell
 cd D:\GitHub\Codex-RAGenius-System\ragenius_execution_subsystem
@@ -774,7 +774,7 @@ npm run build
 
 Expected: every command exits `0` before live provider tests begin.
 
-- [ ] **Step 2: Run the synchronized read-model scenario**
+- [x] **Step 2: Run the synchronized read-model scenario**
 
 1. Start execution and Builder with distinct scoped credentials and matching Builder instance id.
 2. Discover one Codex and one OpenClaw test skill.
@@ -785,15 +785,15 @@ Expected: every command exits `0` before live provider tests begin.
 7. Confirm both complete or return provider-level outcomes without Builder connectivity.
 8. Restart Builder, revoke one binding, synchronize, stop Builder, and verify the revoked skill disappears and explicit replay fails closed.
 
-- [ ] **Step 3: Run drift and isolation scenarios**
+- [x] **Step 3: Run drift and isolation scenarios**
 
 Change a supporting file after approval and verify fingerprint mismatch before provider invocation. Verify the skill is absent from another app, raw paths are absent from browser/API responses, and explicit failures never retry as Auto.
 
-- [ ] **Step 4: Record live Codex/OpenClaw evidence and configuration**
+- [x] **Step 4: Record live Codex/OpenClaw evidence and configuration**
 
 Document versions, commands, projection revision, selected skill ids, confirmation behavior, provider observation status, and any residual diagnostic limitation. Add only non-secret environment examples with dummy tokens.
 
-- [ ] **Step 5: Final regression review and commit**
+- [x] **Step 5: Final regression review and commit**
 
 ```powershell
 git diff --check

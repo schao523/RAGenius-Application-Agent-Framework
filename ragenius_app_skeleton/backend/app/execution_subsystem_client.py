@@ -169,6 +169,7 @@ class ExecutionSubsystemClient:
         agent_query: str,
         agent_backend: str = "codex_cli",
         agent_skill_hint: str | None = None,
+        agent_skill_ref: dict[str, str] | None = None,
         approved_content_id: str | None = None,
         approved_revision_id: str | None = None,
         artifact_refs: list[dict[str, Any]] | None = None,
@@ -185,6 +186,8 @@ class ExecutionSubsystemClient:
         }
         if agent_skill_hint:
             payload["agent_skill_hint"] = agent_skill_hint
+        if agent_skill_ref:
+            payload["agent_skill_ref"] = agent_skill_ref
         if approved_content_id:
             payload["approved_content_id"] = approved_content_id
         if approved_revision_id:
@@ -245,6 +248,13 @@ class ExecutionSubsystemClient:
 
     def get_skill_inventory(self, *, visibility: str | None = None) -> dict[str, Any]:
         return self._json_request("GET", "/skills/inventory", query={"visibility": visibility})
+
+    def get_agent_skill_inventory(self, *, app_id: str, backend: str) -> dict[str, Any]:
+        return self._json_request(
+            "GET",
+            "/agent-skills/inventory",
+            query={"app_id": app_id, "backend": backend},
+        )
 
     def get_artifact_inventory(
         self,

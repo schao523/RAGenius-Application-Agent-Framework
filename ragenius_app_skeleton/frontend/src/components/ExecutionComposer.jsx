@@ -211,7 +211,7 @@ function selectedMetaLines(selected, commandKind) {
 
 function helperCopyForMode(commandKind) {
   if (commandKind === "agent") {
-    return "Describe the task in natural language and optionally hint a Codex skill.";
+    return "Describe the task in natural language and optionally select an approved Agent Skill.";
   }
   if (commandKind === "tool") {
     return "Choose a runtime tool and fill the required arguments.";
@@ -393,6 +393,10 @@ function resolveArtifactPickerForTarget(selected, commandKind, toolInventory, pr
 export default function ExecutionComposer({
   toolInventory,
   skillInventory,
+  agentSkillInventory = [],
+  agentSkillInventoryLoading = false,
+  agentSkillInventoryError = "",
+  agentSkillProjectionStatusByBackend = {},
   artifactInventory,
   initialArtifactSuggestion,
   initialArtifactSuggestions,
@@ -426,7 +430,7 @@ export default function ExecutionComposer({
   const [formState, setFormState] = useState({});
   const [agentRequest, setAgentRequest] = useState("");
   const [agentBackend, setAgentBackend] = useState(normalizedInitialAgentBackend);
-  const [agentSkillHint, setAgentSkillHint] = useState("");
+  const [selectedAgentSkillId, setSelectedAgentSkillId] = useState("");
   const [agentArtifactIds, setAgentArtifactIds] = useState(
     normalizedInitialCommandKind === "agent" ? initialAgentArtifactIds : [],
   );
@@ -435,6 +439,28 @@ export default function ExecutionComposer({
   const [submitting, setSubmitting] = useState(false);
   const [showOptionalFields, setShowOptionalFields] = useState(false);
   const agentRisk = useMemo(() => classifyAgentRisk(agentRequest), [agentRequest]);
+  const availableAgentSkills = useMemo(
+    () => [...(Array.isArray(agentSkillInventory) ? agentSkillInventory : [])]
+      .filter((item) => (
+        item
+        && item.backend === agentBackend
+        && String(item.agent_skill_id || "").trim()
+        && String(item.approved_fingerprint || "").trim()
+      ))
+      .sort((left, right) => String(left.display_name || left.agent_skill_id || "")
+        .localeCompare(String(right.display_name || right.agent_skill_id || ""))),
+    [agentBackend, agentSkillInventory],
+  );
+  const selectedAgentSkill = useMemo(
+    () => availableAgentSkills.find((item) => item.agent_skill_id === selectedAgentSkillId) || null,
+    [availableAgentSkills, selectedAgentSkillId],
+  );
+
+  useEffect(() => {
+    if (selectedAgentSkillId && !selectedAgentSkill) {
+      setSelectedAgentSkillId("");
+    }
+  }, [selectedAgentSkill, selectedAgentSkillId]);
 
   const items = useMemo(
     () =>
@@ -1121,8 +1147,16 @@ export default function ExecutionComposer({
           executionMode,
           args: {
             request: String(agentRequest || "").trim(),
-            ...(agentBackend === "codex_cli" && String(agentSkillHint || "").trim()
-              ? { skillHint: String(agentSkillHint || "").trim() }
+            ...(String(selectedAgentSkill?.provider_skill_name || "").trim()
+              ? { skillHint: String(selectedAgentSkill.provider_skill_name).trim() }
+              : {}),
+            ...(selectedAgentSkill
+              ? {
+                  agentSkillRef: {
+                    agent_skill_id: selectedAgentSkill.agent_skill_id,
+                    approved_fingerprint: selectedAgentSkill.approved_fingerprint,
+                  },
+                }
               : {}),
             ...(agentArtifactRefs.length > 0 ? { artifactRefs: agentArtifactRefs } : {}),
             ...(persistAgentOutput ? { expectedOutputs: buildDefaultAgentExpectedOutputs(true) } : {}),
@@ -1200,27 +1234,38 @@ export default function ExecutionComposer({
               <select
                 style={styles.select}
                 value={agentBackend}
-                onChange={(e) => setAgentBackend(e.target.value)}
+                onChange={(e) => {
+                  setAgentBackend(e.target.value);
+                  setSelectedAgentSkillId("");
+                }}
                 aria-label="Agent Backend"
               >
                 <option value="codex_cli">Codex CLI</option>
                 <option value="openclaw_cli">OpenClaw CLI</option>
               </select>
             </label>
-            {agentBackend === "codex_cli" ? (
-              <label>
-                <div style={styles.label}>Skill Hint</div>
-                <select
-                  style={styles.select}
-                  value={agentSkillHint}
-                  onChange={(e) => setAgentSkillHint(e.target.value)}
-                  aria-label="Skill Hint"
-                >
-                  <option value="">Auto</option>
-                  <option value="notebooklm">NotebookLM</option>
-                </select>
-              </label>
-            ) : null}
+            <label>
+              <div style={styles.label}>Agent Skill</div>
+              <select
+                style={styles.select}
+                value={selectedAgentSkillId}
+                onChange={(e) => setSelectedAgentSkillId(e.target.value)}
+                aria-label="Agent Skill"
+                disabled={agentSkillInventoryLoading}
+              >
+                <option value="">Auto</option>
+                {availableAgentSkills.map((item) => (
+                  <option key={item.agent_skill_id} value={item.agent_skill_id}>
+                    {item.display_name || item.provider_skill_name || item.agent_skill_id}
+                  </option>
+                ))}
+              </select>
+              {agentSkillInventoryLoading ? <div style={styles.small}>Loading approved Agent Skills...</div> : null}
+              {agentSkillInventoryError ? <div style={styles.error}>{agentSkillInventoryError}</div> : null}
+              {agentSkillProjectionStatusByBackend?.[agentBackend] === "unavailable" ? (
+                <div style={styles.small}>Approved skill projection is unavailable. Auto remains available.</div>
+              ) : null}
+            </label>
           </>
         ) : (
           <label>
