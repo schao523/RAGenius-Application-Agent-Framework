@@ -175,4 +175,130 @@ describe("Codex agent skill discovery", () => {
       /AGENT_SKILL_SOURCE_NOT_ALLOWED/
     );
   });
+
+  it("discovers same-name skills under distinct contained plugin namespaces", async () => {
+    const root = await temporaryRoot();
+    const firstPlugin = path.join(root, "plugins", "plugin-a");
+    const secondPlugin = path.join(root, "plugins", "plugin-b");
+    await writeSkill(firstPlugin, "skills/shared", "shared-skill");
+    await writeSkill(secondPlugin, "skills/shared", "shared-skill");
+    const discovery = new CodexAgentSkillDiscoveryAdapter({
+      limits: {
+        maxDepth: 6,
+        maxFileBytes: 1024,
+        maxFiles: 20,
+        maxTotalBytes: 4096
+      },
+      sourceOptions: [{
+        display_name: "Approved plugins",
+        discovery_mode: "plugin_inventory",
+        path: root,
+        precedence: 10,
+        protected_locator_ref: "plugin-root",
+        runtime_target_id: "codex-local-default"
+      }]
+    }, {
+      pluginInventory: {
+        list: async () => [{
+          name: "plugin-a",
+          plugin_id: "plugin-a@local",
+          source_path: firstPlugin,
+          version: "1.0.0"
+        }, {
+          name: "plugin-b",
+          plugin_id: "plugin-b@local",
+          source_path: secondPlugin,
+          version: "2.0.0"
+        }]
+      }
+    });
+
+    const result = await discovery.discover({
+      protected_locator_ref: "plugin-root",
+      runtime_target_id: "codex-local-default",
+      source_id: "source-plugins"
+    });
+
+    assert.equal(result.complete, true);
+    assert.deepEqual(
+      result.items.map((item) => item.provider_skill_reference).sort(),
+      ["plugin-a:shared-skill", "plugin-b:shared-skill"]
+    );
+    assert.ok(result.items.every((item) => item.discovery_status === "available"));
+    assert.equal(result.items[0]?.source_kind, "codex_plugin_inventory");
+    assert.equal(result.items[0]?.provider_metadata.plugin_id, "plugin-a@local");
+    assert.equal(JSON.stringify(result).includes(root), false);
+  });
+
+  it("ignores CLI plugin paths outside approved roots and fails closed on tied roots", async () => {
+    const root = await temporaryRoot();
+    const nested = path.join(root, "nested");
+    const outside = await temporaryRoot();
+    const outsidePlugin = path.join(outside, "plugin-outside");
+    await writeSkill(outsidePlugin, "skills/test", "outside-skill");
+    const pluginInventory = {
+      list: async () => [{
+        name: "outside-plugin",
+        plugin_id: "outside-plugin@local",
+        source_path: outsidePlugin
+      }]
+    };
+    const contained = new CodexAgentSkillDiscoveryAdapter({
+      limits: { maxDepth: 6, maxFileBytes: 1024, maxFiles: 20, maxTotalBytes: 4096 },
+      sourceOptions: [{
+        display_name: "Approved root",
+        discovery_mode: "plugin_inventory",
+        path: root,
+        precedence: 10,
+        protected_locator_ref: "root-ref",
+        runtime_target_id: "codex-local-default"
+      }]
+    }, { pluginInventory });
+    const outsideResult = await contained.discover({
+      protected_locator_ref: "root-ref",
+      runtime_target_id: "codex-local-default",
+      source_id: "source-root"
+    });
+    assert.equal(outsideResult.items.length, 0);
+    assert.ok(outsideResult.errors.some((error) =>
+      error.code === "AGENT_SKILL_SOURCE_NOT_ALLOWED"
+    ));
+
+    await fs.mkdir(nested, { recursive: true });
+    const tied = new CodexAgentSkillDiscoveryAdapter({
+      limits: { maxDepth: 6, maxFileBytes: 1024, maxFiles: 20, maxTotalBytes: 4096 },
+      sourceOptions: [{
+        display_name: "Root A",
+        discovery_mode: "plugin_inventory",
+        path: root,
+        precedence: 10,
+        protected_locator_ref: "root-a",
+        runtime_target_id: "codex-local-default"
+      }, {
+        display_name: "Root B",
+        discovery_mode: "plugin_inventory",
+        path: nested,
+        precedence: 10,
+        protected_locator_ref: "root-b",
+        runtime_target_id: "codex-local-default"
+      }]
+    }, {
+      pluginInventory: {
+        list: async () => [{
+          name: "tied-plugin",
+          plugin_id: "tied-plugin@local",
+          source_path: nested
+        }]
+      }
+    });
+    const tiedResult = await tied.discover({
+      protected_locator_ref: "root-a",
+      runtime_target_id: "codex-local-default",
+      source_id: "source-a"
+    });
+    assert.equal(tiedResult.items.length, 0);
+    assert.ok(tiedResult.errors.some((error) =>
+      error.code === "AGENT_SKILL_SOURCE_AMBIGUOUS"
+    ));
+  });
 });

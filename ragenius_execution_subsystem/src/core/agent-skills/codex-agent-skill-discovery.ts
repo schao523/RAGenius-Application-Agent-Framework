@@ -13,7 +13,17 @@ import type {
   AgentSkillInspectionInput,
   AgentSkillSourceOption
 } from "./agent-skill-types.js";
-import type { CodexPluginInventoryReader } from "./codex-plugin-inventory.js";
+import {
+  CodexPluginInventoryError,
+  type CodexPluginInventoryEntry,
+  type CodexPluginInventoryReader
+} from "./codex-plugin-inventory.js";
+
+interface CodexSkillPackage {
+  plugin?: CodexPluginInventoryEntry;
+  root: string;
+  skillDirectory: string;
+}
 
 export interface CodexAgentSkillSourceConfig {
   display_name: string;
@@ -115,59 +125,46 @@ export class CodexAgentSkillDiscoveryAdapter
     const source = this.source(input);
     const root = await fs.realpath(source.path);
     const errors: AgentSkillDiscoveryErrorRecord[] = [];
-    const skillDirectories: string[] = [];
+    let packages: CodexSkillPackage[] = [];
     let complete = true;
-
-    const walk = async (directory: string, depth: number): Promise<void> => {
-      if (depth > this.config.limits.maxDepth) {
-        complete = false;
-        errors.push({
-          code: "AGENT_SKILL_DEPTH_LIMIT",
-          message: "Configured Codex skill discovery depth was exceeded."
-        });
-        return;
-      }
-      const entries = await fs.readdir(directory, { withFileTypes: true });
-      for (const entry of entries) {
-        const candidate = path.join(directory, entry.name);
-        if (entry.isSymbolicLink()) {
-          const resolved = await fs.realpath(candidate);
-          if (!isContained(root, resolved)) {
-            complete = false;
-            errors.push({
-              code: "AGENT_SKILL_SOURCE_NOT_ALLOWED",
-              message: "A linked Codex skill path escaped its configured source."
-            });
-          }
-          continue;
-        }
-        if (entry.isDirectory()) {
-          await walk(candidate, depth + 1);
-          continue;
-        }
-        if (entry.isFile() && entry.name === "SKILL.md") {
-          skillDirectories.push(directory);
-        }
-      }
-    };
-    await walk(root, 0);
+    try {
+      const discovered = source.discovery_mode === "plugin_inventory"
+        ? await this.pluginPackages(source, input, errors)
+        : await this.directoryPackages(root, errors);
+      packages = discovered.packages;
+      complete = discovered.complete;
+    } catch (error) {
+      complete = false;
+      errors.push({
+        code: error instanceof CodexPluginInventoryError
+          ? error.code
+          : "AGENT_SKILL_SOURCE_UNAVAILABLE",
+        message: "Codex skill source inventory is unavailable."
+      });
+    }
 
     const discoveredAt = new Date().toISOString();
     const items: AgentSkillCatalogCandidate[] = [];
-    for (const skillDirectory of skillDirectories) {
+    for (const skillPackage of packages) {
       try {
         items.push(await this.inspectDirectory({
           discoveredAt,
           input,
-          root,
-          skillDirectory,
+          ...(skillPackage.plugin ? { plugin: skillPackage.plugin } : {}),
+          root: skillPackage.root,
+          skillDirectory: skillPackage.skillDirectory,
           source
         }));
       } catch (error) {
         const code = error instanceof CodexAgentSkillDiscoveryError
           ? error.code
           : "AGENT_SKILL_MANIFEST_INVALID";
-        const providerSkillName = await this.manifestNameOrDirectory(skillDirectory);
+        const providerSkillName = await this.manifestNameOrDirectory(
+          skillPackage.skillDirectory
+        );
+        const providerSkillReference = skillPackage.plugin
+          ? `${skillPackage.plugin.name}:${providerSkillName}`
+          : providerSkillName;
         errors.push({
           code,
           message: "Codex skill could not be inspected.",
@@ -176,7 +173,9 @@ export class CodexAgentSkillDiscoveryAdapter
         items.push(this.invalidCandidate({
           discoveredAt,
           input,
+          ...(skillPackage.plugin ? { plugin: skillPackage.plugin } : {}),
           providerSkillName,
+          providerSkillReference,
           source
         }));
       }
@@ -184,19 +183,22 @@ export class CodexAgentSkillDiscoveryAdapter
 
     const counts = new Map<string, number>();
     for (const item of items) {
-      counts.set(item.provider_skill_name, (counts.get(item.provider_skill_name) ?? 0) + 1);
+      counts.set(
+        item.provider_skill_reference,
+        (counts.get(item.provider_skill_reference) ?? 0) + 1
+      );
     }
     const normalized = items.map((item) =>
-      (counts.get(item.provider_skill_name) ?? 0) > 1
+      (counts.get(item.provider_skill_reference) ?? 0) > 1
         ? { ...item, discovery_status: "invalid" as const }
         : item
     );
-    for (const [providerSkillName, count] of counts) {
+    for (const [providerSkillReference, count] of counts) {
       if (count > 1) {
         errors.push({
           code: "AGENT_SKILL_NAME_COLLISION",
-          message: "Multiple Codex skills declared the same name.",
-          provider_skill_name: providerSkillName
+          message: "Multiple Codex skills declared the same canonical reference.",
+          provider_skill_name: providerSkillReference
         });
       }
     }
@@ -216,6 +218,8 @@ export class CodexAgentSkillDiscoveryAdapter
     const result = await this.discover(input);
     const item = result.items.find((candidate) =>
       candidate.provider_skill_name === input.provider_skill_name &&
+      candidate.provider_skill_reference ===
+        (input.provider_skill_reference ?? input.provider_skill_name) &&
       candidate.discovery_status === "available"
     );
     if (item) return item;
@@ -245,9 +249,144 @@ export class CodexAgentSkillDiscoveryAdapter
     return source;
   }
 
+  private async directoryPackages(
+    root: string,
+    errors: AgentSkillDiscoveryErrorRecord[]
+  ): Promise<{ complete: boolean; packages: CodexSkillPackage[] }> {
+    const walked = await this.walkSkillDirectories(root, errors);
+    return {
+      complete: walked.complete,
+      packages: walked.skillDirectories.map((skillDirectory) => ({
+        root,
+        skillDirectory
+      }))
+    };
+  }
+
+  private async pluginPackages(
+    source: CodexAgentSkillSourceConfig,
+    input: AgentSkillDiscoveryInput,
+    errors: AgentSkillDiscoveryErrorRecord[]
+  ): Promise<{ complete: boolean; packages: CodexSkillPackage[] }> {
+    if (!this.dependencies.pluginInventory) {
+      throw new CodexPluginInventoryError(
+        "AGENT_SKILL_PLUGIN_INVENTORY_INVALID"
+      );
+    }
+    const configuredRoots: Array<{
+      canonicalRoot: string;
+      source: CodexAgentSkillSourceConfig;
+    }> = [];
+    for (const candidate of this.config.sourceOptions) {
+      if (
+        candidate.discovery_mode !== "plugin_inventory" ||
+        candidate.runtime_target_id !== input.runtime_target_id
+      ) {
+        continue;
+      }
+      configuredRoots.push({
+        canonicalRoot: await fs.realpath(candidate.path),
+        source: candidate
+      });
+    }
+
+    const packages: CodexSkillPackage[] = [];
+    let complete = true;
+    for (const plugin of await this.dependencies.pluginInventory.list()) {
+      let pluginRoot: string;
+      try {
+        pluginRoot = await fs.realpath(plugin.source_path);
+      } catch {
+        errors.push({
+          code: "AGENT_SKILL_SOURCE_UNAVAILABLE",
+          message: "A Codex plugin source is unavailable.",
+          provider_skill_name: plugin.name
+        });
+        continue;
+      }
+      const matches = configuredRoots.filter((candidate) =>
+        isContained(candidate.canonicalRoot, pluginRoot)
+      );
+      if (matches.length === 0) {
+        errors.push({
+          code: "AGENT_SKILL_SOURCE_NOT_ALLOWED",
+          message: "A Codex plugin is outside configured sources.",
+          provider_skill_name: plugin.name
+        });
+        continue;
+      }
+      const minimumPrecedence = Math.min(
+        ...matches.map((candidate) => candidate.source.precedence ?? 100)
+      );
+      const winners = matches.filter((candidate) =>
+        (candidate.source.precedence ?? 100) === minimumPrecedence
+      );
+      if (winners.length !== 1) {
+        errors.push({
+          code: "AGENT_SKILL_SOURCE_AMBIGUOUS",
+          message: "A Codex plugin matches equal-precedence configured sources.",
+          provider_skill_name: plugin.name
+        });
+        continue;
+      }
+      if (winners[0]?.source.protected_locator_ref !== source.protected_locator_ref) {
+        continue;
+      }
+      const walked = await this.walkSkillDirectories(pluginRoot, errors);
+      complete = complete && walked.complete;
+      packages.push(...walked.skillDirectories.map((skillDirectory) => ({
+        plugin,
+        root: pluginRoot,
+        skillDirectory
+      })));
+    }
+    return { complete, packages };
+  }
+
+  private async walkSkillDirectories(
+    root: string,
+    errors: AgentSkillDiscoveryErrorRecord[]
+  ): Promise<{ complete: boolean; skillDirectories: string[] }> {
+    let complete = true;
+    const skillDirectories: string[] = [];
+    const walk = async (directory: string, depth: number): Promise<void> => {
+      if (depth > this.config.limits.maxDepth) {
+        complete = false;
+        errors.push({
+          code: "AGENT_SKILL_DEPTH_LIMIT",
+          message: "Configured Codex skill discovery depth was exceeded."
+        });
+        return;
+      }
+      const entries = await fs.readdir(directory, { withFileTypes: true });
+      for (const entry of entries) {
+        const candidate = path.join(directory, entry.name);
+        if (entry.isSymbolicLink()) {
+          const resolved = await fs.realpath(candidate);
+          if (!isContained(root, resolved)) {
+            complete = false;
+            errors.push({
+              code: "AGENT_SKILL_SOURCE_NOT_ALLOWED",
+              message: "A linked Codex skill path escaped its configured source."
+            });
+          }
+          continue;
+        }
+        if (entry.isDirectory()) {
+          await walk(candidate, depth + 1);
+        } else if (entry.isFile() && entry.name === "SKILL.md") {
+          skillDirectories.push(directory);
+        }
+      }
+    };
+    await walk(root, 0);
+    return { complete, skillDirectories };
+  }
+
   private async inspectDirectory(input: {
     discoveredAt: string;
     input: AgentSkillDiscoveryInput;
+    plugin?: CodexPluginInventoryEntry;
     root: string;
     skillDirectory: string;
     source: CodexAgentSkillSourceConfig;
@@ -262,13 +401,16 @@ export class CodexAgentSkillDiscoveryAdapter
       throw new CodexAgentSkillDiscoveryError("AGENT_SKILL_FILE_BYTES_LIMIT");
     }
     const manifest = parseManifest(await fs.readFile(manifestPath, "utf8"));
+    const providerSkillReference = input.plugin
+      ? `${input.plugin.name}:${manifest.name}`
+      : manifest.name;
     const contentFingerprint = await this.fingerprintDirectory(
       input.root,
       canonicalDirectory
     );
     return {
       agent_skill_id: stableAgentSkillId({
-        providerSkillName: manifest.name,
+        providerSkillName: providerSkillReference,
         runtimeTargetId: input.input.runtime_target_id,
         sourceId: input.input.source_id
       }),
@@ -282,12 +424,21 @@ export class CodexAgentSkillDiscoveryAdapter
       last_seen_at: input.discoveredAt,
       missing_requirements: { bins: [], config: [], env: [], os: [] },
       model_visible: true,
-      provider_metadata: {},
+      provider_metadata: input.plugin ? {
+        plugin_id: input.plugin.plugin_id,
+        plugin_name: input.plugin.name,
+        ...(input.plugin.marketplace_name
+          ? { marketplace_name: input.plugin.marketplace_name }
+          : {}),
+        ...(input.plugin.version ? { version: input.plugin.version } : {})
+      } : {},
       provider_skill_name: manifest.name,
-      provider_skill_reference: manifest.name,
+      provider_skill_reference: providerSkillReference,
       runtime_target_id: input.input.runtime_target_id,
       source_id: input.input.source_id,
-      source_kind: "codex_directory",
+      source_kind: input.plugin
+        ? "codex_plugin_inventory"
+        : "codex_directory",
       source_label: input.source.display_name,
       user_invocable: true
     };
@@ -309,12 +460,14 @@ export class CodexAgentSkillDiscoveryAdapter
   private invalidCandidate(input: {
     discoveredAt: string;
     input: AgentSkillDiscoveryInput;
+    plugin?: CodexPluginInventoryEntry;
     providerSkillName: string;
+    providerSkillReference: string;
     source: CodexAgentSkillSourceConfig;
   }): AgentSkillCatalogCandidate {
     return {
       agent_skill_id: stableAgentSkillId({
-        providerSkillName: input.providerSkillName,
+        providerSkillName: input.providerSkillReference,
         runtimeTargetId: input.input.runtime_target_id,
         sourceId: input.input.source_id
       }),
@@ -328,12 +481,17 @@ export class CodexAgentSkillDiscoveryAdapter
       last_seen_at: input.discoveredAt,
       missing_requirements: { bins: [], config: [], env: [], os: [] },
       model_visible: false,
-      provider_metadata: {},
+      provider_metadata: input.plugin ? {
+        plugin_id: input.plugin.plugin_id,
+        plugin_name: input.plugin.name
+      } : {},
       provider_skill_name: input.providerSkillName,
-      provider_skill_reference: input.providerSkillName,
+      provider_skill_reference: input.providerSkillReference,
       runtime_target_id: input.input.runtime_target_id,
       source_id: input.input.source_id,
-      source_kind: "codex_directory",
+      source_kind: input.plugin
+        ? "codex_plugin_inventory"
+        : "codex_directory",
       source_label: input.source.display_name,
       user_invocable: false
     };
