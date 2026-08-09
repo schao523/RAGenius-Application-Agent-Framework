@@ -700,7 +700,7 @@ git commit -m "feat(app): proxy scoped agent skill inventory"
 - Consumes: session-scoped public inventory and normalized activation evidence.
 - Produces: Composer `args.agentSkillRef` and backend-specific picker.
 
-- [ ] **Step 1: Write failing UI tests**
+- [x] **Step 1: Write failing UI tests**
 
 Cover Auto, Codex/OpenClaw filtering, hardcoded NotebookLM removal, explicit id/fingerprint submission, backend/session reset, missing projection, inventory failure, artifact/output composition, and activation evidence labels.
 
@@ -711,25 +711,25 @@ expect(screen.queryByRole("option", { name: "NotebookLM" })).not.toBeInTheDocume
 expect(onSubmit.mock.calls[0][0].args.agentSkillRef.agent_skill_id).toBe("agent-skill-1");
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 ```powershell
 cd D:\GitHub\Codex-RAGenius-System\ragenius_app_skeleton\frontend
 npm test -- ExecutionComposer.test.jsx App.test.jsx ExecutionInspector.test.jsx
 ```
 
-- [ ] **Step 3: Implement scoped state and picker**
+- [x] **Step 3: Implement scoped state and picker**
 
 Store inventory by `(appId, sessionId, userId, backend)`, ignore stale responses, reset selection to Auto on scope/backend changes, and change `buildExecutionRequestForComposer` so a skill reference alone produces structured context. Render `requested`, `activation not observed`, or `process observed` only from normalized evidence.
 
-- [ ] **Step 4: Verify frontend suite and build**
+- [x] **Step 4: Verify frontend suite and build**
 
 ```powershell
 npm test -- ExecutionComposer.test.jsx App.test.jsx ExecutionInspector.test.jsx
 npm run build
 ```
 
-- [ ] **Step 5: Commit Composer selection UX**
+- [x] **Step 5: Commit Composer selection UX**
 
 ```powershell
 git add ragenius_app_skeleton/frontend/src/App.jsx ragenius_app_skeleton/frontend/src/components
@@ -752,7 +752,7 @@ git commit -m "feat(app): select approved agent skills in Composer"
 - Consumes: all previous milestones.
 - Produces: reproducible operator setup and acceptance evidence.
 
-- [ ] **Step 1: Run all automated subsystem gates**
+- [x] **Step 1: Run all automated subsystem gates**
 
 ```powershell
 cd D:\GitHub\Codex-RAGenius-System\ragenius_execution_subsystem
@@ -774,7 +774,7 @@ npm run build
 
 Expected: every command exits `0` before live provider tests begin.
 
-- [ ] **Step 2: Run the synchronized read-model scenario**
+- [x] **Step 2: Run the synchronized read-model scenario**
 
 1. Start execution and Builder with distinct scoped credentials and matching Builder instance id.
 2. Discover one Codex and one OpenClaw test skill.
@@ -785,15 +785,15 @@ Expected: every command exits `0` before live provider tests begin.
 7. Confirm both complete or return provider-level outcomes without Builder connectivity.
 8. Restart Builder, revoke one binding, synchronize, stop Builder, and verify the revoked skill disappears and explicit replay fails closed.
 
-- [ ] **Step 3: Run drift and isolation scenarios**
+- [x] **Step 3: Run drift and isolation scenarios**
 
 Change a supporting file after approval and verify fingerprint mismatch before provider invocation. Verify the skill is absent from another app, raw paths are absent from browser/API responses, and explicit failures never retry as Auto.
 
-- [ ] **Step 4: Record live Codex/OpenClaw evidence and configuration**
+- [x] **Step 4: Record live Codex/OpenClaw evidence and configuration**
 
 Document versions, commands, projection revision, selected skill ids, confirmation behavior, provider observation status, and any residual diagnostic limitation. Add only non-secret environment examples with dummy tokens.
 
-- [ ] **Step 5: Final regression review and commit**
+- [x] **Step 5: Final regression review and commit**
 
 ```powershell
 git diff --check

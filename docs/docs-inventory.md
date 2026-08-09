@@ -93,6 +93,7 @@ Additional scan notes:
 
 ### Other
 
+- [agent-skill-discovery-selection-verification-checklist.md](/D:/GitHub/Codex-RAGenius-System/docs/agent-skill-discovery-selection-verification-checklist.md)
 - [2026-05-13-instruction-understanding-remaining-phases.md](/D:/GitHub/Codex-RAGenius-System/docs/2026-05-13-instruction-understanding-remaining-phases.md)
 - [2026-05-14-phase-4-ragenius-app-admin-panel-checklist.md](/D:/GitHub/Codex-RAGenius-System/docs/2026-05-14-phase-4-ragenius-app-admin-panel-checklist.md)
 - [2026-05-14-phase-5-real-llm-verification-checklist.md](/D:/GitHub/Codex-RAGenius-System/docs/2026-05-14-phase-5-real-llm-verification-checklist.md)
