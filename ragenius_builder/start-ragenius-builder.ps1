@@ -18,17 +18,12 @@ function Import-DotEnv([string]$Path) {
     }
 }
 
-Set-Location $Root
-
-if (-not (Test-Path ".env")) {
-    throw ".env not found. Copy .env.example to .env and configure it first."
+$envPath = Join-Path $Root ".env"
+if (-not (Test-Path -LiteralPath $envPath)) {
+    throw ".env not found in $Root. Configure Builder before startup."
 }
 
-Import-DotEnv (Join-Path $Root ".env")
-
-Write-Host "Synchronizing execution dependencies..."
-npm install --no-audit --no-fund
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-Write-Host "Starting ragenius_execution_subsystem on port $env:PORT..."
-npm run dev
+Import-DotEnv $envPath
+Set-Location (Join-Path $Root "flask_scaffold")
+Write-Host "Starting ragenius_builder on port 8011..."
+python -m flask --app app.py run --host 127.0.0.1 --port 8011
