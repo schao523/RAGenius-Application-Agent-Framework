@@ -216,7 +216,8 @@ export class CodexCliProvider implements AgentProvider {
           agent_skill_activation: activationFromCodex({
             selection: context.agent_skill_selection,
             commandEvents: [],
-            reportedSkillNames: response.result.activated_skills ?? []
+            reportedSkillNames: response.result.activated_skills ?? [],
+            providerFailed: false
           })
         };
       }
@@ -237,7 +238,7 @@ export class CodexCliProvider implements AgentProvider {
         selection: context.agent_skill_selection,
         commandEvents: response.result.command_events,
         reportedSkillNames: normalized.activated_skills,
-        providerFailed: normalized.status === "failed"
+        providerFailed: response.result.turn_status !== "completed"
       });
       if (this.dependencies.finalizeResult) {
         normalized = await this.dependencies.finalizeResult({

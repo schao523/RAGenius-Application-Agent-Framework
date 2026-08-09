@@ -20,10 +20,15 @@ export type AgentSkillActivation = {
   activation_status:
     | "not_requested"
     | "projected"
+    | "activated"
     | "process_observed"
     | "not_observed"
     | "failed";
-  evidence_level: "none" | "agent_reported" | "process_observed";
+  evidence_level:
+    | "none"
+    | "agent_reported"
+    | "provider_reference_resolved"
+    | "process_observed";
   evidence_summary?: string;
 };
 
@@ -57,15 +62,18 @@ function selectedActivation(
   evidence: {
     processObserved: boolean;
     agentReported: boolean;
+    providerReferenceResolved: boolean;
     providerFailed?: boolean;
     observationSource: string;
   }
 ): AgentSkillActivation {
   const evidenceLevel = evidence.processObserved
     ? "process_observed"
-    : evidence.agentReported
-      ? "agent_reported"
-      : "none";
+    : evidence.providerReferenceResolved
+      ? "provider_reference_resolved"
+      : evidence.agentReported
+        ? "agent_reported"
+        : "none";
   return {
     requested_agent_skill_id: selection.agent_skill_id,
     requested_provider_skill_name: selection.provider_skill_name,
@@ -77,13 +85,17 @@ function selectedActivation(
       ? "process_observed"
       : evidence.providerFailed
         ? "failed"
-        : "not_observed",
+        : evidence.providerReferenceResolved
+          ? "activated"
+          : "not_observed",
     evidence_level: evidenceLevel,
     evidence_summary: evidence.processObserved
       ? `Observed the selected skill instructions through ${evidence.observationSource}.`
-      : evidence.agentReported
-        ? "The agent reported using the selected skill, but no process evidence was observed."
-        : "No process evidence of the selected skill was observed."
+      : evidence.providerReferenceResolved
+        ? "The successful provider prompt used the immutable resolved skill reference."
+        : evidence.agentReported
+          ? "The agent reported using the selected skill, but no process evidence was observed."
+          : "No process evidence of the selected skill was observed."
   };
 }
 
@@ -124,6 +136,10 @@ export function activationFromCodex(input: {
   return selectedActivation(input.selection, {
     processObserved,
     agentReported,
+    providerReferenceResolved:
+      input.selection.activation_method === "codex_explicit_reference" &&
+      input.selection.provider_skill_reference.trim().length > 0 &&
+      input.providerFailed === false,
     ...(input.providerFailed !== undefined
       ? { providerFailed: input.providerFailed }
       : {}),
@@ -148,6 +164,7 @@ export function activationFromOpenClaw(input: {
       input.reportedText,
       input.selection.provider_skill_name
     ),
+    providerReferenceResolved: false,
     ...(input.providerFailed !== undefined
       ? { providerFailed: input.providerFailed }
       : {}),

@@ -112,7 +112,7 @@ export function buildCodexPrompt(input: {
 
   return [
     ...(selection?.activation_method === "codex_explicit_reference"
-      ? [`$${selection.provider_skill_name}`]
+      ? [`$${selection.provider_skill_reference}`]
       : []),
     "You are executing inside the RAGenius execution subsystem.",
     "",

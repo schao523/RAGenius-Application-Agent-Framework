@@ -82,18 +82,19 @@ const selectedProviderContext: AgentProviderExecutionContext = {
     backend: "codex_cli",
     display_name: "Approved Skill",
     observed_fingerprint: "sha256:v1:approved",
-    provider_skill_name: "approved-skill",
-    provider_skill_reference: "approved-skill",
+    provider_skill_name: "systematic-debugging",
+    provider_skill_reference: "superpowers:systematic-debugging",
     runtime_target_id: "codex-local-default",
     source_id: "source-1"
   }
 };
 
-test("normalizes successful Codex SKILL.md read events as process-observed activation", async () => {
+test("normalizes successful canonical Codex references without shell-read evidence", async () => {
   const provider = new CodexCliProvider(
     config,
     async (_config, bridgeRequest) => {
-      assert.equal(bridgeRequest.agent_skill_hint, "approved-skill");
+      assert.equal(bridgeRequest.agent_skill_hint, "systematic-debugging");
+      assert.match(bridgeRequest.prompt ?? "", /^\$superpowers:systematic-debugging\b/);
       return {
       ok: true,
       result: {
@@ -102,7 +103,7 @@ test("normalizes successful Codex SKILL.md read events as process-observed activ
         final_message: JSON.stringify({
           task_status: "completed",
           summary: "Skill used.",
-          activated_skills: ["approved-skill"],
+          activated_skills: ["systematic-debugging"],
           operations: [{
             operation_id: "agent_read",
             operation: "Use the approved skill.",
@@ -111,11 +112,7 @@ test("normalizes successful Codex SKILL.md read events as process-observed activ
           artifacts: [],
           errors: []
         }),
-        command_events: [{
-          item_id: "command_skill",
-          command: "Get-Content -Raw C:\\Users\\runner\\.codex\\skills\\approved-skill\\SKILL.md",
-          exit_code: 0
-        }],
+        command_events: [],
         errors: [],
         raw_exit_code: 0,
         malformed_line_count: 0,
@@ -144,8 +141,11 @@ test("normalizes successful Codex SKILL.md read events as process-observed activ
   );
 
   assert.ok("agent_skill_activation" in result);
-  assert.equal(result.agent_skill_activation.activation_status, "process_observed");
-  assert.equal(result.agent_skill_activation.evidence_level, "process_observed");
+  assert.equal(result.agent_skill_activation.activation_status, "activated");
+  assert.equal(
+    result.agent_skill_activation.evidence_level,
+    "provider_reference_resolved"
+  );
 });
 
 const workspace: CodexRunWorkspace = {

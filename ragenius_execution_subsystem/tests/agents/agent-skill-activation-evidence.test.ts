@@ -66,6 +66,31 @@ test("Codex requires a successful structured SKILL.md read for process evidence"
   assert.equal(quotedClaim.activation_status, "not_observed");
 });
 
+test("successful explicit Codex references produce provider-resolved activation evidence", () => {
+  const activated = activationFromCodex({
+    selection: {
+      ...selection,
+      provider_skill_name: "systematic-debugging",
+      provider_skill_reference: "superpowers:systematic-debugging"
+    },
+    reportedSkillNames: [],
+    commandEvents: [],
+    providerFailed: false
+  });
+
+  assert.equal(activated.activation_status, "activated");
+  assert.equal(activated.evidence_level, "provider_reference_resolved");
+
+  const failed = activationFromCodex({
+    selection,
+    reportedSkillNames: ["approved-skill"],
+    commandEvents: [],
+    providerFailed: true
+  });
+  assert.equal(failed.activation_status, "failed");
+  assert.equal(failed.evidence_level, "agent_reported");
+});
+
 test("OpenClaw model text is reported evidence while a validated trace is process evidence", () => {
   const openClawSelection: AgentSkillProviderSelection = {
     ...selection,

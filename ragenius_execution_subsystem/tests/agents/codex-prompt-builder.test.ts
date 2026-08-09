@@ -42,8 +42,8 @@ test("projects an explicit canonical Codex skill reference without a protected p
         backend: "codex_cli",
         display_name: "Approved Skill",
         observed_fingerprint: "sha256:v1:approved",
-        provider_skill_name: "approved-skill",
-        provider_skill_reference: "approved-skill",
+        provider_skill_name: "systematic-debugging",
+        provider_skill_reference: "superpowers:systematic-debugging",
         runtime_target_id: "codex-local-default",
         source_id: "source-1"
       }
@@ -51,9 +51,42 @@ test("projects an explicit canonical Codex skill reference without a protected p
     stagedArtifacts: []
   });
 
-  assert.match(prompt, /^\$approved-skill\b/);
-  assert.match(prompt, /Selected Agent skill: approved-skill/);
+  assert.match(prompt, /^\$superpowers:systematic-debugging\b/);
+  assert.doesNotMatch(prompt, /^\$systematic-debugging\b/);
+  assert.match(prompt, /Selected Agent skill: systematic-debugging/);
   assert.doesNotMatch(prompt, /protected-source-ref|\.codex[\\/]skills/);
+});
+
+test("does not let a client hint replace the resolved canonical reference", () => {
+  const prompt = buildCodexPrompt({
+    request: {
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "session_001",
+      agent_backend: "codex_cli",
+      agent_skill_hint: "untrusted-skill",
+      agent_query: "Use the selected skill."
+    },
+    context: {
+      ...confirmedContext,
+      agent_skill_selection: {
+        activation_method: "codex_explicit_reference",
+        agent_skill_id: "agent-skill-1",
+        approved_fingerprint: "sha256:v1:approved",
+        backend: "codex_cli",
+        display_name: "Systematic Debugging",
+        observed_fingerprint: "sha256:v1:approved",
+        provider_skill_name: "systematic-debugging",
+        provider_skill_reference: "superpowers:systematic-debugging",
+        runtime_target_id: "codex-local-default",
+        source_id: "source-1"
+      }
+    },
+    stagedArtifacts: []
+  });
+
+  assert.match(prompt, /^\$superpowers:systematic-debugging\b/);
+  assert.doesNotMatch(prompt, /^\$untrusted-skill\b/);
 });
 
 test("projects trusted confirmation, operations, and staged relative paths", () => {

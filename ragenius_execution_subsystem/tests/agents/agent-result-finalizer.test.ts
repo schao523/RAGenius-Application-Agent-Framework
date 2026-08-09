@@ -75,7 +75,7 @@ test("trusted adapter evidence raises the operation to independently verified", 
   );
 });
 
-test("normalizes model-only activation claims without promoting them to process evidence", async () => {
+test("normalizes successful explicit references without promoting model claims to process evidence", async () => {
   const result = await finalizeAgentResult({
     context: {
       ...context,
@@ -99,6 +99,9 @@ test("normalizes model-only activation claims without promoting them to process 
     trustedVerification: []
   });
 
-  assert.equal(result.agent_skill_activation?.activation_status, "not_observed");
-  assert.equal(result.agent_skill_activation?.evidence_level, "agent_reported");
+  assert.equal(result.agent_skill_activation?.activation_status, "activated");
+  assert.equal(
+    result.agent_skill_activation?.evidence_level,
+    "provider_reference_resolved"
+  );
 });

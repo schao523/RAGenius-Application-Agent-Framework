@@ -17,9 +17,13 @@ function configuredArgs(): string[] {
   return parsed;
 }
 
-function prompt(method: Method, skillName: string): string {
+function prompt(
+  method: Method,
+  skillName: string,
+  skillReference: string
+): string {
   const activation = method === "codex_explicit_reference"
-    ? [`$${skillName}`]
+    ? [`$${skillReference}`]
     : [
         `Selected Agent skill: ${skillName}`,
         `Use the installed Codex skill named \`${skillName}\` for this task.`,
@@ -87,12 +91,17 @@ async function runMethod(input: {
     networkAccess: "deny",
     additionalWritableDirs: []
   });
+  const promptText = prompt(
+    input.method,
+    input.selection.provider_skill_name,
+    input.selection.provider_skill_reference
+  );
   const startedAt = Date.now();
   const result = await runSupervisedProcess({
     command: input.command,
     args,
     cwd: input.workspace,
-    stdin: prompt(input.method, input.selection.provider_skill_name),
+    stdin: promptText,
     timeoutMs: Number(process.env.CODEX_CLI_TIMEOUT_MS ?? 300000),
     maxStdoutBytes: 4_194_304,
     maxStderrBytes: 65_536
@@ -110,6 +119,7 @@ async function runMethod(input: {
   });
   return {
     method: input.method,
+    prompt_first_line: promptText.split("\n", 1)[0],
     duration_ms: Date.now() - startedAt,
     exit_code: result.exitCode,
     timed_out: result.timedOut,
@@ -131,6 +141,14 @@ async function main(): Promise<void> {
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
     "Set CODEX_AGENT_SKILL_SMOKE_NAME to an installed read-only test skill."
   );
+  const skillReference = String(
+    process.env.CODEX_AGENT_SKILL_SMOKE_REFERENCE ?? skillName
+  ).trim();
+  assert.match(
+    skillReference,
+    /^[a-z0-9]+(?:-[a-z0-9]+)*(?::[a-z0-9]+(?:-[a-z0-9]+)*)?$/,
+    "Set CODEX_AGENT_SKILL_SMOKE_REFERENCE to the provider-native skill reference."
+  );
   const command = String(process.env.CODEX_CLI_COMMAND ?? "codex").trim() || "codex";
   const workspace = path.resolve(
     process.env.CODEX_AGENT_SKILL_SMOKE_WORKSPACE ?? process.cwd()
@@ -143,7 +161,7 @@ async function main(): Promise<void> {
     display_name: skillName,
     observed_fingerprint: "smoke-fingerprint",
     provider_skill_name: skillName,
-    provider_skill_reference: skillName,
+    provider_skill_reference: skillReference,
     runtime_target_id: "codex-smoke",
     source_id: "smoke-source"
   };
@@ -156,16 +174,23 @@ async function main(): Promise<void> {
   }
   const chosen = results.find((result) =>
     result.method === "codex_explicit_reference" &&
-    result.activation_status === "process_observed"
-  ) ?? results.find((result) => result.activation_status === "process_observed");
+    ["provider_reference_resolved", "process_observed"].includes(
+      result.evidence_level
+    )
+  );
   if (!chosen) {
     console.error(JSON.stringify({ diagnostic_results: results }, null, 2));
   }
-  assert.ok(chosen, "Neither Codex activation method produced process-observed evidence.");
+  assert.ok(
+    chosen,
+    "Explicit Codex activation did not produce provider-resolved or process-observed evidence."
+  );
   console.log(JSON.stringify({
     codex_version: await runVersion(command),
     configured_args: configuredArgs(),
     skill_name: skillName,
+    skill_reference: skillReference,
+    prompt_first_line: chosen.prompt_first_line,
     workspace,
     results,
     chosen_method: chosen.method
