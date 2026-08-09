@@ -91,7 +91,7 @@ test("successful explicit Codex references produce provider-resolved activation 
   assert.equal(failed.evidence_level, "none");
 });
 
-test("plugin process evidence must match the selected namespace and manifest", () => {
+test("namespaced plugin reads remain provider-resolved without an exact package path", () => {
   const pluginSelection = {
     ...selection,
     provider_skill_name: "shared-skill",
@@ -104,7 +104,8 @@ test("plugin process evidence must match the selected namespace and manifest", (
       item_id: "wrong-plugin",
       command: "Get-Content C:\\plugins\\plugin-b\\skills\\shared-skill\\SKILL.md",
       exit_code: 0
-    }]
+    }],
+    providerFailed: false
   });
   const selectedPlugin = activationFromCodex({
     selection: pluginSelection,
@@ -113,11 +114,24 @@ test("plugin process evidence must match the selected namespace and manifest", (
       item_id: "selected-plugin",
       command: "Get-Content C:\\plugins\\plugin-a\\skills\\shared-skill\\SKILL.md",
       exit_code: 0
-    }]
+    }],
+    providerFailed: false
+  });
+  const nestedWrongPackage = activationFromCodex({
+    selection: pluginSelection,
+    reportedSkillNames: [],
+    commandEvents: [{
+      item_id: "nested-wrong-plugin",
+      command: "Get-Content C:\\plugins\\plugin-a\\plugin-b\\skills\\shared-skill\\SKILL.md",
+      exit_code: 0
+    }],
+    providerFailed: false
   });
 
-  assert.equal(wrongPlugin.activation_status, "not_observed");
-  assert.equal(selectedPlugin.activation_status, "process_observed");
+  for (const activation of [wrongPlugin, selectedPlugin, nestedWrongPackage]) {
+    assert.equal(activation.activation_status, "activated");
+    assert.equal(activation.evidence_level, "provider_reference_resolved");
+  }
 });
 
 test("OpenClaw model text is reported evidence while a validated trace is process evidence", () => {
@@ -143,6 +157,14 @@ test("OpenClaw model text is reported evidence while a validated trace is proces
   assert.equal(observed.activation_status, "process_observed");
   assert.equal(observed.evidence_level, "process_observed");
   assert.doesNotMatch(observed.evidence_summary ?? "", /\/home\/openclaw/);
+
+  const failed = activationFromOpenClaw({
+    selection: openClawSelection,
+    reportedText: "I used the approved-skill skill for this task.",
+    providerFailed: true
+  });
+  assert.equal(failed.activation_status, "failed");
+  assert.equal(failed.evidence_level, "agent_reported");
 });
 
 test("Auto execution reports that no skill was requested", () => {

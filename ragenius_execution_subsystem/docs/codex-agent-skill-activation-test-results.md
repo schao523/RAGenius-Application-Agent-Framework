@@ -34,16 +34,18 @@ with `AGENT_SKILL_SOURCE_NOT_ALLOWED`, as required by the fail-closed policy.
 
 | Method | Result | Duration | Evidence |
 |---|---|---:|---|
-| `$superpowers:systematic-debugging <request>` | passed | 20.3 s | process-observed successful namespace-bound `SKILL.md` read |
-| ordinary explicit guidance | diagnostic pass | 48.3 s | process-observed after filesystem search |
+| `$superpowers:systematic-debugging <request>` | passed | 16.9 s | `provider_reference_resolved` |
+| ordinary explicit guidance | diagnostic only | 69.0 s | `not_observed` |
 
 The explicit method completed with exit code `0`, no timeout, and prompt first
 line `$superpowers:systematic-debugging`. The ordinary-guidance run remains a
 diagnostic comparison and is not an acceptable fallback pass condition.
 
-When Codex completes an immutable explicit-reference turn without emitting a
-structured skill-file read, RAGenius records `provider_reference_resolved`.
-A successful structured read remains the stronger `process_observed` evidence.
+When Codex completes an immutable namespaced explicit-reference turn, RAGenius
+records `provider_reference_resolved`. It does not promote a namespaced run to
+`process_observed` because the provider context intentionally excludes the
+exact protected package path. Standalone skills can still receive stronger
+`process_observed` evidence from a matching structured skill-file read.
 Model-produced activation claims alone remain `agent_reported`.
 
 ## Migration And Regression

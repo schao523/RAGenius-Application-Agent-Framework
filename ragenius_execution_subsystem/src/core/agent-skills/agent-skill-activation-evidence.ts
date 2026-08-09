@@ -64,10 +64,11 @@ function selectedActivation(
     agentReported: boolean;
     providerReferenceResolved: boolean;
     providerFailed?: boolean;
+    resetEvidenceOnFailure?: boolean;
     observationSource: string;
   }
 ): AgentSkillActivation {
-  if (evidence.providerFailed) {
+  if (evidence.providerFailed && evidence.resetEvidenceOnFailure) {
     return {
       requested_agent_skill_id: selection.agent_skill_id,
       requested_provider_skill_name: selection.provider_skill_name,
@@ -118,17 +119,11 @@ function normalizedPathText(value: string): string {
 
 function includesSkillManifest(
   value: string,
-  providerSkillName: string,
-  providerSkillReference = providerSkillName
+  providerSkillName: string
 ): boolean {
   const normalized = normalizedPathText(value);
   const skillName = providerSkillName.trim().toLowerCase();
-  const manifestIndex = normalized.indexOf(`/${skillName}/skill.md`);
-  if (!skillName || manifestIndex < 0) return false;
-  const referenceParts = providerSkillReference.trim().toLowerCase().split(":");
-  if (referenceParts.length === 1) return true;
-  if (referenceParts.length !== 2 || referenceParts[1] !== skillName) return false;
-  return normalized.lastIndexOf(`/${referenceParts[0]}/`, manifestIndex) >= 0;
+  return Boolean(skillName) && normalized.includes(`/${skillName}/skill.md`);
 }
 
 function reportsSkill(value: string, providerSkillName: string): boolean {
@@ -147,14 +142,11 @@ export function activationFromCodex(input: {
   providerFailed?: boolean;
 }): AgentSkillActivation {
   if (!input.selection) return autoActivation();
-  const processObserved = input.commandEvents.some((event) =>
+  const processObserved = !input.selection.provider_skill_reference.includes(":") &&
+    input.commandEvents.some((event) =>
     event.exit_code === 0 &&
     hasCodexReadCommand(event.command) &&
-    includesSkillManifest(
-      event.command,
-      input.selection!.provider_skill_name,
-      input.selection!.provider_skill_reference
-    )
+    includesSkillManifest(event.command, input.selection!.provider_skill_name)
   );
   const agentReported = input.reportedSkillNames.some((name) =>
     name.trim().toLowerCase() === input.selection!.provider_skill_name.trim().toLowerCase()
@@ -169,6 +161,7 @@ export function activationFromCodex(input: {
     ...(input.providerFailed !== undefined
       ? { providerFailed: input.providerFailed }
       : {}),
+    resetEvidenceOnFailure: true,
     observationSource: "a Codex command event"
   });
 }
