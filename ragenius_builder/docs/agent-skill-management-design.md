@@ -88,6 +88,7 @@ The database should enforce a uniqueness constraint over
 | `runtime_target_id` | TEXT | Runtime target used for discovery |
 | `source_id` | TEXT | Foreign key to `agent_skill_sources` |
 | `provider_skill_name` | TEXT | Provider-native name |
+| `provider_skill_reference` | TEXT | Canonical activation identity without provider prompt syntax |
 | `display_name` | TEXT | Normalized display label |
 | `description` | TEXT | Normalized description |
 | `content_fingerprint` | TEXT | Algorithm-qualified digest |
@@ -102,7 +103,7 @@ The database should enforce a uniqueness constraint over
 | `updated_at` | TEXT | Most recent record update |
 
 The logical identity uniqueness constraint is
-`(backend, runtime_target_id, source_id, provider_skill_name)`. A fingerprint
+`(backend, runtime_target_id, source_id, provider_skill_reference)`. A fingerprint
 change updates the existing catalog row; it does not create a new logical
 skill.
 

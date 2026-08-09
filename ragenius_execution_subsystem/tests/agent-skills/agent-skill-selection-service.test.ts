@@ -29,6 +29,7 @@ function projected(
     model_visible: true,
     protected_locator_ref: "codex-source-ref-1",
     provider_skill_name: "approved-skill",
+    provider_skill_reference: "superpowers:approved-skill",
     runtime_target_id: "codex-local-default",
     source_enabled: true,
     source_id: "source-1",
@@ -56,6 +57,7 @@ function observed(
     model_visible: true,
     provider_metadata: {},
     provider_skill_name: record.provider_skill_name,
+    provider_skill_reference: record.provider_skill_reference,
     runtime_target_id: record.runtime_target_id,
     source_id: record.source_id,
     source_kind: record.backend === "codex_cli"
@@ -124,6 +126,7 @@ describe("agent skill selection service", () => {
 
     assert.equal(resolved?.agent_skill_id, "agent-skill-1");
     assert.equal(resolved?.provider_skill_name, "approved-skill");
+    assert.equal(resolved?.provider_skill_reference, "superpowers:approved-skill");
     assert.equal(resolved?.activation_method, "codex_explicit_reference");
     assert.equal(resolved?.observed_fingerprint, "sha256:v1:approved");
   });

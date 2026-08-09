@@ -22,6 +22,7 @@ function binding(): ProjectedAgentSkillGovernance {
     model_visible: true,
     protected_locator_ref: "codex-source-ref-1",
     provider_skill_name: "persisted-skill",
+    provider_skill_reference: "persisted-skill",
     runtime_target_id: "codex-local-default",
     source_enabled: true,
     source_id: "source-1",

@@ -38,6 +38,7 @@ export function projectAgentSkillSelection(
     display_name: selection.display_name,
     observed_fingerprint: selection.observed_fingerprint,
     provider_skill_name: selection.provider_skill_name,
+    provider_skill_reference: selection.provider_skill_reference,
     runtime_target_id: selection.runtime_target_id,
     source_id: selection.source_id
   };

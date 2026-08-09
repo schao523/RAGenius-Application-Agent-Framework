@@ -27,6 +27,7 @@ function item(
     model_visible: true,
     protected_locator_ref: "secret-source-ref",
     provider_skill_name: "selectable-skill",
+    provider_skill_reference: "selectable-skill",
     runtime_target_id: "codex-local-default",
     source_enabled: true,
     source_id: "source-1",
@@ -122,6 +123,7 @@ describe("agent skill projection routes", () => {
     assert.deepEqual(response.json().items, [{
       backend: "codex_cli",
       display_name: "Administrator Codex Skills",
+      precedence: 100,
       protected_locator_ref: "codex-source-ref-1",
       runtime_target_id: "codex-local-default",
       source_kind: "codex_directory"
@@ -154,6 +156,7 @@ describe("agent skill projection routes", () => {
     assert.deepEqual(response.json().items, [{
       backend: "openclaw_cli",
       display_name: "OpenClaw Main",
+      precedence: 100,
       protected_locator_ref: "openclaw-main-ref",
       runtime_target_id: "openclaw-main",
       source_kind: "openclaw_agent_inventory"

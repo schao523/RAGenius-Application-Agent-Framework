@@ -15,6 +15,7 @@ export type AgentSkillProviderSelection = {
   display_name: string;
   observed_fingerprint: string;
   provider_skill_name: string;
+  provider_skill_reference: string;
   runtime_target_id: string;
   source_id: string;
 };
@@ -38,6 +39,7 @@ export type AgentOperationPlanItem = {
   approved_fingerprint?: string;
   observed_fingerprint?: string;
   provider_skill_name?: string;
+  provider_skill_reference?: string;
   runtime_target_id?: string;
   source_id?: string;
 };

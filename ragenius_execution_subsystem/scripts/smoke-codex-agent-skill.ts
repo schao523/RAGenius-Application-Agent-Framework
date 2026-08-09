@@ -143,6 +143,7 @@ async function main(): Promise<void> {
     display_name: skillName,
     observed_fingerprint: "smoke-fingerprint",
     provider_skill_name: skillName,
+    provider_skill_reference: skillName,
     runtime_target_id: "codex-smoke",
     source_id: "smoke-source"
   };

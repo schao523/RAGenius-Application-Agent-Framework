@@ -19,6 +19,7 @@ export const projectedAgentSkillGovernanceSchema = z.object({
   model_visible: z.boolean(),
   protected_locator_ref: z.string().trim().min(1),
   provider_skill_name: z.string().trim().min(1),
+  provider_skill_reference: z.string().trim().min(1).optional(),
   runtime_target_id: z.string().trim().min(1),
   source_enabled: z.boolean(),
   source_id: z.string().trim().min(1),

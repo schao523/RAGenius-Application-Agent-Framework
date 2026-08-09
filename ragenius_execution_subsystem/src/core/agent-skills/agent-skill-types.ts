@@ -2,6 +2,7 @@ export type AgentSkillBackend = "codex_cli" | "openclaw_cli";
 
 export type AgentSkillSourceKind =
   | "codex_directory"
+  | "codex_plugin_inventory"
   | "openclaw_agent_inventory";
 
 export type AgentSkillDiscoveryStatus =
@@ -16,6 +17,7 @@ export interface AgentSkillSourceOption {
   backend: AgentSkillBackend;
   display_name: string;
   protected_locator_ref: string;
+  precedence: number;
   runtime_target_id: string;
   source_kind: AgentSkillSourceKind;
 }
@@ -28,6 +30,7 @@ export interface AgentSkillDiscoveryInput {
 
 export interface AgentSkillInspectionInput extends AgentSkillDiscoveryInput {
   provider_skill_name: string;
+  provider_skill_reference?: string;
 }
 
 export interface AgentSkillDiscoveryErrorRecord {
@@ -55,6 +58,7 @@ export interface AgentSkillCatalogCandidate {
   model_visible: boolean;
   provider_metadata: Record<string, unknown>;
   provider_skill_name: string;
+  provider_skill_reference: string;
   runtime_target_id: string;
   source_id: string;
   source_kind: AgentSkillSourceKind;
@@ -91,6 +95,7 @@ export interface ResolvedAgentSkillSelection {
   observed_fingerprint: string;
   protected_locator_ref: string;
   provider_skill_name: string;
+  provider_skill_reference: string;
   resolved_at: string;
   runtime_target_id: string;
   source_id: string;
@@ -112,6 +117,7 @@ export interface ProjectedAgentSkillGovernance {
   model_visible: boolean;
   protected_locator_ref: string;
   provider_skill_name: string;
+  provider_skill_reference: string;
   runtime_target_id: string;
   source_enabled: boolean;
   source_id: string;

@@ -26,6 +26,7 @@ describe("execute_agent requests", () => {
     observed_fingerprint: "sha256:v1:approved",
     protected_locator_ref: "protected-source-ref",
     provider_skill_name: "approved-skill",
+    provider_skill_reference: "approved-skill",
     resolved_at: "2026-08-04T00:00:00.000Z",
     runtime_target_id: "codex-local-default",
     source_id: "source-1"

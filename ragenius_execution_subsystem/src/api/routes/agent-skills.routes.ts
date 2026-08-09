@@ -126,7 +126,14 @@ export async function registerAgentSkillRoutes(
       });
     }
     try {
-      return await app.services.agentSkillProjectionStore.publish(projection);
+      return await app.services.agentSkillProjectionStore.publish({
+        ...projection,
+        items: projection.items.map((item) => ({
+          ...item,
+          provider_skill_reference:
+            item.provider_skill_reference ?? item.provider_skill_name
+        }))
+      });
     } catch (error) {
       if (error instanceof AgentSkillProjectionError) {
         throw projectionError(error);

@@ -43,6 +43,7 @@ test("projects an explicit canonical Codex skill reference without a protected p
         display_name: "Approved Skill",
         observed_fingerprint: "sha256:v1:approved",
         provider_skill_name: "approved-skill",
+        provider_skill_reference: "approved-skill",
         runtime_target_id: "codex-local-default",
         source_id: "source-1"
       }
@@ -232,6 +233,7 @@ test("uses resolved NotebookLM selection for compatibility guidance without a cl
         display_name: "NotebookLM",
         observed_fingerprint: "sha256:v1:notebooklm",
         provider_skill_name: "notebooklm",
+        provider_skill_reference: "notebooklm",
         runtime_target_id: "codex-local-default",
         source_id: "source-notebooklm"
       }

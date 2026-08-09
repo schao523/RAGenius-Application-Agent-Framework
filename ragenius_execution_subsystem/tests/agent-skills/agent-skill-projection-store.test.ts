@@ -24,6 +24,7 @@ function binding(
     model_visible: true,
     protected_locator_ref: "codex-source-ref-1",
     provider_skill_name: "test-skill",
+    provider_skill_reference: "test-plugin:test-skill",
     runtime_target_id: "codex-local-default",
     source_enabled: true,
     source_id: "source-1",
@@ -54,6 +55,7 @@ describe("agent skill projection store", () => {
       agent_skill_id: "agent-skill-2",
       backend: "openclaw_cli",
       provider_skill_name: "openclaw-test",
+      provider_skill_reference: "openclaw-test",
       runtime_target_id: "openclaw-main",
       source_id: "source-2"
     });

@@ -230,6 +230,7 @@ export class OpenClawAgentSkillDiscoveryAdapter
       backend: this.backend,
       display_name: target.display_name,
       protected_locator_ref: target.protected_locator_ref,
+      precedence: 100,
       runtime_target_id: target.runtime_target_id,
       source_kind: "openclaw_agent_inventory"
     }));
@@ -401,6 +402,7 @@ export class OpenClawAgentSkillDiscoveryAdapter
         source: input.skill.source
       },
       provider_skill_name: input.skill.name,
+      provider_skill_reference: input.skill.name,
       runtime_target_id: input.input.runtime_target_id,
       source_id: input.input.source_id,
       source_kind: "openclaw_agent_inventory",

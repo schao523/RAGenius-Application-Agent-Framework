@@ -126,6 +126,7 @@ export class AgentSkillSelectionService {
       {
         protected_locator_ref: selected.protected_locator_ref,
         provider_skill_name: selected.provider_skill_name,
+        provider_skill_reference: selected.provider_skill_reference,
         runtime_target_id: selected.runtime_target_id,
         source_id: selected.source_id
       }
@@ -133,6 +134,7 @@ export class AgentSkillSelectionService {
     if (
       observed.backend !== selected.backend ||
       observed.provider_skill_name !== selected.provider_skill_name ||
+      observed.provider_skill_reference !== selected.provider_skill_reference ||
       observed.runtime_target_id !== selected.runtime_target_id ||
       observed.source_id !== selected.source_id
     ) {
@@ -162,6 +164,7 @@ export class AgentSkillSelectionService {
       observed_fingerprint: observed.content_fingerprint,
       protected_locator_ref: selected.protected_locator_ref,
       provider_skill_name: selected.provider_skill_name,
+      provider_skill_reference: selected.provider_skill_reference,
       resolved_at: new Date().toISOString(),
       runtime_target_id: selected.runtime_target_id,
       source_id: selected.source_id

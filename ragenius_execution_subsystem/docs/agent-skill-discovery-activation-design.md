@@ -120,6 +120,7 @@ type ProjectedAgentSkillGovernance = {
   source_id: string;
   protected_locator_ref: string;
   provider_skill_name: string;
+  provider_skill_reference: string;
   display_name: string;
   description: string;
   current_fingerprint: string;
@@ -153,6 +154,7 @@ type ResolvedAgentSkillSelection = {
   runtime_target_id: string;
   source_id: string;
   provider_skill_name: string;
+  provider_skill_reference: string;
   display_name: string;
   approved_fingerprint: string;
   observed_fingerprint: string;

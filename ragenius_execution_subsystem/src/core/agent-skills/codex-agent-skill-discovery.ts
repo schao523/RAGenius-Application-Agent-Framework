@@ -95,6 +95,7 @@ export class CodexAgentSkillDiscoveryAdapter
       backend: this.backend,
       display_name: source.display_name,
       protected_locator_ref: source.protected_locator_ref,
+      precedence: 100,
       runtime_target_id: source.runtime_target_id,
       source_kind: "codex_directory"
     }));
@@ -273,6 +274,7 @@ export class CodexAgentSkillDiscoveryAdapter
       model_visible: true,
       provider_metadata: {},
       provider_skill_name: manifest.name,
+      provider_skill_reference: manifest.name,
       runtime_target_id: input.input.runtime_target_id,
       source_id: input.input.source_id,
       source_kind: "codex_directory",
@@ -318,6 +320,7 @@ export class CodexAgentSkillDiscoveryAdapter
       model_visible: false,
       provider_metadata: {},
       provider_skill_name: input.providerSkillName,
+      provider_skill_reference: input.providerSkillName,
       runtime_target_id: input.input.runtime_target_id,
       source_id: input.input.source_id,
       source_kind: "codex_directory",

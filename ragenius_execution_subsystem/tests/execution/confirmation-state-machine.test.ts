@@ -251,6 +251,7 @@ describe("single-use confirmation state machine", () => {
           observed_fingerprint: observedFingerprint,
           protected_locator_ref: "protected-source-ref",
           provider_skill_name: "approved-skill",
+          provider_skill_reference: "approved-skill",
           resolved_at: new Date().toISOString(),
           runtime_target_id: "codex-local-default",
           source_id: "source-1"

@@ -64,6 +64,7 @@ type CodexAgentSkillSourceConfig = {
   runtime_target_id: string;
   path: string;
   discovery_mode?: "directory" | "plugin_inventory";
+  precedence?: number;
 };
 ```
 
@@ -73,9 +74,9 @@ broad approved directory and eligible plugin roots are obtained from the Codex
 CLI inventory, then filtered by canonical containment.
 
 Several configured `plugin_inventory` sources may cover different approved
-roots. One CLI-reported plugin must match exactly one effective source after
-configured source precedence is applied. Ambiguous equal-precedence matches
-fail closed.
+roots. Lower nonnegative `precedence` values win and the default is `100`.
+One CLI-reported plugin must match exactly one effective source after configured
+source precedence is applied. Ambiguous equal-precedence matches fail closed.
 
 ## Canonical Skill Reference
 

@@ -134,6 +134,7 @@ describe("OpenClaw agent skill discovery", () => {
 
     assert.equal(result.complete, true);
     assert.equal(eligible?.discovery_status, "available");
+    assert.equal(eligible?.provider_skill_reference, "eligible-skill");
     assert.equal(disabled?.discovery_status, "disabled_at_provider");
     assert.equal(hidden?.discovery_status, "ineligible");
     assert.equal(toolOnly?.direct_tool_dispatch, true);

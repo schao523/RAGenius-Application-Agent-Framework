@@ -121,6 +121,7 @@ function toGovernance(row: GovernanceRow): ProjectedAgentSkillGovernance {
     model_visible: row.modelVisible,
     protected_locator_ref: row.protectedLocatorRef,
     provider_skill_name: row.providerSkillName,
+    provider_skill_reference: row.providerSkillName,
     runtime_target_id: row.runtimeTargetId,
     source_enabled: row.sourceEnabled,
     source_id: row.sourceId,

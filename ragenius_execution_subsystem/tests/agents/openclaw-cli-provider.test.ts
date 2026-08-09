@@ -45,6 +45,7 @@ const selectedContext: AgentProviderExecutionContext = {
     display_name: "Approved Skill",
     observed_fingerprint: "sha256:v1:approved",
     provider_skill_name: "approved-skill",
+    provider_skill_reference: "approved-skill",
     runtime_target_id: "main",
     source_id: "source-1"
   }

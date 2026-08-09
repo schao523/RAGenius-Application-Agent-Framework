@@ -210,6 +210,7 @@ type AgentSkillCatalogEntry = {
   runtime_target_id: string;
   source_id: string;
   provider_skill_name: string;
+  provider_skill_reference: string;
   display_name: string;
   description: string;
   source_kind: AgentSkillSourceKind;
@@ -241,7 +242,10 @@ Identity rules:
 
 - `agent_skill_id` is an opaque stable catalog id.
 - The stable logical identity is the tuple of `backend`, `runtime_target_id`,
-  `source_id`, and `provider_skill_name`.
+  `source_id`, and `provider_skill_reference`.
+- `provider_skill_reference` excludes provider prompt syntax such as `$`.
+- Standalone and OpenClaw skills use `provider_skill_name`; Codex plugin skills
+  use `<plugin-name>:<provider_skill_name>`.
 - `content_fingerprint` is not the stable id. It is the reviewed content
   version used to invalidate stale approval.
 - Same-name skills from different sources remain distinct catalog entries.
@@ -495,8 +499,9 @@ must not authorize another version or Auto execution.
 - Exactly zero or one Agent skill may be selected in the MVP.
 - The provider adapter receives a resolved immutable selection, not an
   arbitrary string.
-- Provider prompts use the canonical `provider_skill_name` from the resolved
-  selection.
+- Provider prompts use the canonical `provider_skill_reference` from the
+  resolved selection. Provider-specific compatibility logic may continue to
+  use `provider_skill_name` as the manifest identity.
 - User text cannot override the resolved selection.
 - The selected skill augments task instructions; it does not override RAGenius
   authorization, staged-input, expected-output, or final-result requirements.
