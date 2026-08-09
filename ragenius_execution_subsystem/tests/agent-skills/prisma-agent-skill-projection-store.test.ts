@@ -32,7 +32,7 @@ function binding(): ProjectedAgentSkillGovernance {
 type RevisionRow = {
   id: string;
   builderInstanceId: string;
-  revision: number;
+  revision: bigint;
   digest: string;
   generatedAt: Date;
   receivedAt: Date;
@@ -139,6 +139,25 @@ function createFakePrisma() {
 }
 
 describe("prisma agent skill projection store", () => {
+  it("persists millisecond-scale Builder revisions as bigint and returns JSON-safe numbers", async () => {
+    const { client, state } = createFakePrisma();
+    const store = new PrismaAgentSkillProjectionStore(
+      client as unknown as PrismaAgentSkillProjectionClient
+    );
+    const revision = 1_785_832_908_957;
+
+    const receipt = await store.publish({
+      builder_instance_id: "builder-primary",
+      digest: "sha256:large",
+      generated_at: "2026-08-04T00:00:00.000Z",
+      items: [binding()],
+      revision
+    });
+
+    assert.equal(typeof state.revisions[0]?.revision, "bigint");
+    assert.equal(receipt.revision, revision);
+  });
+
   it("persists an active snapshot across store instances", async () => {
     const { client, state } = createFakePrisma();
     const firstStore = new PrismaAgentSkillProjectionStore(
@@ -156,7 +175,7 @@ describe("prisma agent skill projection store", () => {
       client as unknown as PrismaAgentSkillProjectionClient
     );
     assert.equal((await restartedStore.getActiveRevision())?.revision, 42);
-    assert.equal(state.revisions.find((row) => row.revision === 42)?.status, "active");
+    assert.equal(state.revisions.find((row) => row.revision === 42n)?.status, "active");
     assert.deepEqual(await restartedStore.listForApp("app-1", "codex_cli"), [binding()]);
   });
 

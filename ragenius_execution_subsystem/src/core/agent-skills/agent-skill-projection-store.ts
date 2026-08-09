@@ -23,6 +23,7 @@ export type AgentSkillProjectionErrorCode =
   | "BUILDER_INSTANCE_CONFLICT"
   | "DUPLICATE_PROJECTION_ITEM"
   | "REVISION_CONFLICT"
+  | "REVISION_OUT_OF_RANGE"
   | "REVISION_ROLLBACK";
 
 export class AgentSkillProjectionError extends Error {

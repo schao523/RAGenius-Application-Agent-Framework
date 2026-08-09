@@ -194,6 +194,27 @@ function lexicalContained(roots: string[], candidate: string): boolean {
   });
 }
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(items[index]!);
+      }
+    }
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 export class OpenClawAgentSkillDiscoveryAdapter
   implements AgentSkillDiscoveryAdapter
 {
@@ -220,27 +241,35 @@ export class OpenClawAgentSkillDiscoveryAdapter
     const discoveredAt = new Date().toISOString();
     const items: AgentSkillCatalogCandidate[] = [];
     const errors: AgentSkillDiscoveryResult["errors"] = [];
-    for (const skill of inventory.skills) {
+    const inspected = await mapWithConcurrency(inventory.skills, 4, async (skill) => {
       try {
-        items.push(await this.inspectSkill({ discoveredAt, input, skill, target }));
+        return {
+          item: await this.inspectSkill({ discoveredAt, input, skill, target })
+        };
       } catch (error) {
         const code = error instanceof OpenClawAgentSkillDiscoveryError
           ? error.code
           : "OPENCLAW_SKILL_INSPECTION_FAILED";
-        errors.push({
-          code,
-          message: "OpenClaw skill package could not be inspected.",
-          provider_skill_name: skill.name
-        });
-        items.push(this.candidate({
-          contentFingerprint: "",
-          discoveredAt,
-          input,
-          skill,
-          status: "invalid",
-          target
-        }));
+        return {
+          error: {
+            code,
+            message: "OpenClaw skill package could not be inspected.",
+            provider_skill_name: skill.name
+          },
+          item: this.candidate({
+            contentFingerprint: "",
+            discoveredAt,
+            input,
+            skill,
+            status: "invalid",
+            target
+          })
+        };
       }
+    });
+    for (const result of inspected) {
+      items.push(result.item);
+      if (result.error) errors.push(result.error);
     }
     return {
       backend: this.backend,

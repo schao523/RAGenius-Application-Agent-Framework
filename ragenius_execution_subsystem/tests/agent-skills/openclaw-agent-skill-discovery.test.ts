@@ -206,4 +206,60 @@ describe("OpenClaw agent skill discovery", () => {
       /AGENT_SKILL_SOURCE_NOT_ALLOWED/
     );
   });
+
+  it("inspects inventory with bounded concurrency", async () => {
+    let activeInfoCalls = 0;
+    let peakInfoCalls = 0;
+    const skills = Array.from({ length: 8 }, (_, index) => ({
+      ...inventory().skills[0],
+      name: `eligible-${index}`
+    }));
+    const adapter = new OpenClawAgentSkillDiscoveryAdapter({
+      command: "openclaw",
+      limits: { maxDepth: 6, maxFileBytes: 1024, maxFiles: 20, maxTotalBytes: 4096 },
+      maxStderrBytes: 4096,
+      maxStdoutBytes: 65536,
+      targets: [target],
+      timeoutMs: 5000
+    }, {
+      run: async ({ args }) => {
+        if (args.includes("list")) {
+          return { exitCode: 0, stderr: "", stdout: JSON.stringify({ skills }), timedOut: false };
+        }
+        if (args.includes("info")) {
+          activeInfoCalls += 1;
+          peakInfoCalls = Math.max(peakInfoCalls, activeInfoCalls);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          activeInfoCalls -= 1;
+          const name = args[args.indexOf("info") + 1];
+          return {
+            exitCode: 0,
+            stderr: "",
+            stdout: JSON.stringify({
+              name,
+              baseDir: `/opt/openclaw/skills/${name}`,
+              filePath: `/opt/openclaw/skills/${name}/SKILL.md`
+            }),
+            timedOut: false
+          };
+        }
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: JSON.stringify({
+            content_fingerprint: `sha256:v1:${"b".repeat(64)}`,
+            file_count: 1,
+            total_bytes: 10
+          }),
+          timedOut: false
+        };
+      }
+    });
+
+    const result = await adapter.discover(input);
+
+    assert.equal(result.items.length, skills.length);
+    assert.ok(peakInfoCalls > 1, "inventory inspection should make parallel progress");
+    assert.ok(peakInfoCalls <= 4, "inventory inspection must remain bounded");
+  });
 });

@@ -184,7 +184,7 @@ model ExecutionLog {
 model AgentSkillProjectionRevision {
   id                String   @id
   builderInstanceId String   @map("builder_instance_id")
-  revision          Int
+  revision          BigInt
   digest            String
   generatedAt       DateTime @map("generated_at")
   receivedAt        DateTime @default(now()) @map("received_at")

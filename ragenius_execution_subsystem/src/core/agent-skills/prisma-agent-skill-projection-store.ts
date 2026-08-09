@@ -18,7 +18,7 @@ interface RevisionRow {
   digest: string;
   generatedAt: Date;
   receivedAt: Date;
-  revision: number;
+  revision: bigint;
   status: string;
 }
 
@@ -87,6 +87,14 @@ function revisionId(builderInstanceId: string, revision: number): string {
   return `${builderInstanceId}:${revision}`;
 }
 
+function revisionNumber(revision: bigint): number {
+  const value = Number(revision);
+  if (!Number.isSafeInteger(value)) {
+    throw new AgentSkillProjectionError("REVISION_OUT_OF_RANGE");
+  }
+  return value;
+}
+
 function toSummary(row: RevisionRow, itemCount: number): ProjectionRevisionSummary {
   return {
     builder_instance_id: row.builderInstanceId,
@@ -94,7 +102,7 @@ function toSummary(row: RevisionRow, itemCount: number): ProjectionRevisionSumma
     generated_at: row.generatedAt.toISOString(),
     item_count: itemCount,
     received_at: row.receivedAt.toISOString(),
-    revision: row.revision
+    revision: revisionNumber(row.revision)
   };
 }
 
@@ -157,14 +165,15 @@ export class PrismaAgentSkillProjectionStore
   ): Promise<ProjectionReceipt> {
     return this.prisma.$transaction(async (transaction) => {
       const current = await this.activeRevision(transaction);
+      const snapshotRevision = BigInt(snapshot.revision);
       if (current) {
         if (snapshot.builder_instance_id !== current.builderInstanceId) {
           throw new AgentSkillProjectionError("BUILDER_INSTANCE_CONFLICT");
         }
-        if (snapshot.revision < current.revision) {
+        if (snapshotRevision < current.revision) {
           throw new AgentSkillProjectionError("REVISION_ROLLBACK");
         }
-        if (snapshot.revision === current.revision) {
+        if (snapshotRevision === current.revision) {
           if (snapshot.digest !== current.digest) {
             throw new AgentSkillProjectionError("REVISION_CONFLICT");
           }
@@ -186,7 +195,7 @@ export class PrismaAgentSkillProjectionStore
           builderInstanceId: snapshot.builder_instance_id,
           digest: snapshot.digest,
           generatedAt: new Date(snapshot.generated_at),
-          revision: snapshot.revision,
+          revision: snapshotRevision,
           status: "active"
         }
       });
