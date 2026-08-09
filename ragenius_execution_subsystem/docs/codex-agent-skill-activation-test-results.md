@@ -1,48 +1,71 @@
 # Codex Agent Skill Activation Test Results
 
-Date: 2026-08-04
+Date: 2026-08-09
 
 ## Runtime
 
 - Codex CLI: `codex-cli 0.146.0`
 - Executable: configured production Codex desktop CLI
-- Codex home: active user Codex home
-- Test skill: `research-paper-finder`
-- Skill manifest observed: `<CODEX_HOME>/skills/research-paper-finder/SKILL.md`
+- Discovery source: `Approved Codex Plugin Cache`
+- Plugin id: `superpowers@openai-curated`
+- Manifest name: `systematic-debugging`
+- Canonical reference: `superpowers:systematic-debugging`
 - Task: read-only activation marker; no network request and no file modification
 
-## Comparison
+## Discovery
 
-Both methods caused Codex to emit a successful structured command event reading
-the exact effective `research-paper-finder/SKILL.md` and then complete the turn.
+`codex plugin list --json` reported the enabled local plugin. The execution
+discovery adapter canonicalized its source, confirmed containment within the
+administrator-approved broad root, inspected its manifests, and returned:
+
+```json
+{
+  "complete": true,
+  "provider_skill_name": "systematic-debugging",
+  "provider_skill_reference": "superpowers:systematic-debugging",
+  "discovery_status": "available"
+}
+```
+
+Other installed plugins outside the single approved test root were omitted
+with `AGENT_SKILL_SOURCE_NOT_ALLOWED`, as required by the fail-closed policy.
+
+## Invocation
 
 | Method | Result | Duration | Evidence |
 |---|---|---:|---|
-| `$research-paper-finder <request>` | passed | 14.6 s | process-observed `SKILL.md` read |
-| ordinary explicit guidance | passed | 13.5 s | process-observed `SKILL.md` read |
+| `$superpowers:systematic-debugging <request>` | passed | 18.1 s | process-observed successful `SKILL.md` read |
+| ordinary explicit guidance | diagnostic pass | 31.7 s | process-observed after filesystem search |
 
-The observed durations are diagnostic only and are not treated as a performance
-benchmark.
+The explicit method completed with exit code `0`, no timeout, and prompt first
+line `$superpowers:systematic-debugging`. The ordinary-guidance run remains a
+diagnostic comparison and is not an acceptable fallback pass condition.
 
-## Decision
+When Codex completes an immutable explicit-reference turn without emitting a
+structured skill-file read, RAGenius records `provider_reference_resolved`.
+A successful structured read remains the stronger `process_observed` evidence.
+Model-produced activation claims alone remain `agent_reported`.
 
-Use `codex_explicit_reference` for the MVP. The `$<provider_skill_name>` line is
-provider-supported, deterministic, and preserves the existing RAGenius prompt
-envelope. Ordinary guidance remains documented as a tested fallback strategy,
-but the runtime must not silently switch methods for one execution.
+## Migration And Regression
 
-Normalized activation is `process_observed` only when the structured Codex JSONL
-contains a successful command event reading the canonical selected skill's
-`SKILL.md`. Model-produced `activated_skills` without that event remains
-`agent_reported` evidence.
+Migration `20260809_codex_plugin_skill_reference` was applied successfully to
+the local `ragenius_execution` PostgreSQL database. Prisma validation passed.
+
+- Execution subsystem: lint, typecheck, and full test suite passed.
+- Builder: 87 tests passed.
+- App Agent-skill inventory boundary: 2 tests passed.
+- Public execution and app inventories omit canonical references, provider
+  metadata, protected locators, and filesystem paths.
 
 ## Repeat
 
 ```powershell
-$env:CODEX_AGENT_SKILL_SMOKE_NAME = "research-paper-finder"
+$env:CODEX_AGENT_SKILL_SMOKE_NAME = "systematic-debugging"
+$env:CODEX_AGENT_SKILL_SMOKE_REFERENCE = "superpowers:systematic-debugging"
 $env:CODEX_CLI_COMMAND = "C:\Users\User\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe"
+$env:CODEX_CLI_SANDBOX_MODE = "read-only"
 npm run smoke:codex-agent-skill
 ```
 
-The script exits nonzero unless at least one method produces process-observed
-activation evidence and reports the selected method in its JSON summary.
+The script exits nonzero unless the explicit method completes and reports
+`provider_reference_resolved` or stronger `process_observed` evidence.

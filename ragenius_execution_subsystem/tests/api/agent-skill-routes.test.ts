@@ -207,7 +207,7 @@ describe("agent skill projection routes", () => {
     assert.equal(inventory.statusCode, 200);
     assert.equal(inventory.json().projection_status, "active");
     assert.equal(inventory.json().items.length, 1);
-    assert.deepEqual(inventory.json().items[0], {
+  assert.deepEqual(inventory.json().items[0], {
       agent_skill_id: "agent-skill-1",
       approved_fingerprint: "sha256:v1:abc",
       availability: "available",
@@ -216,6 +216,7 @@ describe("agent skill projection routes", () => {
       display_name: "Selectable Skill",
       provider_skill_name: "selectable-skill"
     });
+    assert.equal("provider_skill_reference" in inventory.json().items[0], false);
     assert.equal("protected_locator_ref" in inventory.json().items[0], false);
   });
 

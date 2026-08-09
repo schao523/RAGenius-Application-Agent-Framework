@@ -49,6 +49,7 @@ def test_inventory_requires_exact_session_scope_and_allowlists_public_fields(mon
                         "description": "Use approved research instructions.",
                         "display_name": "Research Papers",
                         "provider_skill_name": "research-paper-finder",
+                        "provider_skill_reference": "plugin-a:research-paper-finder",
                         "protected_locator_ref": "must-not-leak",
                         "provider_metadata": {"path": "C:\\private\\SKILL.md"},
                     }

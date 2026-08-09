@@ -293,7 +293,7 @@ class FakeAgentSkillExecutionClient:
 
     def discover(self, payload: dict) -> dict:
         self.discovery_calls.append(payload)
-        item = candidate()
+        item = candidate(provider_reference="superpowers:research-paper-finder")
         item["source_id"] = payload["source_id"]
         return {
             "ok": True,
@@ -388,6 +388,7 @@ class AgentSkillAdminRouteTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("Agent Skills", body)
         self.assertIn("Approved Codex skills", body)
+        self.assertIn("superpowers:research-paper-finder", body)
         self.assertNotIn("codex-source-ref-1", body)
         self.assertNotIn("C:\\", body)
 
