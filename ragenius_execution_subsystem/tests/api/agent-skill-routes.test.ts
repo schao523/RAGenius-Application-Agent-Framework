@@ -104,7 +104,9 @@ describe("agent skill projection routes", () => {
     const config = runtimeConfig();
     config.agentSkills.codex.sourceOptions = [{
       display_name: "Administrator Codex Skills",
+      discovery_mode: "directory",
       path: "C:\\Users\\Administrator\\.codex\\skills",
+      precedence: 100,
       protected_locator_ref: "codex-source-ref-1",
       runtime_target_id: "codex-local-default"
     }];

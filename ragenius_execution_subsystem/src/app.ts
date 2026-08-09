@@ -69,6 +69,7 @@ import {
 } from "./core/agent-skills/prisma-agent-skill-projection-store.js";
 import { AgentSkillDiscoveryService } from "./core/agent-skills/agent-skill-discovery-service.js";
 import { CodexAgentSkillDiscoveryAdapter } from "./core/agent-skills/codex-agent-skill-discovery.js";
+import { CodexPluginInventoryReader } from "./core/agent-skills/codex-plugin-inventory.js";
 import { OpenClawAgentSkillDiscoveryAdapter } from "./core/agent-skills/openclaw-agent-skill-discovery.js";
 import { AgentSkillSelectionService } from "./core/agent-skills/agent-skill-selection-service.js";
 
@@ -132,7 +133,12 @@ export function createAppServices(
   const agentSkillDiscoveryService =
     overrides.agentSkillDiscoveryService ??
     new AgentSkillDiscoveryService([
-      new CodexAgentSkillDiscoveryAdapter(runtimeConfig.agentSkills.codex),
+      new CodexAgentSkillDiscoveryAdapter(runtimeConfig.agentSkills.codex, {
+        pluginInventory: new CodexPluginInventoryReader({
+          command: runtimeConfig.providers.codexCli.command,
+          ...runtimeConfig.agentSkills.codex.inventory
+        })
+      }),
       new OpenClawAgentSkillDiscoveryAdapter(runtimeConfig.agentSkills.openClaw)
     ]);
   const agentSkillSelectionService =

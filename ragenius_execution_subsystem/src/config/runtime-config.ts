@@ -53,6 +53,11 @@ export interface ServiceAuthRuntimeConfig {
 
 export interface AgentSkillRuntimeConfig {
   codex: {
+    inventory: {
+      maxStderrBytes: number;
+      maxStdoutBytes: number;
+      timeoutMs: number;
+    };
     limits: {
       maxDepth: number;
       maxFileBytes: number;
@@ -61,7 +66,9 @@ export interface AgentSkillRuntimeConfig {
     };
     sourceOptions: Array<{
       display_name: string;
+      discovery_mode: "directory" | "plugin_inventory";
       path: string;
+      precedence: number;
       protected_locator_ref: string;
       runtime_target_id: string;
     }>;
@@ -95,7 +102,9 @@ export interface AgentSkillRuntimeConfig {
 
 const codexAgentSkillSourceSchema = z.object({
   display_name: z.string().trim().min(1),
+  discovery_mode: z.enum(["directory", "plugin_inventory"]).default("directory"),
   path: z.string().trim().min(1),
+  precedence: z.number().int().nonnegative().default(100),
   protected_locator_ref: z.string().trim().min(1),
   runtime_target_id: z.string().trim().min(1)
 }).strict();
@@ -200,6 +209,11 @@ export function buildRuntimeConfig(
     },
     agentSkills: {
       codex: {
+        inventory: {
+          maxStderrBytes: env.CODEX_AGENT_SKILL_INVENTORY_MAX_STDERR_BYTES,
+          maxStdoutBytes: env.CODEX_AGENT_SKILL_INVENTORY_MAX_STDOUT_BYTES,
+          timeoutMs: env.CODEX_AGENT_SKILL_INVENTORY_TIMEOUT_MS
+        },
         limits: {
           maxDepth: env.CODEX_AGENT_SKILL_MAX_DEPTH,
           maxFileBytes: env.CODEX_AGENT_SKILL_MAX_FILE_BYTES,

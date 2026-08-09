@@ -19,19 +19,48 @@ describe("runtime config", () => {
     assert.equal(defaults.providers.codexCli.runRetentionHours, 24);
     assert.equal(defaults.providers.codexCli.maxOutputBytes, 16384);
     assert.equal(defaults.providers.codexCli.sandboxMode, "workspace-write");
+    assert.deepEqual(defaults.agentSkills.codex.inventory, {
+      maxStderrBytes: 65536,
+      maxStdoutBytes: 1048576,
+      timeoutMs: 15000
+    });
 
     const configured = buildRuntimeConfig(getEnv({
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public",
       CODEX_RUN_ROOT: "D:/runtime/codex-runs",
       CODEX_RUN_RETENTION_HOURS: "12",
       CODEX_MAX_OUTPUT_BYTES: "8192",
-      CODEX_CLI_SANDBOX_MODE: "read-only"
+      CODEX_CLI_SANDBOX_MODE: "read-only",
+      CODEX_AGENT_SKILL_INVENTORY_TIMEOUT_MS: "7000",
+      CODEX_AGENT_SKILL_INVENTORY_MAX_STDOUT_BYTES: "32768",
+      CODEX_AGENT_SKILL_INVENTORY_MAX_STDERR_BYTES: "2048",
+      CODEX_AGENT_SKILL_SOURCES_JSON: JSON.stringify([{
+        display_name: "Approved plugins",
+        path: "C:/approved/plugins",
+        protected_locator_ref: "plugin-root-1",
+        runtime_target_id: "codex-local-default",
+        discovery_mode: "plugin_inventory",
+        precedence: 10
+      }])
     }));
 
     assert.equal(configured.providers.codexCli.runRoot, "D:/runtime/codex-runs");
     assert.equal(configured.providers.codexCli.runRetentionHours, 12);
     assert.equal(configured.providers.codexCli.maxOutputBytes, 8192);
     assert.equal(configured.providers.codexCli.sandboxMode, "read-only");
+    assert.deepEqual(configured.agentSkills.codex.inventory, {
+      maxStderrBytes: 2048,
+      maxStdoutBytes: 32768,
+      timeoutMs: 7000
+    });
+    assert.deepEqual(configured.agentSkills.codex.sourceOptions[0], {
+      display_name: "Approved plugins",
+      path: "C:/approved/plugins",
+      protected_locator_ref: "plugin-root-1",
+      runtime_target_id: "codex-local-default",
+      discovery_mode: "plugin_inventory",
+      precedence: 10
+    });
   });
 
   it("rejects unsafe Codex sandbox modes", () => {

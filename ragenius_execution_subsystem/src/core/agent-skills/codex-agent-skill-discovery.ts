@@ -13,10 +13,13 @@ import type {
   AgentSkillInspectionInput,
   AgentSkillSourceOption
 } from "./agent-skill-types.js";
+import type { CodexPluginInventoryReader } from "./codex-plugin-inventory.js";
 
 export interface CodexAgentSkillSourceConfig {
   display_name: string;
+  discovery_mode?: "directory" | "plugin_inventory";
   path: string;
+  precedence?: number;
   protected_locator_ref: string;
   runtime_target_id: string;
 }
@@ -88,16 +91,23 @@ export class CodexAgentSkillDiscoveryAdapter
 {
   readonly backend = "codex_cli" as const;
 
-  constructor(private readonly config: CodexAgentSkillDiscoveryConfig) {}
+  constructor(
+    private readonly config: CodexAgentSkillDiscoveryConfig,
+    private readonly dependencies: {
+      pluginInventory?: Pick<CodexPluginInventoryReader, "list">;
+    } = {}
+  ) {}
 
   sourceOptions(): AgentSkillSourceOption[] {
     return this.config.sourceOptions.map((source) => ({
       backend: this.backend,
       display_name: source.display_name,
       protected_locator_ref: source.protected_locator_ref,
-      precedence: 100,
+      precedence: source.precedence ?? 100,
       runtime_target_id: source.runtime_target_id,
-      source_kind: "codex_directory"
+      source_kind: source.discovery_mode === "plugin_inventory"
+        ? "codex_plugin_inventory"
+        : "codex_directory"
     }));
   }
 
