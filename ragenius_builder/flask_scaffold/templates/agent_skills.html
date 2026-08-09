@@ -33,7 +33,7 @@
               <p class="font-semibold text-gray-950">{{ skill.display_name }}</p>
               <span class="text-xs font-semibold rounded-full px-2 py-1 {% if skill.governance_state == 'approved' %}bg-emerald-100 text-emerald-800{% elif skill.governance_state in ['changed_pending_review', 'pending_review'] %}bg-amber-100 text-amber-900{% else %}bg-gray-100 text-gray-700{% endif %}">{{ skill.governance_state }}</span>
             </div>
-            <p class="text-sm text-gray-600 mt-1">{{ skill.backend }} | {{ skill.provider_skill_name }}</p>
+            <p class="text-sm text-gray-600 mt-1">{{ skill.backend }} | {{ skill.provider_skill_reference }}</p>
             <p class="text-sm text-gray-700 mt-2">{{ skill.description }}</p>
           </div>
           <a href="{{ url_for('agent_skill_detail', agent_skill_id=skill.id) }}" class="text-blue-700 font-semibold">Review</a>

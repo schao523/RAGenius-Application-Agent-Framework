@@ -624,6 +624,7 @@ class DatabaseStore:
                 runtime_target_id TEXT NOT NULL,
                 source_id TEXT NOT NULL,
                 provider_skill_name TEXT NOT NULL,
+                provider_skill_reference TEXT NOT NULL,
                 display_name TEXT NOT NULL,
                 description TEXT NOT NULL,
                 content_fingerprint TEXT NOT NULL,
@@ -637,7 +638,7 @@ class DatabaseStore:
                 last_seen_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(source_id) REFERENCES agent_skill_sources(id) ON DELETE CASCADE,
-                UNIQUE(backend, runtime_target_id, source_id, provider_skill_name)
+                UNIQUE(backend, runtime_target_id, source_id, provider_skill_reference)
             )
             """
         )
@@ -713,6 +714,9 @@ class DatabaseStore:
             ) VALUES (1, 0, 'synchronized')
             """
         )
+        self.conn.commit()
+        self._migrate_agent_skill_catalog_reference()
+        cursor = self.conn.cursor()
         try:
             cursor.execute("ALTER TABLE documents ADD COLUMN file_path TEXT")
         except sqlite3.OperationalError:
@@ -725,6 +729,66 @@ class DatabaseStore:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_skill_approvals_skill_id ON agent_skill_approvals(agent_skill_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_app_agent_skill_bindings_app_id ON app_agent_skill_bindings(app_id)")
         self.conn.commit()
+
+    def _migrate_agent_skill_catalog_reference(self):
+        columns = {
+            row["name"]
+            for row in self.conn.execute(
+                "PRAGMA table_info(agent_skill_catalog)"
+            ).fetchall()
+        }
+        if "provider_skill_reference" in columns:
+            return
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            self.conn.executescript(
+                """
+                DROP TABLE IF EXISTS agent_skill_catalog_new;
+                CREATE TABLE agent_skill_catalog_new (
+                    id TEXT PRIMARY KEY,
+                    backend TEXT NOT NULL,
+                    runtime_target_id TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    provider_skill_name TEXT NOT NULL,
+                    provider_skill_reference TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    content_fingerprint TEXT NOT NULL,
+                    discovery_status TEXT NOT NULL,
+                    model_visible INTEGER NOT NULL,
+                    user_invocable INTEGER NOT NULL,
+                    direct_tool_dispatch INTEGER NOT NULL,
+                    missing_requirements_json TEXT NOT NULL,
+                    provider_metadata_json TEXT NOT NULL,
+                    discovered_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(source_id) REFERENCES agent_skill_sources(id) ON DELETE CASCADE,
+                    UNIQUE(backend, runtime_target_id, source_id, provider_skill_reference)
+                );
+                INSERT INTO agent_skill_catalog_new (
+                    id, backend, runtime_target_id, source_id,
+                    provider_skill_name, provider_skill_reference, display_name,
+                    description, content_fingerprint, discovery_status,
+                    model_visible, user_invocable, direct_tool_dispatch,
+                    missing_requirements_json, provider_metadata_json,
+                    discovered_at, last_seen_at, updated_at
+                )
+                SELECT
+                    id, backend, runtime_target_id, source_id,
+                    provider_skill_name, provider_skill_name, display_name,
+                    description, content_fingerprint, discovery_status,
+                    model_visible, user_invocable, direct_tool_dispatch,
+                    missing_requirements_json, provider_metadata_json,
+                    discovered_at, last_seen_at, updated_at
+                FROM agent_skill_catalog;
+                DROP TABLE agent_skill_catalog;
+                ALTER TABLE agent_skill_catalog_new RENAME TO agent_skill_catalog;
+                """
+            )
+            self.conn.commit()
+        finally:
+            self.conn.execute("PRAGMA foreign_keys = ON")
 
     def seed(self):
         cursor = self.conn.cursor()
@@ -1655,6 +1719,7 @@ class DatabaseStore:
     ) -> Dict[str, Any]:
         valid_pairs = {
             ("codex_cli", "codex_directory"),
+            ("codex_cli", "codex_plugin_inventory"),
             ("openclaw_cli", "openclaw_agent_inventory"),
         }
         if (backend, source_kind) not in valid_pairs:
@@ -1776,6 +1841,7 @@ class DatabaseStore:
             "runtime_target_id": row["runtime_target_id"],
             "source_id": row["source_id"],
             "provider_skill_name": row["provider_skill_name"],
+            "provider_skill_reference": row["provider_skill_reference"],
             "display_name": row["display_name"],
             "description": row["description"],
             "content_fingerprint": row["content_fingerprint"],
@@ -1837,7 +1903,7 @@ class DatabaseStore:
         if not source:
             raise ValueError("Agent skill source not found")
         now = self._agent_skill_now()
-        seen_names: set[str] = set()
+        seen_references: set[str] = set()
         changed = False
         with self.conn:
             cursor = self.conn.cursor()
@@ -1847,16 +1913,21 @@ class DatabaseStore:
                 if candidate.get("runtime_target_id") != source["runtime_target_id"]:
                     raise ValueError("Discovered Agent skill runtime target does not match source")
                 provider_name = str(candidate.get("provider_skill_name", "")).strip()
+                provider_reference = str(
+                    candidate.get("provider_skill_reference") or provider_name
+                ).strip()
                 if not provider_name:
                     raise ValueError("Discovered Agent skill name is required")
-                seen_names.add(provider_name)
+                if not provider_reference:
+                    raise ValueError("Discovered Agent skill reference is required")
+                seen_references.add(provider_reference)
                 existing = cursor.execute(
                     """
                     SELECT * FROM agent_skill_catalog
                     WHERE backend = ? AND runtime_target_id = ? AND source_id = ?
-                      AND provider_skill_name = ?
+                      AND provider_skill_reference = ?
                     """,
-                    (source["backend"], source["runtime_target_id"], source_id, provider_name),
+                    (source["backend"], source["runtime_target_id"], source_id, provider_reference),
                 ).fetchone()
                 item_id = existing["id"] if existing else str(candidate.get("agent_skill_id") or uuid.uuid4())
                 if not existing and cursor.execute(
@@ -1868,6 +1939,7 @@ class DatabaseStore:
                     source["runtime_target_id"],
                     source_id,
                     provider_name,
+                    provider_reference,
                     str(candidate.get("display_name") or provider_name),
                     str(candidate.get("description") or ""),
                     str(candidate.get("content_fingerprint") or ""),
@@ -1884,6 +1956,7 @@ class DatabaseStore:
                 if existing:
                     old_values = tuple(existing[key] for key in (
                         "backend", "runtime_target_id", "source_id", "provider_skill_name",
+                        "provider_skill_reference",
                         "display_name", "description", "content_fingerprint", "discovery_status",
                         "model_visible", "user_invocable", "direct_tool_dispatch",
                         "missing_requirements_json", "provider_metadata_json", "discovered_at",
@@ -1894,6 +1967,7 @@ class DatabaseStore:
                         """
                         UPDATE agent_skill_catalog SET
                             backend=?, runtime_target_id=?, source_id=?, provider_skill_name=?,
+                            provider_skill_reference=?,
                             display_name=?, description=?, content_fingerprint=?, discovery_status=?,
                             model_visible=?, user_invocable=?, direct_tool_dispatch=?,
                             missing_requirements_json=?, provider_metadata_json=?, discovered_at=?,
@@ -1907,20 +1981,21 @@ class DatabaseStore:
                         """
                         INSERT INTO agent_skill_catalog (
                             id, backend, runtime_target_id, source_id, provider_skill_name,
+                            provider_skill_reference,
                             display_name, description, content_fingerprint, discovery_status,
                             model_visible, user_invocable, direct_tool_dispatch,
                             missing_requirements_json, provider_metadata_json, discovered_at,
                             last_seen_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (item_id, *values),
                     )
             existing_rows = cursor.execute(
-                "SELECT id, provider_skill_name, discovery_status FROM agent_skill_catalog WHERE source_id = ?",
+                "SELECT id, provider_skill_reference, discovery_status FROM agent_skill_catalog WHERE source_id = ?",
                 (source_id,),
             ).fetchall()
             for row in existing_rows:
-                if row["provider_skill_name"] not in seen_names and row["discovery_status"] != "missing":
+                if row["provider_skill_reference"] not in seen_references and row["discovery_status"] != "missing":
                     changed = True
                     cursor.execute(
                         "UPDATE agent_skill_catalog SET discovery_status = 'missing', updated_at = ? WHERE id = ?",
@@ -2222,6 +2297,7 @@ class DatabaseStore:
                 "source_id": row["source_id"],
                 "protected_locator_ref": self.get_agent_skill_source(row["source_id"])["protected_locator_ref"],
                 "provider_skill_name": row["provider_skill_name"],
+                "provider_skill_reference": row["provider_skill_reference"],
                 "display_name": row["display_name"],
                 "description": row["description"],
                 "current_fingerprint": row["content_fingerprint"],

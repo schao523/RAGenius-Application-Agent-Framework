@@ -5,6 +5,7 @@ import shutil
 import sys
 import unittest
 import importlib
+import sqlite3
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,7 +18,11 @@ os.environ["RAGENIUS_BUILDER_DISABLE_GLOBAL_STORE"] = "1"
 from storage import DatabaseStore  # noqa: E402
 
 
-def candidate(*, fingerprint: str = "sha256:v1:first") -> dict:
+def candidate(
+    *,
+    fingerprint: str = "sha256:v1:first",
+    provider_reference: str = "research-paper-finder",
+) -> dict:
     return {
         "agent_skill_id": "agent-skill-provider-id",
         "backend": "codex_cli",
@@ -32,6 +37,7 @@ def candidate(*, fingerprint: str = "sha256:v1:first") -> dict:
         "model_visible": True,
         "provider_metadata": {"manifest": "SKILL.md"},
         "provider_skill_name": "research-paper-finder",
+        "provider_skill_reference": provider_reference,
         "runtime_target_id": "codex-local-default",
         "source_id": "ignored-provider-source-id",
         "source_kind": "codex_directory",
@@ -113,6 +119,113 @@ class AgentSkillManagementTests(unittest.TestCase):
         self.assertEqual(changed["id"], first["id"])
         self.assertEqual(changed["governance_state"], "changed_pending_review")
 
+    def test_catalog_identity_uses_canonical_reference_not_manifest_name(self) -> None:
+        source = self._source()
+        first = candidate(provider_reference="plugin-a:research-paper-finder")
+        second = candidate(provider_reference="plugin-b:research-paper-finder")
+        second["agent_skill_id"] = "agent-skill-provider-id-2"
+
+        refreshed = self.store.refresh_agent_skill_catalog(
+            source_id=source["id"],
+            candidates=[first, second],
+            actor_id="admin-1",
+        )
+
+        self.assertEqual(len(refreshed), 2)
+        self.assertEqual(
+            {item["provider_skill_reference"] for item in refreshed},
+            {
+                "plugin-a:research-paper-finder",
+                "plugin-b:research-paper-finder",
+            },
+        )
+
+    def test_existing_catalog_is_backfilled_during_sqlite_migration(self) -> None:
+        db_path = self.root / "legacy-builder.db"
+        connection = sqlite3.connect(db_path)
+        connection.executescript(
+            """
+            CREATE TABLE agent_skill_sources (
+                id TEXT PRIMARY KEY,
+                backend TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                runtime_target_id TEXT NOT NULL,
+                protected_locator_ref TEXT NOT NULL,
+                precedence INTEGER NOT NULL DEFAULT 100,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(backend, runtime_target_id, protected_locator_ref)
+            );
+            CREATE TABLE agent_skill_catalog (
+                id TEXT PRIMARY KEY,
+                backend TEXT NOT NULL,
+                runtime_target_id TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                provider_skill_name TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                content_fingerprint TEXT NOT NULL,
+                discovery_status TEXT NOT NULL,
+                model_visible INTEGER NOT NULL,
+                user_invocable INTEGER NOT NULL,
+                direct_tool_dispatch INTEGER NOT NULL,
+                missing_requirements_json TEXT NOT NULL,
+                provider_metadata_json TEXT NOT NULL,
+                discovered_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(backend, runtime_target_id, source_id, provider_skill_name)
+            );
+            INSERT INTO agent_skill_sources VALUES (
+              'source-1','codex_cli','codex_directory','Legacy','codex-local',
+              'legacy-ref',100,1,'2026-08-01','2026-08-01'
+            );
+            INSERT INTO agent_skill_catalog VALUES (
+              'skill-1','codex_cli','codex-local','source-1','legacy-skill',
+              'Legacy Skill','Legacy','sha256:v1:legacy','available',1,1,0,
+              '{}','{}','2026-08-01','2026-08-01','2026-08-01'
+            );
+            """
+        )
+        connection.close()
+
+        migrated_store = DatabaseStore(db_path, storage_root=self.root, seed_data=False)
+        try:
+            migrated = migrated_store.get_agent_skill_catalog_item("skill-1")
+            self.assertEqual(
+                migrated["provider_skill_reference"],
+                migrated["provider_skill_name"],
+            )
+            migrated_store.approve_agent_skill(
+                agent_skill_id="skill-1",
+                expected_fingerprint="sha256:v1:legacy",
+                approved_by="admin-1",
+            )
+            app = migrated_store.create_application(
+                {
+                    "name": f"Migrated App {uuid4().hex}",
+                    "slug": f"migrated-app-{uuid4().hex}",
+                    "description": "migration verification",
+                    "starter_questions": [],
+                    "instructions": "# Migrated",
+                    "version": "v1",
+                }
+            )
+            binding = migrated_store.create_app_agent_skill_binding(
+                app_id=app["id"],
+                agent_skill_id="skill-1",
+                created_by="admin-1",
+            )
+            self.assertEqual(binding["agent_skill_id"], "skill-1")
+            self.assertEqual(
+                migrated_store.conn.execute("PRAGMA foreign_key_check").fetchall(),
+                [],
+            )
+        finally:
+            migrated_store.close()
+
     def test_approval_uses_compare_and_set_fingerprint(self) -> None:
         source = self._source()
         skill = self.store.refresh_agent_skill_catalog(
@@ -170,6 +283,7 @@ class FakeAgentSkillExecutionClient:
                         "backend": "codex_cli",
                         "display_name": "Configured Codex skills",
                         "protected_locator_ref": "codex-source-ref-1",
+                        "precedence": 10,
                         "runtime_target_id": "codex-local-default",
                         "source_kind": "codex_directory",
                     }
@@ -252,7 +366,7 @@ class AgentSkillAdminRouteTests(unittest.TestCase):
                 "display_name": "Approved Codex skills",
                 "runtime_target_id": "codex-local-default",
                 "protected_locator_ref": "codex-source-ref-1",
-                "precedence": 10,
+                "precedence": 999,
             },
         )
         self.assertEqual(created_response.status_code, 201)
@@ -268,6 +382,7 @@ class AgentSkillAdminRouteTests(unittest.TestCase):
         source, _ = self._create_and_discover()
 
         self.assertNotIn("protected_locator_ref", source)
+        self.assertEqual(source["precedence"], 10)
         page = self.client.get("/agent-skills")
         body = page.get_data(as_text=True)
         self.assertEqual(page.status_code, 200)
@@ -275,6 +390,19 @@ class AgentSkillAdminRouteTests(unittest.TestCase):
         self.assertIn("Approved Codex skills", body)
         self.assertNotIn("codex-source-ref-1", body)
         self.assertNotIn("C:\\", body)
+
+    def test_plugin_inventory_source_kind_is_supported(self) -> None:
+        source = self.store.create_agent_skill_source(
+            backend="codex_cli",
+            source_kind="codex_plugin_inventory",
+            display_name="Approved Codex plugins",
+            runtime_target_id="codex-local-default",
+            protected_locator_ref="codex-plugin-root-1",
+            precedence=20,
+            actor_id="admin-1",
+        )
+
+        self.assertEqual(source["source_kind"], "codex_plugin_inventory")
 
     def test_approval_binding_and_synchronization_flow(self) -> None:
         _, skill = self._create_and_discover()

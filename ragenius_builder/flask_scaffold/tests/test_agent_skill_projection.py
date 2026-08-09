@@ -174,6 +174,10 @@ class AgentSkillProjectionTests(unittest.TestCase):
         self.assertEqual(first["sync_status"], "synchronized")
         self.assertEqual(second["sync_status"], "synchronized")
         self.assertEqual(client.payloads[0], client.payloads[1])
+        self.assertEqual(
+            client.payloads[0]["items"][0]["provider_skill_reference"],
+            "summarizer",
+        )
 
     def test_failed_sync_remains_pending_and_retries_after_restart(self) -> None:
         self._populate()

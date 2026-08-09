@@ -559,6 +559,7 @@ def _public_agent_skill(skill_obj):
             "runtime_target_id",
             "source_id",
             "provider_skill_name",
+            "provider_skill_reference",
             "display_name",
             "description",
             "content_fingerprint",
@@ -602,7 +603,9 @@ def _agent_skill_source_options():
                 "protected_locator_ref",
             )
         ):
-            allowed.append(dict(item))
+            precedence = item.get("precedence")
+            if isinstance(precedence, int) and precedence >= 0:
+                allowed.append(dict(item))
     return allowed, None
 
 
@@ -1450,7 +1453,7 @@ def create_agent_skill_source_form():
             display_name=(request.form.get("display_name") or option["display_name"]).strip(),
             runtime_target_id=option["runtime_target_id"],
             protected_locator_ref=option["protected_locator_ref"],
-            precedence=int(request.form.get("precedence") or 100),
+            precedence=int(option["precedence"]),
             actor_id=_agent_skill_actor_id(),
         )
     except (ValueError, TypeError) as exc:
@@ -2064,7 +2067,7 @@ def api_create_agent_skill_source():
             display_name=str(data.get("display_name") or option["display_name"]).strip(),
             runtime_target_id=option["runtime_target_id"],
             protected_locator_ref=option["protected_locator_ref"],
-            precedence=int(data.get("precedence", 100)),
+            precedence=int(option["precedence"]),
             enabled=bool(data.get("enabled", True)),
             actor_id=_agent_skill_actor_id(),
             correlation_id=request.headers.get("X-Request-Id"),
