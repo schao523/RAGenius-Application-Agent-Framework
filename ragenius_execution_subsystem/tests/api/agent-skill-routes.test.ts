@@ -219,6 +219,30 @@ describe("agent skill projection routes", () => {
     assert.equal("protected_locator_ref" in inventory.json().items[0], false);
   });
 
+  it("verifies legacy projection digests before backfilling provider references", async () => {
+    const store = new InMemoryAgentSkillProjectionStore();
+    app = buildApp({ agentSkillProjectionStore: store }, runtimeConfig());
+    const legacyItem = item() as Partial<ProjectedAgentSkillGovernance>;
+    delete legacyItem.provider_skill_reference;
+    const payload = projection(
+      [legacyItem as ProjectedAgentSkillGovernance],
+      43
+    );
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/v1/admin/agent-skills/governance-projection",
+      headers: { authorization: "Bearer builder-token" },
+      payload
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(
+      (await store.getForApp("app-1", "agent-skill-1"))?.provider_skill_reference,
+      "selectable-skill"
+    );
+  });
+
   it("enforces caller scope and trusted Builder identity", async () => {
     app = buildApp(
       { agentSkillProjectionStore: new InMemoryAgentSkillProjectionStore() },

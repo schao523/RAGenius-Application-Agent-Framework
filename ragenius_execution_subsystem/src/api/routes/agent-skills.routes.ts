@@ -4,7 +4,8 @@ import { hasServiceScope } from "../auth/service-auth.js";
 import {
   agentSkillGovernanceProjectionSchema,
   agentSkillInventoryQuerySchema,
-  computeAgentSkillProjectionDigest
+  computeAgentSkillProjectionDigest,
+  normalizeProjectedAgentSkillGovernance
 } from "../schemas/agent-skill.schema.js";
 import {
   AgentSkillProjectionError
@@ -128,11 +129,7 @@ export async function registerAgentSkillRoutes(
     try {
       return await app.services.agentSkillProjectionStore.publish({
         ...projection,
-        items: projection.items.map((item) => ({
-          ...item,
-          provider_skill_reference:
-            item.provider_skill_reference ?? item.provider_skill_name
-        }))
+        items: projection.items.map(normalizeProjectedAgentSkillGovernance)
       });
     } catch (error) {
       if (error instanceof AgentSkillProjectionError) {

@@ -25,8 +25,8 @@ describe("execute_agent requests", () => {
     display_name: "Approved Skill",
     observed_fingerprint: "sha256:v1:approved",
     protected_locator_ref: "protected-source-ref",
-    provider_skill_name: "approved-skill",
-    provider_skill_reference: "approved-skill",
+    provider_skill_name: "systematic-debugging",
+    provider_skill_reference: "superpowers:systematic-debugging",
     resolved_at: "2026-08-04T00:00:00.000Z",
     runtime_target_id: "codex-local-default",
     source_id: "source-1"
@@ -221,9 +221,13 @@ describe("execute_agent requests", () => {
 
     assert.equal(result.status, "completed");
     assert.deepEqual(lifecycle, ["resolve", "provider"]);
-    assert.equal(capturedSkillHint, "approved-skill");
+    assert.equal(capturedSkillHint, "systematic-debugging");
     assert.equal(capturedContext?.operation_plan[0]?.agent_skill_id, "agent-skill-1");
-    assert.equal(capturedContext?.operation_plan[0]?.provider_skill_name, "approved-skill");
+    assert.equal(capturedContext?.operation_plan[0]?.provider_skill_name, "systematic-debugging");
+    assert.equal(
+      capturedContext?.operation_plan[0]?.provider_skill_reference,
+      "superpowers:systematic-debugging"
+    );
     assert.equal(
       capturedContext?.operation_plan[0]?.approved_fingerprint,
       "sha256:v1:approved"

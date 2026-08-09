@@ -36,6 +36,7 @@ interface GovernanceRow {
   modelVisible: boolean;
   protectedLocatorRef: string;
   providerSkillName: string;
+  providerSkillReference: string;
   runtimeTargetId: string;
   sourceEnabled: boolean;
   sourceId: string;
@@ -121,7 +122,7 @@ function toGovernance(row: GovernanceRow): ProjectedAgentSkillGovernance {
     model_visible: row.modelVisible,
     protected_locator_ref: row.protectedLocatorRef,
     provider_skill_name: row.providerSkillName,
-    provider_skill_reference: row.providerSkillName,
+    provider_skill_reference: row.providerSkillReference,
     runtime_target_id: row.runtimeTargetId,
     source_enabled: row.sourceEnabled,
     source_id: row.sourceId,
@@ -149,6 +150,7 @@ function itemData(
     modelVisible: item.model_visible,
     protectedLocatorRef: item.protected_locator_ref,
     providerSkillName: item.provider_skill_name,
+    providerSkillReference: item.provider_skill_reference,
     runtimeTargetId: item.runtime_target_id,
     sourceEnabled: item.source_enabled,
     sourceId: item.source_id,

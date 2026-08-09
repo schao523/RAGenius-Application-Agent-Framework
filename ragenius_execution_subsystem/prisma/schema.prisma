@@ -208,6 +208,7 @@ model ProjectedAgentSkillGovernance {
   sourceId               String  @map("source_id")
   protectedLocatorRef    String  @map("protected_locator_ref")
   providerSkillName      String  @map("provider_skill_name")
+  providerSkillReference String  @map("provider_skill_reference")
   displayName            String  @map("display_name")
   description            String
   currentFingerprint     String  @map("current_fingerprint")

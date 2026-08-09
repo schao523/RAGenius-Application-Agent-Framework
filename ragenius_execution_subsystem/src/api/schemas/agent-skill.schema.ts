@@ -5,7 +5,7 @@ import { z } from "zod";
 const backendSchema = z.enum(["codex_cli", "openclaw_cli"]);
 const fingerprintSchema = z.string().trim().min(1);
 
-export const projectedAgentSkillGovernanceSchema = z.object({
+export const projectedAgentSkillGovernanceWireSchema = z.object({
   agent_skill_id: z.string().trim().min(1),
   app_id: z.string().trim().min(1),
   approval_state: z.enum(["approved", "revoked", "superseded"]),
@@ -26,11 +26,16 @@ export const projectedAgentSkillGovernanceSchema = z.object({
   user_invocable: z.boolean()
 }).strict();
 
+export const projectedAgentSkillGovernanceSchema =
+  projectedAgentSkillGovernanceWireSchema.extend({
+    provider_skill_reference: z.string().trim().min(1)
+  }).strict();
+
 export const agentSkillGovernanceProjectionSchema = z.object({
   builder_instance_id: z.string().trim().min(1),
   digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   generated_at: z.string().datetime({ offset: true }),
-  items: z.array(projectedAgentSkillGovernanceSchema),
+  items: z.array(projectedAgentSkillGovernanceWireSchema),
   revision: z.number().int().nonnegative()
 }).strict();
 
@@ -73,3 +78,13 @@ export function computeAgentSkillProjectionDigest(
 export type AgentSkillGovernanceProjectionInput = z.infer<
   typeof agentSkillGovernanceProjectionSchema
 >;
+
+export function normalizeProjectedAgentSkillGovernance(
+  item: z.infer<typeof projectedAgentSkillGovernanceWireSchema>
+): z.infer<typeof projectedAgentSkillGovernanceSchema> {
+  return projectedAgentSkillGovernanceSchema.parse({
+    ...item,
+    provider_skill_reference:
+      item.provider_skill_reference ?? item.provider_skill_name
+  });
+}
