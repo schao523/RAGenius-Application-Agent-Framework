@@ -1,18 +1,31 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.request
 from typing import Any, Dict
 
 
 class ExecutionSubsystemClient:
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, service_token: str | None = None) -> None:
         self.base_url = base_url.rstrip("/")
+        configured_token = (
+            service_token
+            if service_token is not None
+            else os.environ.get("RAGENIUS_BUILDER_EXECUTION_SERVICE_TOKEN", "")
+        )
+        self.service_token = configured_token.strip()
 
     def _json_request(self, *, path: str, method: str = "GET", payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
         body = None
-        headers = {}
+        headers = {
+            **(
+                {"Authorization": f"Bearer {self.service_token}"}
+                if self.service_token
+                else {}
+            )
+        }
         if payload is not None:
             body = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
