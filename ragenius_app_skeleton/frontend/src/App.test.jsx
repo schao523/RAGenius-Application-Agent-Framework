@@ -971,6 +971,49 @@ describe("App artifact fetch propagation", () => {
     });
   });
 
+  it("prepares a draft session before loading Agent Skills in Composer", async () => {
+    const requests = [];
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [],
+      onRequest: (url, options) => requests.push({ url: String(url || ""), options }),
+      agentSkillResponse: (url) => {
+        const backend = new URL(url).searchParams.get("backend");
+        return mockJsonResponse({
+          inventory_revision: "builder-1:8:sha256:draft",
+          projection_status: "active",
+          items: backend === "codex_cli"
+            ? [{
+                agent_skill_id: "agent-notebooklm",
+                approved_fingerprint: "sha256:v1:notebooklm",
+                backend: "codex_cli",
+                display_name: "notebooklm",
+                provider_skill_name: "notebooklm",
+              }]
+            : [],
+        });
+      },
+    }));
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /run tool or skill/i }));
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+
+    await waitFor(() => expect(screen.getByRole("option", { name: "notebooklm" })).toBeInTheDocument());
+    const prepareRequest = requests.find((request) => (
+      request.url.includes("/sessions/")
+      && request.url.endsWith("/prepare")
+      && request.options.method === "POST"
+    ));
+    expect(prepareRequest).toBeTruthy();
+    const preparedSessionId = prepareRequest.url.match(/\/sessions\/([^/]+)\/prepare$/)?.[1];
+    expect(preparedSessionId).toBeTruthy();
+    expect(requests.some((request) => (
+      request.url.includes(`/sessions/${preparedSessionId}/exec/agent-skills?`)
+      && request.url.includes("backend=codex_cli")
+    ))).toBe(true);
+  });
+
   it("opens Composer in Agent mode when reusing an agent output execution artifact", async () => {
     vi.stubGlobal("fetch", buildAppFetchMock({
       sessions: [{ id: "session-1", title: "Persisted session" }],

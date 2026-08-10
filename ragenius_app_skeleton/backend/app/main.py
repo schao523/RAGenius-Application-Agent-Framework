@@ -118,6 +118,14 @@ class SessionUpdateRequest(BaseModel):
     archived: bool | None = None
 
 
+class SessionPrepareRequest(BaseModel):
+    app_id: str
+    user_id: str
+    config_version: int = 1
+    adapter_version: int = 1
+    template_version: int = 1
+
+
 class SessionWorkflowActionRequest(BaseModel):
     app_id: str
     user_id: str
@@ -3031,6 +3039,22 @@ async def list_exec_tools(app_id: str | None = None):
 async def list_exec_skills(app_id: str | None = None, visibility: str | None = None):
     runtime_visibility = visibility or "user"
     return {"items": _combined_skill_inventory_items(app_id=app_id, runtime_visibility=runtime_visibility)}
+
+
+@app.post("/sessions/{session_id}/prepare")
+async def prepare_session(session_id: str, payload: SessionPrepareRequest):
+    try:
+        session = session_repo.get_or_create(
+            session_id,
+            collection_id=payload.app_id,
+            user_id=payload.user_id,
+            config_version=payload.config_version,
+            adapter_version=payload.adapter_version,
+            template_version=payload.template_version,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"session": session}
 
 
 @app.get("/sessions/{session_id}/exec/agent-skills")

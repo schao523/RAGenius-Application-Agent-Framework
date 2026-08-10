@@ -114,3 +114,33 @@ def test_inventory_validates_backend_and_preserves_unavailable_projection(monkey
         "projection_status": "unavailable",
     }
     assert invalid.status_code == 422
+
+
+def test_prepare_draft_session_enables_scoped_agent_skill_inventory(monkeypatch):
+    session_repo = _install_temp_repos(monkeypatch)
+
+    class FakeExecutionClient:
+        def get_agent_skill_inventory(self, **_kwargs):
+            return {
+                "inventory_revision": "builder-1:8:sha256:draft",
+                "items": [],
+                "projection_status": "active",
+            }
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+
+    prepared = client.post(
+        "/sessions/draft-session/prepare",
+        json={"app_id": "app-1", "user_id": "user-1"},
+    )
+    inventory = client.get(
+        "/sessions/draft-session/exec/agent-skills",
+        params={"app_id": "app-1", "user_id": "user-1", "backend": "codex_cli"},
+    )
+
+    assert prepared.status_code == 200
+    assert prepared.json()["session"]["id"] == "draft-session"
+    assert session_repo.get("draft-session")["collection_id"] == "app-1"
+    assert inventory.status_code == 200
+    assert inventory.json()["projection_status"] == "active"

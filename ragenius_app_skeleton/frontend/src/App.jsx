@@ -1941,6 +1941,7 @@ function ChatPanel({
   artifactInventory,
   artifactInventoryLoading,
   artifactInventoryError,
+  onPrepareExecutionComposer,
   onRunExecutionComposer,
   selectedExportMessageIds,
   onToggleMessageExportSelection,
@@ -1970,6 +1971,13 @@ function ChatPanel({
   const [inspectedMessageIndex, setInspectedMessageIndex] = useState(-1);
   const transcriptRef = useRef(null);
   const uploadInputRef = useRef(null);
+
+  const openExecutionComposer = () => {
+    setShowExecutionComposer(true);
+    Promise.resolve(onPrepareExecutionComposer?.()).catch((prepareError) => {
+      setError(String(prepareError?.message || prepareError || "Unable to prepare execution session."));
+    });
+  };
 
   const isLandingState = messages.length === 0;
   const latestAssistantIndex = [...messages]
@@ -2326,7 +2334,7 @@ function ChatPanel({
                           setArtifactPreferredCommandKindForComposer(String(options?.commandKind || "").trim());
                           setArtifactPreferredAgentBackendForComposer(String(options?.agentBackend || "").trim());
                           setShowArtifactLibrary(true);
-                          setShowExecutionComposer(true);
+                          openExecutionComposer();
                         }}
                         onViewArtifactLibrary={() => setShowArtifactLibrary(true)}
                         onOpenInspector={(messageIndex) => openInspector(isExecutionTurn(messages[messageIndex]) ? "summary" : "details", messageIndex)}
@@ -2405,7 +2413,7 @@ function ChatPanel({
                   setArtifactPreferredTargetIdForComposer("");
                   setArtifactPreferredCommandKindForComposer("");
                   setArtifactPreferredAgentBackendForComposer("");
-                  setShowExecutionComposer(true);
+                  openExecutionComposer();
                 }}
                 disabled={!appId}
               >
@@ -2486,7 +2494,7 @@ function ChatPanel({
               setArtifactPreferredTargetIdForComposer(String(options?.preferredTargetId || "").trim());
               setArtifactPreferredCommandKindForComposer(String(options?.commandKind || "").trim());
               setArtifactPreferredAgentBackendForComposer(String(options?.agentBackend || "").trim());
-              setShowExecutionComposer(true);
+              openExecutionComposer();
             }}
             onUseSelectedInNextStep={(artifacts, options = {}) => {
               const selectedArtifacts = Array.isArray(artifacts) ? artifacts : [];
@@ -2495,7 +2503,7 @@ function ChatPanel({
               setArtifactPreferredTargetIdForComposer(String(options?.preferredTargetId || "").trim());
               setArtifactPreferredCommandKindForComposer(String(options?.commandKind || "agent").trim());
               setArtifactPreferredAgentBackendForComposer(String(options?.agentBackend || "openclaw_cli").trim());
-              setShowExecutionComposer(true);
+              openExecutionComposer();
             }}
             onClose={() => setShowArtifactLibrary(false)}
             styles={styles}
@@ -2753,6 +2761,32 @@ export default function App() {
       if (agentSkillInventoryRequestSequence.current[scopeKey] === sequence) {
         setExecAgentSkillInventoryLoadingByScope((previous) => ({ ...previous, [scopeKey]: false }));
       }
+    }
+  };
+
+  const prepareExecutionComposer = async () => {
+    if (!selectedAppId || !sessionId || !userId) {
+      return;
+    }
+    if (!currentSession) {
+      await fetchJson(`${baseUrl}/sessions/${sessionId}/prepare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          app_id: selectedAppId,
+          user_id: userId,
+          config_version: 1,
+          adapter_version: 1,
+          template_version: 1,
+        }),
+      });
+    }
+    await Promise.all([
+      loadAgentSkillInventory("codex_cli", selectedAppId, sessionId, userId),
+      loadAgentSkillInventory("openclaw_cli", selectedAppId, sessionId, userId),
+    ]);
+    if (!currentSession) {
+      await loadSessions(selectedAppId, userId, includeArchivedSessions);
     }
   };
 
@@ -3592,6 +3626,7 @@ export default function App() {
               artifactInventory={execArtifactInventory}
               artifactInventoryLoading={execArtifactInventoryLoading}
               artifactInventoryError={execArtifactInventoryError}
+              onPrepareExecutionComposer={prepareExecutionComposer}
               onRunExecutionComposer={runExecutionComposer}
               selectedExportMessageIds={activeSelectedExportMessageIds}
               onToggleMessageExportSelection={toggleMessageExportSelection}
