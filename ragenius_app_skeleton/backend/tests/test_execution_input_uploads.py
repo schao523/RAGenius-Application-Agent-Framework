@@ -6,8 +6,11 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from backend.app.chat_repos import SessionRepo
+from backend.app import main as app_main
+from backend.app.main import app
 
 
 class ChunkedReader(io.BytesIO):
@@ -113,3 +116,65 @@ def test_get_upload_rejects_symlink_file(tmp_path, monkeypatch):
     except OSError as exc:
         pytest.skip(f"Symlink creation unavailable: {exc}")
     assert repo.get_upload("session-1", upload["id"]) is None
+
+
+def test_composer_upload_prepares_without_running_chat_pipeline(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path, monkeypatch)
+    repo.get_or_create("session-1", collection_id="app-1", user_id="user-1", config_version=1, adapter_version=1, template_version=1)
+    calls = []
+
+    class FakeExecutionClient:
+        def import_session_upload(self, **kwargs):
+            calls.append(kwargs)
+            return {
+                "preparation_status": "ready",
+                "reused_existing_artifact": False,
+                "artifact": {
+                    "artifact_id": "artifact-video",
+                    "artifact_type": "session_upload",
+                    "display_name": "video.mp4",
+                    "status": "ready",
+                },
+            }
+
+    monkeypatch.setattr(app_main, "session_repo", repo)
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    monkeypatch.setattr(app_main, "run_chat_pipeline", lambda *_args, **_kwargs: pytest.fail("chat pipeline called"))
+    response = TestClient(app).post(
+        "/sessions/session-1/execution-inputs",
+        data={"app_id": "app-1", "user_id": "user-1"},
+        files={"file": ("video.mp4", b"video-bytes", "video/mp4")},
+    )
+    assert response.status_code == 201
+    assert response.json()["artifact"]["artifact_id"] == "artifact-video"
+    assert calls[0]["sha256"].startswith("sha256:")
+    assert "file_path" not in response.json()["upload"]
+
+
+def test_prepare_existing_upload_enforces_scope_and_is_idempotent(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path, monkeypatch)
+    repo.get_or_create("session-1", collection_id="app-1", user_id="user-1", config_version=1, adapter_version=1, template_version=1)
+    upload = repo.add_upload("session-1", filename="notes.txt", mime_type="text/plain", content=b"notes", text_content="notes")
+
+    class FakeExecutionClient:
+        def import_session_upload(self, **_kwargs):
+            return {
+                "preparation_status": "ready",
+                "reused_existing_artifact": True,
+                "artifact": {"artifact_id": "artifact-1", "artifact_type": "session_upload", "status": "ready"},
+            }
+
+    monkeypatch.setattr(app_main, "session_repo", repo)
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+    denied = client.post(
+        f"/sessions/session-1/uploads/{upload['id']}/prepare-for-execution",
+        params={"app_id": "app-1", "user_id": "other-user"},
+    )
+    ready = client.post(
+        f"/sessions/session-1/uploads/{upload['id']}/prepare-for-execution",
+        params={"app_id": "app-1", "user_id": "user-1"},
+    )
+    assert denied.status_code == 404
+    assert ready.status_code == 200
+    assert ready.json()["reused_existing_artifact"] is True

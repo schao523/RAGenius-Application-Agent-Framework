@@ -2,12 +2,47 @@ from __future__ import annotations
 
 import json
 import socket
+import httpx
 from urllib.parse import parse_qs, urlparse
 
 from ragenius_app_skeleton.backend.app import execution_subsystem_client as client_module
 from ragenius_app_skeleton.backend.app.execution_subsystem_client import (
     ExecutionSubsystemClient,
 )
+
+
+def test_import_session_upload_streams_authenticated_multipart(tmp_path):
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video-bytes")
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["authorization"] = request.headers.get("authorization")
+        captured["content_type"] = request.headers.get("content-type")
+        captured["body"] = request.read()
+        return httpx.Response(201, json={"preparation_status": "ready", "artifact": {"artifact_id": "artifact_1"}})
+
+    client = ExecutionSubsystemClient(
+        "http://execution.local/v1",
+        service_token="service-secret",
+        http_transport=httpx.MockTransport(handler),
+    )
+    result = client.import_session_upload(
+        app_id="app_1",
+        session_id="session_1",
+        source_upload_id="upload_1",
+        display_name="video.mp4",
+        mime_type="video/mp4",
+        size_bytes=11,
+        sha256="sha256:" + "a" * 64,
+        file_path=str(source),
+    )
+
+    assert result["artifact"]["artifact_id"] == "artifact_1"
+    assert captured["authorization"] == "Bearer service-secret"
+    assert "multipart/form-data" in captured["content_type"]
+    for value in (b"app_1", b"session_1", b"upload_1", b"declared_sha256", b"video-bytes"):
+        assert value in captured["body"]
 
 
 class _JsonResponse:

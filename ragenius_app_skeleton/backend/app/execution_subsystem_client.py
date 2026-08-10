@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import httpx
 from typing import Any
 from urllib.parse import urlencode
 from urllib import error, request
@@ -26,6 +27,7 @@ class ExecutionSubsystemClient:
         service_token: str | None = None,
         connect_timeout_seconds: float | None = None,
         response_timeout_seconds: float | None = None,
+        http_transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.base_url = (base_url or _base_url()).rstrip("/")
         self.service_token = service_token if service_token is not None else _service_token()
@@ -35,6 +37,71 @@ class ExecutionSubsystemClient:
         self.response_timeout_seconds = response_timeout_seconds or float(
             os.getenv("RAGENIUS_EXECUTION_RESPONSE_TIMEOUT_SECONDS") or "30"
         )
+        self.http_transport = http_transport
+
+    def import_session_upload(
+        self,
+        *,
+        app_id: str,
+        session_id: str,
+        source_upload_id: str,
+        display_name: str,
+        mime_type: str | None,
+        size_bytes: int,
+        sha256: str,
+        file_path: str,
+    ) -> dict[str, Any]:
+        headers = {}
+        if self.service_token:
+            headers["Authorization"] = f"Bearer {self.service_token}"
+        data = {
+            "app_id": app_id,
+            "session_id": session_id,
+            "source_upload_id": source_upload_id,
+            "display_name": display_name,
+            "mime_type": mime_type or "application/octet-stream",
+            "declared_size_bytes": str(size_bytes),
+            "declared_sha256": sha256,
+        }
+        url = f"{self.base_url}/artifact-imports/session-upload"
+        timeout = httpx.Timeout(
+            self.response_timeout_seconds,
+            connect=self.connect_timeout_seconds,
+        )
+        try:
+            with open(file_path, "rb") as source:
+                with httpx.Client(transport=self.http_transport, timeout=timeout) as client:
+                    response = client.post(
+                        url,
+                        headers=headers,
+                        data=data,
+                        files={"file": (display_name, source, mime_type or "application/octet-stream")},
+                    )
+            try:
+                result = response.json()
+            except ValueError:
+                result = {"error": {"code": "HTTP_ERROR", "message": response.text or "Invalid execution subsystem response."}}
+            if response.status_code >= 400:
+                result.setdefault("_http_status", response.status_code)
+            return result
+        except httpx.TimeoutException as exc:
+            return {
+                "error": {
+                    "code": "EXECUTION_SUBSYSTEM_TIMEOUT",
+                    "message": "Execution subsystem did not respond within the API timeout.",
+                    "details": {"url": url, "error": str(exc)},
+                },
+                "_transport_error": True,
+            }
+        except (httpx.RequestError, OSError) as exc:
+            return {
+                "error": {
+                    "code": "EXECUTION_SUBSYSTEM_UNAVAILABLE",
+                    "message": "Execution subsystem is unavailable.",
+                    "details": {"url": url, "error": str(exc)},
+                },
+                "_transport_error": True,
+            }
 
     def _json_request(
         self,

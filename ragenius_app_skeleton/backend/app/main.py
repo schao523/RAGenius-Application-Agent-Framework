@@ -12,6 +12,7 @@ import sys
 from typing import Any, Dict
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
@@ -22,6 +23,7 @@ from .builder_store import get_builder_store
 from .approved_content_service import content_hash_for, resolve_approved_snapshot
 from .approved_content_service import create_approved_snapshot, create_snapshot_from_latest_assistant_message, create_snapshot_from_message_id
 from .chat_repos import ChatRepo, InstructionUnderstandingRepo, RetrievalRepo, SessionRepo
+from .execution_input_service import ExecutionInputPreparationError, prepare_session_upload
 from .chat_service import run_chat_pipeline
 from .instruction_understanding_service import (
     SEMANTIC_COMPILE_PROMPT_VERSION,
@@ -3350,6 +3352,58 @@ async def list_session_uploads(session_id: str, app_id: str, user_id: str):
     if session["collection_id"] != app_id or session["user_id"] != user_id:
         raise HTTPException(status_code=400, detail="Session identity mismatch.")
     return {"session_id": session_id, "uploads": session_repo.list_uploads(session_id)}
+
+
+def _agent_input_max_bytes() -> int:
+    return int(os.getenv("RAGENIUS_AGENT_INPUT_MAX_BYTES") or "536870912")
+
+
+def _prepare_execution_upload(app_id: str, session_id: str, upload_id: str) -> Dict[str, Any]:
+    try:
+        return prepare_session_upload(
+            session_repo=session_repo,
+            execution_client=execution_client,
+            app_id=app_id,
+            session_id=session_id,
+            upload_id=upload_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Session upload not found.") from exc
+    except ExecutionInputPreparationError as exc:
+        raise HTTPException(status_code=502, detail={"code": exc.code, "message": str(exc)}) from exc
+
+
+@app.post("/sessions/{session_id}/execution-inputs", status_code=201)
+async def upload_execution_input(
+    session_id: str,
+    app_id: str = Form(...),
+    user_id: str = Form(...),
+    file: UploadFile = File(...),
+):
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    try:
+        upload = await run_in_threadpool(
+            session_repo.add_upload_stream,
+            session_id,
+            filename=file.filename or "upload.bin",
+            mime_type=file.content_type,
+            source=file.file,
+            max_bytes=_agent_input_max_bytes(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    return await run_in_threadpool(_prepare_execution_upload, app_id, session_id, upload["id"])
+
+
+@app.post("/sessions/{session_id}/uploads/{upload_id}/prepare-for-execution")
+async def prepare_existing_execution_input(
+    session_id: str,
+    upload_id: str,
+    app_id: str,
+    user_id: str,
+):
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    return await run_in_threadpool(_prepare_execution_upload, app_id, session_id, upload_id)
 
 
 @app.post("/sessions/{session_id}/uploads")
