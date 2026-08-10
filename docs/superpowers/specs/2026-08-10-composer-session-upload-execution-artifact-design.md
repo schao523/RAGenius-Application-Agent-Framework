@@ -103,7 +103,7 @@ stores the returned execution artifact metadata and builds:
 {
   "artifact_id": "artifact_123",
   "role": "attachment",
-  "reuse_mode": "binary_payload"
+  "reuse_mode": "file_backed"
 }
 ```
 
@@ -289,6 +289,10 @@ artifact file to a WSL-visible source and performs an argument-safe file copy
 into the current run's `inputs/` directory. The agent still receives only the
 run-scoped destination path and remains prohibited from using `/mnt/c` or
 `/mnt/d` itself.
+
+`session_upload` artifacts therefore default to `file_backed` consumption.
+`binary_payload` remains available only where an existing consumer explicitly
+requires it and the configured in-memory binary limit permits it.
 
 Codex staging likewise uses a streamed or filesystem copy into the Codex run
 workspace. Agents must not receive the original app-upload path.
