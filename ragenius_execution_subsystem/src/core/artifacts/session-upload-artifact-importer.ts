@@ -186,6 +186,14 @@ export class SessionUploadArtifactImporter {
           verifier,
           createWriteStream(tempPath, { flags: "wx" })
         );
+        if ((input.stream as NodeJS.ReadableStream & { truncated?: boolean }).truncated === true) {
+          throw importError({
+            code: "EXECUTION_INPUT_TOO_LARGE",
+            message: "Execution input exceeds the configured maximum size.",
+            httpStatus: 413,
+            suggestedAction: "Choose a smaller file or increase the configured Agent input limit."
+          });
+        }
         const actualSha256 = `sha256:${hash.digest("hex")}`;
         if (sizeBytes !== input.declaredSizeBytes || actualSha256 !== declaredSha256) {
           throw importError({

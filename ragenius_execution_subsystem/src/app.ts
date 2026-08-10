@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import multipart from "@fastify/multipart";
 import fs from "node:fs/promises";
 
 import { registerServiceAuth } from "./api/auth/service-auth.js";
@@ -8,6 +9,7 @@ import { registerSkillRoutes } from "./api/routes/skills.routes.js";
 import { registerToolRoutes } from "./api/routes/tools.routes.js";
 import { registerArtifactRoutes } from "./api/routes/artifacts.routes.js";
 import { registerAgentSkillRoutes } from "./api/routes/agent-skills.routes.js";
+import { registerArtifactImportRoutes } from "./api/routes/artifact-imports.routes.js";
 import { createPrismaClient } from "./db/prisma.js";
 import type { AgentProvider } from "./core/agents/agent-provider.js";
 import type { AgentProviderExecutionContext } from "./core/agents/agent-provider-context.js";
@@ -72,6 +74,7 @@ import { CodexAgentSkillDiscoveryAdapter } from "./core/agent-skills/codex-agent
 import { CodexPluginInventoryReader } from "./core/agent-skills/codex-plugin-inventory.js";
 import { OpenClawAgentSkillDiscoveryAdapter } from "./core/agent-skills/openclaw-agent-skill-discovery.js";
 import { AgentSkillSelectionService } from "./core/agent-skills/agent-skill-selection-service.js";
+import { SessionUploadArtifactImporter } from "./core/artifacts/session-upload-artifact-importer.js";
 
 export interface McpDiscoveryProviderState {
   discoveredToolCount: number;
@@ -92,6 +95,7 @@ export interface AppServices {
   agentSkillSelectionService: AgentSkillSelectionService;
   agentSkillProjectionStore: AgentSkillProjectionStore;
   artifactStore: ArtifactStore;
+  sessionUploadArtifactImporter: SessionUploadArtifactImporter;
   confirmationService: ConfirmationService;
   confirmationStore: ConfirmationStore;
   discoverMcpProvider: (providerId: string) => Promise<ToolDefinition[]>;
@@ -118,6 +122,14 @@ export function createAppServices(
   const permissionEngine =
     overrides.permissionEngine ?? new PermissionEngine();
   const artifactStore = overrides.artifactStore ?? new ArtifactStore(runtimeConfig.artifactStore.rootDir);
+  const sessionUploadArtifactImporter =
+    overrides.sessionUploadArtifactImporter ??
+    new SessionUploadArtifactImporter(artifactStore, {
+      artifactRootDir: runtimeConfig.artifactStore.rootDir,
+      maxBytes: runtimeConfig.artifactImports.maxBytes,
+      allowedMimeTypes: runtimeConfig.artifactImports.allowedMimeTypes,
+      tempRetentionHours: runtimeConfig.artifactImports.tempRetentionHours
+    });
   const executionStore =
     overrides.executionStore ??
     (dependencies.prismaClient
@@ -336,6 +348,7 @@ export function createAppServices(
     agentSkillSelectionService,
     agentSkillProjectionStore,
     artifactStore,
+    sessionUploadArtifactImporter,
     confirmationService,
     confirmationStore,
     discoverMcpProvider,
@@ -365,8 +378,16 @@ export function buildApp(
 
   app.decorate("services", services);
   registerServiceAuth(app, services.runtimeConfig.serviceAuth);
+  void app.register(multipart, {
+    limits: {
+      files: 1,
+      fields: 8,
+      fileSize: services.runtimeConfig.artifactImports.maxBytes
+    }
+  });
 
   app.addHook("onReady", async () => {
+    await services.sessionUploadArtifactImporter.cleanupExpiredTemporaryFiles();
     await services.agentExecutionQueue.reconcileInterrupted();
     services.agentExecutionQueue.start();
     const enabledServers = services.runtimeConfig.mcp.servers.filter(
@@ -405,6 +426,7 @@ export function buildApp(
   void app.register(registerToolRoutes, { prefix: "/v1" });
   void app.register(registerArtifactRoutes, { prefix: "/v1" });
   void app.register(registerAgentSkillRoutes, { prefix: "/v1" });
+  void app.register(registerArtifactImportRoutes, { prefix: "/v1" });
 
   return app;
 }
