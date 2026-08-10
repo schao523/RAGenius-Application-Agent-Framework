@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import json
+import hashlib
 import sqlite3
 import threading
 import uuid
@@ -11,7 +12,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, BinaryIO, Dict, List, Optional
 
 
 def _default_state_db() -> Path:
@@ -165,6 +166,7 @@ class _RuntimeStateMemory:
                     size_bytes INTEGER NOT NULL,
                     file_path TEXT NOT NULL,
                     text_content TEXT NOT NULL,
+                    sha256 TEXT,
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_uploads_session_created
@@ -227,6 +229,8 @@ class _RuntimeStateMemory:
             }
             if "text_content" not in upload_columns:
                 connection.execute("ALTER TABLE uploads ADD COLUMN text_content TEXT NOT NULL DEFAULT ''")
+            if "sha256" not in upload_columns:
+                connection.execute("ALTER TABLE uploads ADD COLUMN sha256 TEXT")
 
     def _row_to_session(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
         if row is None:
@@ -511,14 +515,15 @@ class _RuntimeStateMemory:
             "size_bytes": len(content),
             "file_path": str(file_path),
             "text_content": text_content,
+            "sha256": f"sha256:{hashlib.sha256(content).hexdigest()}",
             "created_at": _utcnow(),
         }
         with self._managed_connection() as connection:
             connection.execute(
                 """
                 INSERT INTO uploads (
-                    id, session_id, filename, mime_type, size_bytes, file_path, text_content, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    id, session_id, filename, mime_type, size_bytes, file_path, text_content, sha256, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["id"],
@@ -528,10 +533,128 @@ class _RuntimeStateMemory:
                     row["size_bytes"],
                     row["file_path"],
                     row["text_content"],
+                    row["sha256"],
                     row["created_at"],
                 ),
             )
         return row
+
+    def save_session_upload_stream(
+        self,
+        session_id: str,
+        *,
+        filename: str,
+        mime_type: str | None,
+        source: BinaryIO,
+        max_bytes: int,
+    ) -> Dict[str, Any]:
+        if max_bytes <= 0:
+            raise ValueError("Upload maximum must be positive")
+        safe_session = str(session_id or "").strip()
+        if not safe_session or any(value in safe_session for value in ("/", "\\", "..")):
+            raise ValueError("Invalid session id")
+        safe_name = Path(str(filename or "upload").replace("\\", "/")).name or "upload"
+        upload_dir = (self.uploads_dir / safe_session).resolve()
+        if self.uploads_dir != upload_dir and self.uploads_dir not in upload_dir.parents:
+            raise ValueError("Upload directory escapes configured storage")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        file_token = uuid.uuid4().hex
+        temp_path = upload_dir / f".{file_token}.tmp"
+        final_path = upload_dir / f"{file_token}_{safe_name}"
+        digest = hashlib.sha256()
+        size_bytes = 0
+        try:
+            with temp_path.open("xb") as destination:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size_bytes += len(chunk)
+                    if size_bytes > max_bytes:
+                        raise ValueError("Upload exceeds the configured maximum")
+                    digest.update(chunk)
+                    destination.write(chunk)
+                destination.flush()
+                os.fsync(destination.fileno())
+            os.replace(temp_path, final_path)
+            row = {
+                "id": str(uuid.uuid4()),
+                "session_id": safe_session,
+                "filename": safe_name,
+                "mime_type": mime_type,
+                "size_bytes": size_bytes,
+                "file_path": str(final_path),
+                "text_content": "",
+                "sha256": f"sha256:{digest.hexdigest()}",
+                "created_at": _utcnow(),
+            }
+            with self._managed_connection() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO uploads (
+                        id, session_id, filename, mime_type, size_bytes, file_path,
+                        text_content, sha256, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["id"], row["session_id"], row["filename"], row["mime_type"],
+                        row["size_bytes"], row["file_path"], row["text_content"],
+                        row["sha256"], row["created_at"],
+                    ),
+                )
+            return row
+        except Exception:
+            temp_path.unlink(missing_ok=True)
+            final_path.unlink(missing_ok=True)
+            raise
+
+    def get_session_upload(self, session_id: str, upload_id: str) -> Optional[Dict[str, Any]]:
+        with self._managed_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM uploads WHERE session_id = ? AND id = ?",
+                (session_id, upload_id),
+            ).fetchone()
+        if row is None:
+            return None
+        file_path = Path(str(row["file_path"]))
+        try:
+            if file_path.is_symlink() or not file_path.is_file():
+                return None
+            resolved = file_path.resolve(strict=True)
+        except OSError:
+            return None
+        if self.uploads_dir != resolved and self.uploads_dir not in resolved.parents:
+            return None
+        return {
+            "id": row["id"],
+            "session_id": row["session_id"],
+            "filename": row["filename"],
+            "mime_type": row["mime_type"],
+            "size_bytes": int(row["size_bytes"]),
+            "file_path": str(resolved),
+            "text_content": row["text_content"],
+            "sha256": row["sha256"],
+            "created_at": row["created_at"],
+        }
+
+    def ensure_session_upload_sha256(self, session_id: str, upload_id: str) -> Dict[str, Any]:
+        upload = self.get_session_upload(session_id, upload_id)
+        if upload is None:
+            raise ValueError("Session upload not found")
+        if upload.get("sha256"):
+            return upload
+        digest = hashlib.sha256()
+        with Path(upload["file_path"]).open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+        sha256 = f"sha256:{digest.hexdigest()}"
+        with self._managed_connection() as connection:
+            connection.execute(
+                "UPDATE uploads SET sha256 = ? WHERE session_id = ? AND id = ?",
+                (sha256, session_id, upload_id),
+            )
+        upload["sha256"] = sha256
+        return upload
 
     def save_approved_content(
         self,
@@ -730,6 +853,7 @@ class _RuntimeStateMemory:
                 "size_bytes": int(row["size_bytes"]),
                 "file_path": row["file_path"],
                 "text_content": row["text_content"],
+                "sha256": row["sha256"],
                 "created_at": row["created_at"],
             }
             for row in rows
@@ -1038,6 +1162,29 @@ class SessionRepo:
 
     def list_uploads(self, session_id: str) -> List[Dict[str, Any]]:
         return self._db.list_session_uploads(session_id)
+
+    def add_upload_stream(
+        self,
+        session_id: str,
+        *,
+        filename: str,
+        mime_type: str | None,
+        source: BinaryIO,
+        max_bytes: int,
+    ) -> Dict[str, Any]:
+        return self._db.save_session_upload_stream(
+            session_id,
+            filename=filename,
+            mime_type=mime_type,
+            source=source,
+            max_bytes=max_bytes,
+        )
+
+    def get_upload(self, session_id: str, upload_id: str) -> Optional[Dict[str, Any]]:
+        return self._db.get_session_upload(session_id, upload_id)
+
+    def ensure_upload_sha256(self, session_id: str, upload_id: str) -> Dict[str, Any]:
+        return self._db.ensure_session_upload_sha256(session_id, upload_id)
 
     def save_approved_content(
         self,
