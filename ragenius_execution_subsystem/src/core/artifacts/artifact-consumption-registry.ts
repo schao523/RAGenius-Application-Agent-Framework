@@ -84,6 +84,15 @@ const registry = new Map<string, ArtifactConsumerSpec>([
       ["file_backed", "inline_text", "binary_payload", "metadata_only"],
       ["agent_reuse", "export", "future_markdown_processors", "gmail_attachments"]
     )
+  ],
+  [
+    "session_upload",
+    defineArtifactConsumerSpec(
+      "session_upload",
+      "file_backed",
+      ["file_backed", "binary_payload", "metadata_only"],
+      ["agent_reuse", "export", "gmail_attachments"]
+    )
   ]
 ]);
 

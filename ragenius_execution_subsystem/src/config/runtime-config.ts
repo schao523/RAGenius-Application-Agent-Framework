@@ -29,6 +29,7 @@ export interface RuntimeConfig {
   agentAsync: { enabled: boolean; concurrency: number };
   agentSkills: AgentSkillRuntimeConfig;
   adapters: AdapterRuntimeConfig;
+  artifactImports: ArtifactImportRuntimeConfig;
   artifactStore: ArtifactStoreRuntimeConfig;
   builder: BuilderRuntimeConfig;
   confirmationTtlMs: number;
@@ -40,6 +41,13 @@ export interface RuntimeConfig {
   providers: ProviderRuntimeConfig;
   serviceAuth: ServiceAuthRuntimeConfig;
   tools: ToolToggleRuntimeConfig;
+}
+
+export interface ArtifactImportRuntimeConfig {
+  maxBytes: number;
+  allowedMimeTypes: string[];
+  tempRetentionHours: number;
+  binaryInMemoryMaxBytes: number;
 }
 
 export interface ServiceAuthRuntimeConfig {
@@ -246,6 +254,16 @@ export function buildRuntimeConfig(
       }
     },
     adapters: buildAdapterRuntimeConfig(env),
+    artifactImports: {
+      maxBytes: env.AGENT_INPUT_MAX_BYTES,
+      allowedMimeTypes: [...new Set(
+        env.AGENT_INPUT_ALLOWED_MIME_TYPES.split(",")
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean)
+      )],
+      tempRetentionHours: env.AGENT_INPUT_TEMP_RETENTION_HOURS,
+      binaryInMemoryMaxBytes: env.AGENT_BINARY_IN_MEMORY_MAX_BYTES
+    },
     artifactStore: buildArtifactStoreRuntimeConfig(env),
     builder: buildBuilderRuntimeConfig(env),
     confirmationTtlMs: env.EXECUTION_CONFIRMATION_TTL_MS,

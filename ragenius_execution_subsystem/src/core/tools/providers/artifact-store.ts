@@ -16,6 +16,7 @@ export interface StoredArtifactRecord {
   created_by_turn_id?: string;
   source_tool_id?: string;
   source_skill_id?: string;
+  source_upload_id?: string;
   reviewed?: boolean;
   reviewed_at?: string;
   reviewed_by?: string;
@@ -163,10 +164,12 @@ export class ArtifactStore {
       turnId?: string;
       sourceToolId?: string;
       sourceSkillId?: string;
+      sourceUploadId?: string;
       summary?: string;
       providerOrigin?: string;
       mimeType?: string;
       fileSourcePath?: string;
+      moveFileSource?: boolean;
       fileTextContent?: string;
       fileBytes?: Buffer;
       reviewed?: boolean;
@@ -205,7 +208,11 @@ export class ArtifactStore {
 
     if (fileSourcePath) {
       exportFilePath = path.join(dir, `${artifactId}-${storageFileName}`);
-      await fs.copyFile(fileSourcePath, exportFilePath);
+      if (options?.moveFileSource) {
+        await fs.rename(fileSourcePath, exportFilePath);
+      } else {
+        await fs.copyFile(fileSourcePath, exportFilePath);
+      }
       const stat = await fs.stat(exportFilePath);
       sizeBytes = stat.size;
     } else if (fileBytes) {
@@ -246,6 +253,7 @@ export class ArtifactStore {
       ...(options?.turnId ? { created_by_turn_id: options.turnId } : {}),
       ...(options?.sourceToolId ? { source_tool_id: options.sourceToolId } : {}),
       ...(options?.sourceSkillId ? { source_skill_id: options.sourceSkillId } : {}),
+      ...(options?.sourceUploadId ? { source_upload_id: options.sourceUploadId } : {}),
       ...(options?.reviewed ? { reviewed: true } : {}),
       ...(options?.reviewedAt ? { reviewed_at: options.reviewedAt } : {}),
       ...(options?.reviewedBy ? { reviewed_by: options.reviewedBy } : {}),
@@ -283,6 +291,7 @@ export class ArtifactStore {
       ...(options?.turnId ? { created_by_turn_id: options.turnId } : {}),
       ...(options?.sourceToolId ? { source_tool_id: options.sourceToolId } : {}),
       ...(options?.sourceSkillId ? { source_skill_id: options.sourceSkillId } : {}),
+      ...(options?.sourceUploadId ? { source_upload_id: options.sourceUploadId } : {}),
       ...(options?.reviewed ? { reviewed: true } : {}),
       ...(options?.reviewedAt ? { reviewed_at: options.reviewedAt } : {}),
       ...(options?.reviewedBy ? { reviewed_by: options.reviewedBy } : {}),
@@ -337,6 +346,7 @@ export class ArtifactStore {
       mime_type?: string;
       source_tool_id?: string;
       source_skill_id?: string;
+      source_upload_id?: string;
       reviewed?: boolean;
       reviewed_at?: string;
       reviewed_by?: string;
@@ -385,6 +395,9 @@ export class ArtifactStore {
         : {}),
       ...(typeof parsed.source_skill_id === "string" && parsed.source_skill_id.length > 0
         ? { source_skill_id: parsed.source_skill_id }
+        : {}),
+      ...(typeof parsed.source_upload_id === "string" && parsed.source_upload_id.length > 0
+        ? { source_upload_id: parsed.source_upload_id }
         : {}),
       ...(parsed.reviewed === true ? { reviewed: true } : {}),
       ...(typeof parsed.reviewed_at === "string" && parsed.reviewed_at.length > 0
@@ -595,5 +608,18 @@ export class ArtifactStore {
       .sort((left, right) =>
         String(right.created_at || "").localeCompare(String(left.created_at || ""))
       );
+  }
+
+  async findSessionUploadImport(input: {
+    appId: string;
+    sessionId: string;
+    sourceUploadId: string;
+  }): Promise<Omit<StoredArtifactRecord, "content"> | undefined> {
+    const items = await this.list(input.appId, {
+      artifactType: "session_upload",
+      sessionId: input.sessionId,
+      status: "ready"
+    });
+    return items.find((item) => item.source_upload_id === input.sourceUploadId);
   }
 }

@@ -10,6 +10,35 @@ import {
 } from "../../src/config/runtime-config.js";
 
 describe("runtime config", () => {
+  it("builds bounded Agent input import defaults and normalized overrides", () => {
+    const defaults = buildRuntimeConfig(getEnv({}));
+    assert.deepEqual(defaults.artifactImports, {
+      maxBytes: 536870912,
+      allowedMimeTypes: [
+        "video/mp4",
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "application/octet-stream"
+      ],
+      tempRetentionHours: 24,
+      binaryInMemoryMaxBytes: 26214400
+    });
+
+    const configured = buildRuntimeConfig(getEnv({
+      AGENT_INPUT_MAX_BYTES: "2048",
+      AGENT_INPUT_ALLOWED_MIME_TYPES: " Video/MP4, text/plain,video/mp4 ",
+      AGENT_INPUT_TEMP_RETENTION_HOURS: "2",
+      AGENT_BINARY_IN_MEMORY_MAX_BYTES: "512"
+    }));
+    assert.deepEqual(configured.artifactImports, {
+      maxBytes: 2048,
+      allowedMimeTypes: ["video/mp4", "text/plain"],
+      tempRetentionHours: 2,
+      binaryInMemoryMaxBytes: 512
+    });
+  });
+
   it("uses bounded safe Codex workspace defaults and accepts explicit overrides", () => {
     const defaults = buildRuntimeConfig(getEnv({
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public"
