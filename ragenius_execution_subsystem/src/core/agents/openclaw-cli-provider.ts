@@ -26,6 +26,7 @@ import {
   cleanupOpenClawRunWorkspacesViaWsl,
   inspectOpenClawWorkspaceFileViaWsl,
   stageResolvedAgentArtifactsForOpenClaw,
+  transferOpenClawFileViaWsl,
   transferOpenClawInputViaWsl,
   verifyOpenClawOutputs
 } from "./openclaw-workspace.js";
@@ -496,6 +497,11 @@ export class OpenClawCliProvider implements AgentProvider {
           transferOpenClawInputViaWsl({
             wslDistro: this.config.wslDistro,
             allowedWorkspaceRoot: runWorkspaceRoot,
+            ...input
+          }),
+        transferFile: async (input) =>
+          transferOpenClawFileViaWsl({
+            wslDistro: this.config.wslDistro,
             ...input
           })
       });

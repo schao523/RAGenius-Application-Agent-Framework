@@ -102,7 +102,13 @@ export class ArtifactResolver {
     artifact: StoredArtifactRecord,
     mode: ArtifactConsumptionMode
   ): Promise<ResolvedArtifact["payload"]> {
-    const metadata = normalizeMetadata(artifact.content);
+    const metadata: Record<string, unknown> = {
+      ...normalizeMetadata(artifact.content),
+      ...(typeof artifact.size_bytes === "number" ? { size_bytes: artifact.size_bytes } : {}),
+      ...(artifact.content_hash
+        ? { sha256: artifact.content_hash.replace(/^sha256:/i, "").toLowerCase() }
+        : {})
+    };
     const mimeType =
       typeof artifact.mime_type === "string" && artifact.mime_type.length > 0
         ? artifact.mime_type

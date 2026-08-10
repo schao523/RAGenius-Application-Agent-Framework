@@ -340,3 +340,38 @@ test("represents metadata-only resolved artifacts without staging bytes", async 
   assert.equal(staged[0]?.workspace_relative_path, undefined);
   assert.deepEqual(staged[0]?.metadata, { item_count: 2 });
 });
+
+test("stages file-backed artifacts with direct file transfer instead of base64", async () => {
+  let base64Called = false;
+  let transferredSource = "";
+  const staged = await stageResolvedAgentArtifactsForOpenClaw({
+    workspaceRoot: "/home/openclaw/.openclaw/workspace/runs/execution_001",
+    artifacts: [{
+      artifact_id: "artifact_video",
+      artifact_type: "session_upload",
+      display_name: "video.mp4",
+      app_id: "app_001",
+      status: "ready",
+      role: "attachment",
+      requested_reuse_mode: "file_backed",
+      consumption: { default_mode: "file_backed", supported_modes: ["file_backed"], resolved_mode: "file_backed" },
+      payload: {
+        file_path: "D:/uploads/video.mp4",
+        metadata: { size_bytes: 11, sha256: "abc123" },
+        mime_type: "video/mp4"
+      },
+      provenance: { provider_origin: "session_upload" }
+    } satisfies ResolvedAgentArtifact],
+    transfer: async () => {
+      base64Called = true;
+      return { exists: false };
+    },
+    transferFile: async (input) => {
+      transferredSource = input.sourceWindowsPath;
+      return { exists: true, size_bytes: 11, sha256: "abc123" };
+    }
+  });
+  assert.equal(base64Called, false);
+  assert.equal(transferredSource, "D:/uploads/video.mp4");
+  assert.equal(staged[0]?.workspace_relative_path, "inputs/artifact_video-video.mp4");
+});

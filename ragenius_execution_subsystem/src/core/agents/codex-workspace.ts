@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import path from "node:path";
 
 import type { ResolvedAgentArtifact } from "./agent-artifact-resolver.js";
@@ -86,21 +87,18 @@ async function artifactBytes(artifact: ResolvedAgentArtifact): Promise<Buffer> {
     }
     return Buffer.from(artifact.payload.binary_content_base64, "base64");
   }
-  if (artifact.requested_reuse_mode === "file_backed") {
-    const sourcePath = artifact.payload.file_path;
-    if (!sourcePath) {
-      throw new Error(`Artifact ${artifact.artifact_id} has no file path.`);
-    }
-    const sourceStat = await fs.lstat(sourcePath);
-    if (sourceStat.isSymbolicLink()) {
-      throw new Error(`Artifact ${artifact.artifact_id} source is a symlink.`);
-    }
-    if (!sourceStat.isFile()) {
-      throw new Error(`Artifact ${artifact.artifact_id} source is not a file.`);
-    }
-    return fs.readFile(sourcePath);
-  }
   throw new Error(`Artifact ${artifact.artifact_id} has no reusable bytes.`);
+}
+
+async function inspectFile(filePath: string): Promise<{ sizeBytes: number; sha256: string }> {
+  const hash = createHash("sha256");
+  let sizeBytes = 0;
+  for await (const chunk of createReadStream(filePath)) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    sizeBytes += bytes.byteLength;
+    hash.update(bytes);
+  }
+  return { sizeBytes, sha256: hash.digest("hex") };
 }
 
 function declaredNumber(metadata: Record<string, unknown>, key: string): number | undefined {
@@ -155,11 +153,23 @@ export async function stageCodexArtifacts(input: {
       input.workspace.root_absolute_path,
       path.join(input.workspace.root_absolute_path, ...relativePath.split("/"))
     );
-    const bytes = await artifactBytes(artifact);
-    await fs.writeFile(destination, bytes, { flag: "wx" });
-    const written = await fs.readFile(destination);
-    const sizeBytes = written.byteLength;
-    const sha256 = createHash("sha256").update(written).digest("hex");
+    let sizeBytes: number;
+    let sha256: string;
+    if (artifact.requested_reuse_mode === "file_backed") {
+      const sourcePath = artifact.payload.file_path;
+      if (!sourcePath) throw new Error(`Artifact ${artifact.artifact_id} has no file path.`);
+      const sourceStat = await fs.lstat(sourcePath);
+      if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
+        throw new Error(`Artifact ${artifact.artifact_id} source is not a regular file.`);
+      }
+      await fs.realpath(sourcePath);
+      await fs.copyFile(sourcePath, destination, fs.constants.COPYFILE_EXCL);
+      ({ sizeBytes, sha256 } = await inspectFile(destination));
+    } else {
+      const bytes = await artifactBytes(artifact);
+      await fs.writeFile(destination, bytes, { flag: "wx" });
+      ({ sizeBytes, sha256 } = await inspectFile(destination));
+    }
     const expectedSize = declaredNumber(artifact.payload.metadata, "size_bytes");
     const expectedHash = declaredString(artifact.payload.metadata, "sha256");
     if (expectedSize !== undefined && expectedSize !== sizeBytes) {

@@ -67,7 +67,16 @@ export type StageResolvedAgentArtifactsInput = {
   workspaceRoot: string;
   artifacts: ResolvedAgentArtifact[];
   transfer: StageBinaryInput["transfer"];
+  transferFile?: OpenClawFileTransfer;
 };
+
+export type OpenClawFileTransfer = (input: {
+  sourceWindowsPath: string;
+  workspaceAbsolutePath: string;
+  allowedWorkspaceRoot: string;
+  expectedSizeBytes: number;
+  expectedSha256: string;
+}) => Promise<OpenClawFileInspection>;
 
 export function assertSafeWorkspaceRelativePath(value: string): string {
   const normalized = value.replace(/\\/g, "/").trim();
@@ -290,10 +299,42 @@ export async function stageResolvedAgentArtifactsForOpenClaw(
       continue;
     }
 
-    const bytes = await payloadBytesForArtifact(artifact);
     const workspaceRelativePath = `inputs/${artifact.artifact_id}-${sanitizeWorkspaceFileName(
       artifact.display_name
     )}`;
+    if (artifact.requested_reuse_mode === "file_backed") {
+      if (!input.transferFile || !artifact.payload.file_path) {
+        throw new Error(`Resolved artifact ${artifact.artifact_id} has no file transfer path.`);
+      }
+      const expectedSizeBytes = Number(artifact.payload.metadata.size_bytes);
+      const expectedSha256 = String(artifact.payload.metadata.sha256 || "").toLowerCase();
+      const workspaceAbsolutePath = buildWorkspaceAbsolutePath(input.workspaceRoot, workspaceRelativePath);
+      const inspected = await input.transferFile({
+        sourceWindowsPath: artifact.payload.file_path,
+        workspaceAbsolutePath,
+        allowedWorkspaceRoot: input.workspaceRoot,
+        expectedSizeBytes,
+        expectedSha256
+      });
+      if (!inspected.exists || inspected.size_bytes !== expectedSizeBytes || inspected.sha256 !== expectedSha256) {
+        throw new Error("File-backed OpenClaw staging verification failed.");
+      }
+      staged.push({
+        input_id: artifact.artifact_id,
+        source_kind: "artifact",
+        source_ref: { artifact_id: artifact.artifact_id },
+        display_name: artifact.display_name,
+        media_type: mediaType,
+        encoding: "binary",
+        content_sha256: expectedSha256,
+        size_bytes: expectedSizeBytes,
+        workspace_relative_path: workspaceRelativePath,
+        metadata: artifact.payload.metadata
+      });
+      continue;
+    }
+
+    const bytes = await payloadBytesForArtifact(artifact);
     const stagedFile = await stageBinaryInputWithVerifiedBase64({
       inputId: artifact.artifact_id,
       bytes,
@@ -317,6 +358,32 @@ export async function stageResolvedAgentArtifactsForOpenClaw(
   }
 
   return staged;
+}
+
+export async function transferOpenClawFileViaWsl(input: {
+  wslDistro: string;
+  sourceWindowsPath: string;
+  workspaceAbsolutePath: string;
+  allowedWorkspaceRoot: string;
+  expectedSizeBytes: number;
+  expectedSha256: string;
+  runWsl?: OpenClawWslRunner;
+}): Promise<OpenClawFileInspection> {
+  const runWsl = input.runWsl ?? createOpenClawWslRunner(input.wslDistro);
+  const destination = assertSafeWorkspaceAbsolutePath(input.workspaceAbsolutePath);
+  const parent = path.posix.dirname(destination);
+  await runWsl({ args: ["mkdir", "-p", "--", parent] });
+  const canonical = (await runWsl({ args: ["readlink", "-f", "--", parent] })).stdout.trim();
+  assertResolvedPathContained(input.allowedWorkspaceRoot, canonical);
+  const source = (await runWsl({ args: ["wslpath", "-a", "-u", input.sourceWindowsPath] })).stdout.trim();
+  if (!source) throw new Error("OpenClaw source path could not be translated.");
+  await runWsl({ args: ["cp", "--", source, destination] });
+  return inspectOpenClawWorkspaceFileViaWsl({
+    wslDistro: input.wslDistro,
+    workspaceAbsolutePath: destination,
+    allowedWorkspaceRoot: input.allowedWorkspaceRoot,
+    runWsl
+  });
 }
 
 export async function transferOpenClawInputViaWsl(input: {
