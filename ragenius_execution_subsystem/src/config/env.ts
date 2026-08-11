@@ -66,7 +66,7 @@ const envSchema = z.object({
   ARTIFACT_STORAGE_ROOT: z.string().trim().default("storage/artifacts"),
   AGENT_INPUT_MAX_BYTES: z.coerce.number().int().positive().default(536870912),
   AGENT_INPUT_ALLOWED_MIME_TYPES: z.string().default(
-    "video/mp4,application/pdf,text/plain,text/markdown,application/octet-stream"
+    "video/mp4,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,application/octet-stream"
   ),
   AGENT_INPUT_TEMP_RETENTION_HOURS: z.coerce.number().int().positive().default(24),
   AGENT_BINARY_IN_MEMORY_MAX_BYTES: z.coerce.number().int().positive().default(26214400),

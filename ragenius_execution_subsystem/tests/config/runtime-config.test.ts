@@ -17,6 +17,7 @@ describe("runtime config", () => {
       allowedMimeTypes: [
         "video/mp4",
         "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "text/plain",
         "text/markdown",
         "application/octet-stream"
