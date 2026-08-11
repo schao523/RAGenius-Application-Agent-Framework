@@ -245,4 +245,3 @@ can observe a newly published revision without a full page reload.
 - Scheduled or policy-driven automatic publication.
 - Real-time push from Builder to app browsers.
 - Catalog deletion and provider lifecycle management.
-
