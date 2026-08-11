@@ -6,12 +6,17 @@
     <h1 class="text-3xl font-bold text-gray-950">Agent Skills</h1>
     <p class="mt-1 text-gray-600">Discover provider-native skills, approve exact fingerprints, and bind them to applications.</p>
   </div>
-  <a href="{{ url_for('agent_skills') }}" class="px-4 py-2 rounded bg-gray-900 text-white hover:bg-black">Review &amp; Publish Changes</a>
+  <a href="{{ url_for('agent_skill_publication_review') }}" class="px-4 py-2 rounded bg-gray-900 text-white hover:bg-black">Review &amp; Publish Changes</a>
 </div>
 
-{% if projection_state.sync_status != 'synchronized' %}
+{% if publication_preview.state == 'published' %}
+  <div class="mb-5 border border-emerald-300 bg-emerald-50 text-emerald-950 rounded-lg p-4" aria-live="polite">
+    <p class="font-semibold">Published</p>
+    <p class="text-sm">Execution acknowledged revision {{ publication_preview.published_revision }}.</p>
+  </div>
+{% else %}
   <div class="mb-5 border border-amber-300 bg-amber-50 text-amber-950 rounded-lg p-4">
-    <p class="font-semibold">Draft changes</p>
+    <p class="font-semibold">{{ 'Publish failed' if publication_preview.state == 'publish_failed' else 'Draft changes' }}</p>
     <p class="text-sm">Local revision {{ projection_state.local_revision }} is not yet published. The previous execution revision remains active.</p>
     {% if projection_state.last_error_message %}<p class="text-sm mt-1">{{ projection_state.last_error_code }}: {{ projection_state.last_error_message }}</p>{% endif %}
   </div>
