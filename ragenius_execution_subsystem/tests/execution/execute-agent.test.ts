@@ -15,6 +15,7 @@ import { classifyAgentRequest } from "../../src/core/agents/agent-policy.js";
 import { ExecutionEngine } from "../../src/core/execution/execution-engine.js";
 import { persistedSkillIdForRequest } from "../../src/core/execution/execution-store.js";
 import { buildApp } from "../../src/app.js";
+import { ArtifactReferenceCoordinator } from "../../src/core/artifacts/artifact-reference-coordinator.js";
 
 describe("execute_agent requests", () => {
   const approvedSelection: ResolvedAgentSkillSelection = {
@@ -91,6 +92,35 @@ describe("execute_agent requests", () => {
     assert.equal(parsed.artifact_refs?.[0]?.reuse_mode, "file_backed");
     assert.equal(parsed.expected_outputs?.[0]?.output_id, "agent_answer");
     assert.equal(parsed.expected_outputs?.[0]?.persist_as_artifact, true);
+  });
+
+  it("holds artifact leases while the synchronous provider is executing", async () => {
+    const coordinator = new ArtifactReferenceCoordinator();
+    const scope = { appId: "app_001", sessionId: "sess_001", artifactId: "artifact_123" };
+    const provider: AgentProvider = {
+      backend: "codex_cli",
+      async execute() {
+        assert.equal(coordinator.isLeased(scope), true);
+        return { status: "completed", summary: "Completed", output_text: "done" };
+      }
+    };
+    const engine = new ExecutionEngine({
+      agentProviders: new Map([["codex_cli", provider]]),
+      artifactReferenceCoordinator: coordinator,
+      resolveAgentArtifacts: async () => []
+    });
+
+    const result = await engine.execute({
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "codex_cli",
+      agent_query: "Read the selected artifact without changing files.",
+      artifact_refs: [{ artifact_id: "artifact_123", role: "source", reuse_mode: "file_backed" }]
+    });
+
+    assert.equal(result.status, "completed");
+    assert.equal(coordinator.isLeased(scope), false);
   });
 
   it("rejects invalid artifact refs and expected outputs", () => {

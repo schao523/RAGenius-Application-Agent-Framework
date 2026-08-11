@@ -12,7 +12,7 @@ import InstructionsPanel from "./components/InstructionsPanel";
 import RuntimeInspector from "./components/RuntimeInspector";
 import RuntimePanel from "./components/RuntimePanel";
 import SessionHeader from "./components/SessionHeader";
-import { uploadArtifact } from "./artifactUploadClient";
+import { retryArtifactUpload, uploadArtifact } from "./artifactUploadClient";
 import ArtifactUploadControl from "./components/ArtifactUploadControl";
 
 const DEFAULT_BASE_URL = import.meta.env.VITE_APP_BASE_URL || "http://127.0.0.1:8000";
@@ -1945,6 +1945,7 @@ function ChatPanel({
   onSubmitStarterQuestion,
   onAdvanceWorkflow,
   onUploadArtifact,
+  onRetryArtifactUpload,
   onApproveLatestAssistantMessage,
   onSelectApprovedContent,
   toolInventory,
@@ -2353,6 +2354,7 @@ function ChatPanel({
             <ArtifactUploadControl
               disabled={!appId}
               onUpload={(file, operationId, onProgress, signal) => onUploadArtifact(file, operationId, onProgress, signal)}
+              onRetry={onRetryArtifactUpload}
             />
             <span style={styles.small}>
               Files are available to this chat and Agent execution. Successful uploads appear in Artifact Library.
@@ -2418,6 +2420,7 @@ function ChatPanel({
               agentSkillProjectionStatusByBackend={agentSkillProjectionStatusByBackend}
               artifactInventory={artifactInventory}
               onUploadExecutionInput={onUploadExecutionInput}
+              onRetryArtifactUpload={onRetryArtifactUpload}
               initialArtifactSuggestion={artifactSuggestionForComposer}
               initialArtifactSuggestions={artifactSuggestionsForComposer}
               initialTargetId={artifactPreferredTargetIdForComposer}
@@ -2814,6 +2817,34 @@ export default function App() {
       analysisMode,
       onProgress,
       signal,
+    });
+    const analysisResult = data?.analysis_result;
+    if (analysisResult && typeof analysisResult === "object") {
+      setThreadsBySession((prev) => ({
+        ...prev,
+        [activeThreadKey]: [...(prev[activeThreadKey] || []), appendAssistantMessage(analysisResult)],
+      }));
+      setSessionLaneStateBySession((prev) => ({
+        ...prev,
+        [activeThreadKey]: normalizeSessionLaneState(analysisResult.session_lane_state),
+      }));
+      await loadSessions(selectedAppId, userId, includeArchivedSessions);
+    }
+    await loadArtifactInventory(selectedAppId, sessionId, userId);
+    return data;
+  };
+
+  const retryCanonicalArtifact = async (operationId) => {
+    if (!selectedAppId || !sessionId || !userId || !operationId) {
+      throw new Error("An application, session, user, and upload operation are required.");
+    }
+    await ensureExecutionSessionPrepared();
+    const data = await retryArtifactUpload({
+      baseUrl,
+      sessionId,
+      appId: selectedAppId,
+      userId,
+      operationId,
     });
     const analysisResult = data?.analysis_result;
     if (analysisResult && typeof analysisResult === "object") {
@@ -3632,6 +3663,7 @@ export default function App() {
               onSubmitStarterQuestion={sendStarterQuestionInNewSession}
               onAdvanceWorkflow={advanceWorkflowStep}
               onUploadArtifact={uploadArtifactToSession}
+              onRetryArtifactUpload={retryCanonicalArtifact}
               onApproveLatestAssistantMessage={approveLatestAssistantMessage}
               onConfirmExecution={confirmExecutionForSession}
               onSelectApprovedContent={selectApprovedContentForSession}

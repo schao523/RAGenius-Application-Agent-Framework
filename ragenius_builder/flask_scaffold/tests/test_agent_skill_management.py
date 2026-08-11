@@ -364,6 +364,8 @@ class FakeAgentSkillExecutionClient:
 
 class AgentSkillAdminRouteTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.original_admin_token = os.environ.get("RAGENIUS_BUILDER_ADMIN_TOKEN")
+        os.environ["RAGENIUS_BUILDER_ADMIN_TOKEN"] = "route-admin-secret"
         root = Path.cwd() / "outputs" / "builder_agent_skill_tests" / f"routes_{uuid4().hex}"
         root.mkdir(parents=True, exist_ok=True)
         self.root = root
@@ -395,6 +397,10 @@ class AgentSkillAdminRouteTests(unittest.TestCase):
         self.app_module.store = self.original_store
         self.store.close()
         shutil.rmtree(self.root, ignore_errors=True)
+        if self.original_admin_token is None:
+            os.environ.pop("RAGENIUS_BUILDER_ADMIN_TOKEN", None)
+        else:
+            os.environ["RAGENIUS_BUILDER_ADMIN_TOKEN"] = self.original_admin_token
 
     def _create_and_discover(self) -> tuple[dict, dict]:
         created_response = self.client.post(
@@ -477,7 +483,10 @@ class AgentSkillAdminRouteTests(unittest.TestCase):
             json={"agent_skill_id": skill["id"]},
         )
         pending_page = self.client.get(f"/agent-skills/{skill['id']}")
-        synchronized = self.client.post("/api/agent-skills/synchronize")
+        synchronized = self.client.post(
+            "/api/agent-skills/synchronize",
+            headers={"Authorization": "Bearer route-admin-secret"},
+        )
 
         self.assertEqual(stale.status_code, 409)
         self.assertEqual(stale.get_json()["error"]["code"], "AGENT_SKILL_FINGERPRINT_CHANGED")

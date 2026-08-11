@@ -7,6 +7,36 @@ import test from "node:test";
 import { buildApp } from "../../src/app.js";
 import { ArtifactStore } from "../../src/core/tools/providers/artifact-store.js";
 import { InMemoryExecutionStore } from "../../src/core/execution/execution-store.js";
+import { ArtifactReferenceCoordinator } from "../../src/core/artifacts/artifact-reference-coordinator.js";
+
+test("blocks deletion while a synchronous provider holds an artifact lease", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ragenius-artifacts-"));
+  const store = new ArtifactStore(root);
+  const coordinator = new ArtifactReferenceCoordinator();
+  const saved = await store.save("app_001", "session_upload", "source.txt", {}, {
+    sessionId: "session_001",
+    mimeType: "text/plain",
+    fileTextContent: "source"
+  });
+  const artifactScope = {
+    appId: "app_001",
+    sessionId: "session_001",
+    artifactId: String(saved.artifact_id)
+  };
+  const release = coordinator.acquire([artifactScope]);
+  const app = buildApp({ artifactStore: store, artifactReferenceCoordinator: coordinator });
+
+  const response = await app.inject({
+    method: "DELETE",
+    url: `/v1/artifacts/${saved.artifact_id}?app_id=app_001&session_id=session_001`
+  });
+
+  assert.equal(response.statusCode, 409);
+  assert.equal(response.json().error.code, "ARTIFACT_IN_USE");
+  assert.equal((await fs.stat(String(saved.file_path))).isFile(), true);
+  release();
+  await app.close();
+});
 
 test("blocks deletion while an active execution references the artifact", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ragenius-artifacts-"));

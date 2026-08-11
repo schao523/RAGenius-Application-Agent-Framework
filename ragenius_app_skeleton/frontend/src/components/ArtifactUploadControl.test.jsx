@@ -23,10 +23,11 @@ describe("ArtifactUploadControl", () => {
   });
 
   it("shows a safe retry action without rendering raw response JSON", async () => {
-    const onUpload = vi.fn()
-      .mockRejectedValueOnce(new Error('{"detail":{"token":"secret"}}'))
-      .mockResolvedValueOnce({ status: "ready", artifact: { artifact_id: "artifact-1" } });
-    render(<ArtifactUploadControl onUpload={onUpload} onReady={vi.fn()} />);
+    const onUpload = vi.fn().mockRejectedValueOnce(new Error('{"detail":{"token":"secret"}}'));
+    const onRetry = vi.fn().mockResolvedValueOnce({
+      status: "ready", artifact: { artifact_id: "artifact-1" },
+    });
+    render(<ArtifactUploadControl onUpload={onUpload} onRetry={onRetry} onReady={vi.fn()} />);
 
     const file = new File(["notes"], "notes.txt", { type: "text/plain" });
     await act(async () => fireEvent.change(screen.getByLabelText("Upload artifact"), {
@@ -36,7 +37,9 @@ describe("ArtifactUploadControl", () => {
     expect(screen.queryByText(/secret/)).toBeNull();
 
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Retry upload" })));
-    await waitFor(() => expect(onUpload).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(1));
+    expect(onRetry).toHaveBeenCalledWith(expect.stringMatching(/^upload_op_/));
+    expect(onUpload).toHaveBeenCalledTimes(1);
     expect(await screen.findByText("Ready")).toBeInTheDocument();
   });
 

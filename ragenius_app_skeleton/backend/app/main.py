@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager, suppress
 import copy
 from datetime import datetime, timezone
 import os
@@ -56,7 +58,28 @@ class Utf8JSONResponse(JSONResponse):
     media_type = "application/json; charset=utf-8"
 
 
-app = FastAPI(title="RAGenius App API", default_response_class=Utf8JSONResponse)
+_artifact_upload_cleanup_task: asyncio.Task | None = None
+
+
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    global _artifact_upload_cleanup_task
+    await _run_artifact_upload_cleanup_once()
+    _artifact_upload_cleanup_task = asyncio.create_task(_artifact_upload_cleanup_loop())
+    try:
+        yield
+    finally:
+        _artifact_upload_cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await _artifact_upload_cleanup_task
+        _artifact_upload_cleanup_task = None
+
+
+app = FastAPI(
+    title="RAGenius App API",
+    default_response_class=Utf8JSONResponse,
+    lifespan=_app_lifespan,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -3392,6 +3415,22 @@ def _artifact_upload_service() -> ArtifactUploadService:
     )
 
 
+async def _artifact_upload_cleanup_loop() -> None:
+    interval = max(
+        60, int(os.getenv("RAGENIUS_UPLOAD_CLEANUP_INTERVAL_SECONDS") or "3600")
+    )
+    while True:
+        await asyncio.sleep(interval)
+        await _run_artifact_upload_cleanup_once()
+
+
+async def _run_artifact_upload_cleanup_once() -> None:
+    try:
+        await run_in_threadpool(_artifact_upload_service().cleanup_expired)
+    except Exception as exc:
+        print(f"[artifact-upload-cleanup] cleanup failed: {exc}", file=sys.stderr)
+
+
 def _analyze_canonical_upload(
     operation: Dict[str, Any],
     *,
@@ -3498,6 +3537,7 @@ async def upload_canonical_session_artifact(
             mime_type=file.content_type,
             source=file.file,
             analysis=analysis,
+            analysis_mode=analysis_mode,
         )
     except ValueError as exc:
         message = str(exc)
@@ -3515,7 +3555,25 @@ async def retry_canonical_session_artifact(
     app_id: str,
     user_id: str,
 ):
-    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    session = _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    operation = session_repo.get_upload_operation(
+        app_id=app_id,
+        session_id=session_id,
+        user_id=user_id,
+        upload_operation_id=upload_operation_id,
+    )
+    analysis = None
+    if (
+        operation
+        and operation.get("status") != "ready"
+        and operation.get("analysis_mode") == "normal_query"
+    ):
+        builder_context = _load_builder_context(app_id)
+        analysis = lambda retry_operation: _analyze_canonical_upload(
+            retry_operation,
+            builder_context=builder_context,
+            session=session,
+        )
     try:
         return await run_in_threadpool(
             _artifact_upload_service().retry,
@@ -3523,6 +3581,7 @@ async def retry_canonical_session_artifact(
             session_id=session_id,
             user_id=user_id,
             upload_operation_id=upload_operation_id,
+            analysis=analysis,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail={

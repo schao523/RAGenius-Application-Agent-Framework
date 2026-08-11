@@ -406,6 +406,7 @@ export default function ExecutionComposer({
   initialAgentBackend,
   selectedApprovedContent,
   onUploadExecutionInput,
+  onRetryArtifactUpload,
   onRefreshAgentSkills,
   onSubmit,
   onClose,
@@ -748,6 +749,7 @@ export default function ExecutionComposer({
         </div>
         <ArtifactUploadControl
           onUpload={(file, operationId, onProgress, signal) => onUploadExecutionInput(file, operationId, onProgress, signal)}
+          onRetry={onRetryArtifactUpload}
           onReady={acceptUploadedArtifact}
           onStatusChange={(status) => setUploadBusy(["uploading", "preparing"].includes(status))}
         />

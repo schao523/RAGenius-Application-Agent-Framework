@@ -9,7 +9,7 @@ function formatBytes(value) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function ArtifactUploadControl({ onUpload, onReady, onStatusChange, disabled = false }) {
+export default function ArtifactUploadControl({ onUpload, onRetry, onReady, onStatusChange, disabled = false }) {
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState("idle");
   const [progress, setProgress] = useState(null);
@@ -62,6 +62,22 @@ export default function ArtifactUploadControl({ onUpload, onReady, onStatusChang
     }
   };
 
+  const retry = async () => {
+    if (!onRetry || !operationId.current) return;
+    updateStatus("preparing");
+    try {
+      const result = await onRetry(operationId.current);
+      if (result?.status === "failed" || !result?.artifact) {
+        updateStatus("failed");
+        return;
+      }
+      updateStatus("ready");
+      onReady?.(result.artifact);
+    } catch {
+      updateStatus("failed");
+    }
+  };
+
   const removeLocalUpload = () => {
     setFile(null);
     setProgress(null);
@@ -98,7 +114,7 @@ export default function ArtifactUploadControl({ onUpload, onReady, onStatusChang
         <button type="button" onClick={() => abortController.current?.abort()}>Cancel upload</button>
       )}
       {status === "failed" && (
-        <button type="button" onClick={() => void run(file, true)}>Retry upload</button>
+        <button type="button" onClick={() => void retry()}>Retry upload</button>
       )}
       {file && status !== "uploading" && status !== "preparing" && (
         <button type="button" onClick={removeLocalUpload}>Remove upload</button>

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import base64
 import os
 import shutil
 import sys
 import unittest
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -51,6 +53,8 @@ class FakeExecutionClient:
 
 class AgentSkillPublicationRouteTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.original_admin_token = os.environ.get("RAGENIUS_BUILDER_ADMIN_TOKEN")
+        os.environ["RAGENIUS_BUILDER_ADMIN_TOKEN"] = "publication-secret"
         root = Path.cwd() / "outputs" / "builder_agent_skill_tests" / f"publication_routes_{uuid4().hex}"
         root.mkdir(parents=True, exist_ok=True)
         self.root = root
@@ -117,15 +121,90 @@ class AgentSkillPublicationRouteTests(unittest.TestCase):
         self.app_module.app.config["TESTING"] = True
         self.client = self.app_module.app.test_client()
 
+    def auth_headers(self, **headers: str) -> dict[str, str]:
+        return {"Authorization": "Bearer publication-secret", **headers}
+
+    def basic_auth_headers(self) -> dict[str, str]:
+        encoded = base64.b64encode(b"admin:publication-secret").decode("ascii")
+        return {"Authorization": f"Basic {encoded}"}
+
     def tearDown(self) -> None:
         self.app_module._agent_skill_execution_client = self.original_factory
         self.app_module.store = self.original_store
         self.store.close()
         shutil.rmtree(self.root, ignore_errors=True)
+        if self.original_admin_token is None:
+            os.environ.pop("RAGENIUS_BUILDER_ADMIN_TOKEN", None)
+        else:
+            os.environ["RAGENIUS_BUILDER_ADMIN_TOKEN"] = self.original_admin_token
+
+    def test_publication_routes_reject_missing_or_invalid_admin_credentials(self) -> None:
+        missing = self.client.post(
+            "/api/agent-skills/publications",
+            json={"expected_local_revision": 1},
+        )
+        invalid = self.client.get(
+            "/api/agent-skills/publication-preview",
+            headers={"Authorization": "Bearer wrong", "X-RAGenius-Admin-Id": "admin-route"},
+        )
+
+        self.assertEqual(missing.status_code, 401)
+        self.assertEqual(invalid.status_code, 401)
+        self.assertEqual(self.execution_client.payloads, [])
+
+    def test_browser_publication_requires_page_issued_csrf_token(self) -> None:
+        revision = self.store.configure_agent_skill_projection(
+            "builder-local-default"
+        )["local_revision"]
+        missing = self.client.post(
+            "/agent-skills/publications",
+            data={"expected_local_revision": revision},
+            headers=self.basic_auth_headers(),
+        )
+        page = self.client.get(
+            "/agent-skills/publication-review", headers=self.basic_auth_headers()
+        )
+        match = re.search(r'name="csrf_token" value="([^"]+)"', page.get_data(as_text=True))
+        self.assertIsNotNone(match)
+        accepted = self.client.post(
+            "/agent-skills/publications",
+            data={
+                "expected_local_revision": revision,
+                "csrf_token": match.group(1),
+            },
+            headers=self.basic_auth_headers(),
+        )
+
+        self.assertEqual(missing.status_code, 403)
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(len(self.execution_client.payloads), 1)
+
+    def test_legacy_synchronize_rejects_ambient_basic_credentials(self) -> None:
+        response = self.client.post(
+            "/api/agent-skills/synchronize", headers=self.basic_auth_headers()
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(self.execution_client.payloads, [])
+
+    def test_publication_routes_fail_closed_when_admin_token_is_not_configured(self) -> None:
+        os.environ.pop("RAGENIUS_BUILDER_ADMIN_TOKEN")
+
+        response = self.client.get(
+            "/api/agent-skills/publication-preview",
+            headers=self.auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["error"]["code"], "BUILDER_ADMIN_AUTH_NOT_CONFIGURED")
 
     def test_preview_api_and_review_page_are_redacted_and_use_publication_language(self) -> None:
-        api_response = self.client.get("/api/agent-skills/publication-preview")
-        page_response = self.client.get("/agent-skills/publication-review")
+        api_response = self.client.get(
+            "/api/agent-skills/publication-preview", headers=self.auth_headers()
+        )
+        page_response = self.client.get(
+            "/agent-skills/publication-review", headers=self.basic_auth_headers()
+        )
 
         self.assertEqual(api_response.status_code, 200)
         self.assertEqual(page_response.status_code, 200)
@@ -145,7 +224,7 @@ class AgentSkillPublicationRouteTests(unittest.TestCase):
         response = self.client.post(
             "/api/agent-skills/publications",
             json={"expected_local_revision": revision - 1},
-            headers={"X-RAGenius-Admin-Id": "admin-route"},
+            headers=self.auth_headers(**{"X-RAGenius-Admin-Id": "admin-route"}),
         )
 
         self.assertEqual(response.status_code, 409)
@@ -159,7 +238,7 @@ class AgentSkillPublicationRouteTests(unittest.TestCase):
         published = self.client.post(
             "/api/agent-skills/publications",
             json={"expected_local_revision": revision},
-            headers={"X-Request-Id": "publish-ok"},
+            headers=self.auth_headers(**{"X-Request-Id": "publish-ok"}),
         )
         self.assertEqual(published.status_code, 200)
         self.assertEqual(published.get_json()["state"], "published")
@@ -178,6 +257,7 @@ class AgentSkillPublicationRouteTests(unittest.TestCase):
         failed = self.client.post(
             "/api/agent-skills/publications",
             json={"expected_local_revision": current_revision},
+            headers=self.auth_headers(),
         )
 
         self.assertEqual(failed.status_code, 502)
@@ -188,7 +268,9 @@ class AgentSkillPublicationRouteTests(unittest.TestCase):
         )
 
     def test_legacy_synchronize_delegates_and_is_marked_deprecated(self) -> None:
-        response = self.client.post("/api/agent-skills/synchronize")
+        response = self.client.post(
+            "/api/agent-skills/synchronize", headers=self.auth_headers()
+        )
 
         self.assertEqual(response.status_code, 200)
         body = response.get_json()

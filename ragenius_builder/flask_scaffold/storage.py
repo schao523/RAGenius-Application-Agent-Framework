@@ -8,8 +8,10 @@ import os
 import atexit
 import re
 import shutil
+import threading
 import zipfile
 import yaml
+from functools import wraps
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 
@@ -37,6 +39,16 @@ DEFAULT_APP_CONFIG_SETTINGS = {
         },
     }
 }
+
+
+def _agent_skill_governance_locked(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._agent_skill_governance_lock:
+            return method(self, *args, **kwargs)
+
+    return locked
+
 
 DEFAULT_APP_CONFIG_SCHEMA = {
     "type": "object",
@@ -297,6 +309,7 @@ class DatabaseStore:
         self.instructions_root.mkdir(parents=True, exist_ok=True)
         self.skills_root.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.db_path_value, check_same_thread=False)
+        self._agent_skill_governance_lock = threading.RLock()
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.row_factory = sqlite3.Row
         self._create_tables()
@@ -1718,6 +1731,7 @@ class DatabaseStore:
             "updated_at": row["updated_at"],
         }
 
+    @_agent_skill_governance_locked
     def create_agent_skill_source(
         self,
         *,
@@ -1785,6 +1799,7 @@ class DatabaseStore:
         ).fetchall()
         return [self._agent_skill_source_from_row(row) for row in rows]
 
+    @_agent_skill_governance_locked
     def update_agent_skill_source(
         self,
         source_id: str,
@@ -1984,6 +1999,7 @@ class DatabaseStore:
             ],
         }
 
+    @_agent_skill_governance_locked
     def refresh_agent_skill_catalog(
         self,
         *,
@@ -2106,6 +2122,7 @@ class DatabaseStore:
             )
         return self.list_agent_skill_catalog(source_id)
 
+    @_agent_skill_governance_locked
     def approve_agent_skill(
         self,
         *,
@@ -2158,6 +2175,7 @@ class DatabaseStore:
             "SELECT * FROM agent_skill_approvals WHERE id = ?", (approval_id,)
         ).fetchone())
 
+    @_agent_skill_governance_locked
     def revoke_agent_skill(
         self,
         *,
@@ -2212,6 +2230,7 @@ class DatabaseStore:
             "updated_at": row["updated_at"],
         }
 
+    @_agent_skill_governance_locked
     def create_app_agent_skill_binding(
         self,
         *,
@@ -2270,6 +2289,7 @@ class DatabaseStore:
         ).fetchall()
         return [self._app_agent_skill_binding_from_row(row) for row in rows]
 
+    @_agent_skill_governance_locked
     def update_app_agent_skill_binding(
         self,
         binding_id: str,
@@ -2307,6 +2327,7 @@ class DatabaseStore:
             )
         return self.get_app_agent_skill_binding(binding_id)
 
+    @_agent_skill_governance_locked
     def delete_app_agent_skill_binding(
         self,
         binding_id: str,
@@ -2370,6 +2391,7 @@ class DatabaseStore:
                 correlation_id=correlation_id,
             )
 
+    @_agent_skill_governance_locked
     def configure_agent_skill_projection(self, builder_instance_id: str) -> Dict[str, Any]:
         state = self.get_agent_skill_projection_state()
         current = state.get("builder_instance_id")
@@ -2436,7 +2458,7 @@ class DatabaseStore:
 
     def mark_agent_skill_projection_attempt(self) -> None:
         with self.conn:
-            self.conn.execute(
+            cursor = self.conn.execute(
                 "UPDATE agent_skill_projection_state SET last_attempt_at = ? WHERE singleton_id = 1",
                 (self._agent_skill_now(),),
             )
@@ -2510,6 +2532,7 @@ class DatabaseStore:
             raise ValueError("PUBLISHED_SNAPSHOT_INVALID") from exc
         return self._normalize_published_agent_skill_snapshot(snapshot)
 
+    @_agent_skill_governance_locked
     def mark_agent_skill_projection_published(
         self,
         *,
@@ -2522,7 +2545,11 @@ class DatabaseStore:
         state = self.get_agent_skill_projection_state()
         if (
             state["builder_instance_id"] != builder_instance_id
-            or state["local_revision"] != revision
+            or revision > int(state["local_revision"])
+            or (
+                state.get("published_revision") is not None
+                and revision < int(state["published_revision"])
+            )
         ):
             raise ValueError("Projection acknowledgment does not match current Builder state")
         serialized = json.dumps(
@@ -2533,17 +2560,29 @@ class DatabaseStore:
         )
         now = self._agent_skill_now()
         with self.conn:
-            self.conn.execute(
+            cursor = self.conn.execute(
                 """
                 UPDATE agent_skill_projection_state
                 SET published_revision = ?, published_digest = ?,
-                    published_snapshot_json = ?, sync_status = 'synchronized',
+                    published_snapshot_json = ?,
+                    sync_status = CASE WHEN local_revision = ? THEN 'synchronized' ELSE 'pending' END,
                     last_success_at = ?, last_error_code = NULL, last_error_message = NULL
                 WHERE singleton_id = 1
+                  AND (published_revision IS NULL OR published_revision <= ?)
                 """,
-                (revision, digest, serialized, now),
+                (revision, digest, serialized, revision, now, revision),
             )
+            if cursor.rowcount != 1:
+                raise ValueError("Projection acknowledgment would regress published state")
         return self.get_agent_skill_projection_state()
+
+    def read_agent_skill_projection_snapshot(
+        self, builder_instance_id: str
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        with self._agent_skill_governance_lock:
+            state = self.configure_agent_skill_projection(builder_instance_id)
+            items = self.list_agent_skill_projection_items()
+            return state, items
 
     def _current_redacted_agent_skill_snapshot(self) -> Dict[str, Any]:
         items = self.list_agent_skill_projection_items()

@@ -77,13 +77,17 @@ export async function registerArtifactRoutes(app: FastifyInstance): Promise<void
       return notFound(reply);
     }
     try {
-      if (await app.services.executionStore.hasActiveArtifactReference(scoped)) {
+      const deletion = await app.services.artifactReferenceCoordinator.deleteIfUnused(
+        scoped,
+        () => app.services.executionStore.hasActiveArtifactReference(scoped),
+        () => app.services.artifactStore.markDeletedScoped(scoped)
+      );
+      if (deletion.inUse) {
         return inUse(reply);
       }
-      const result = await app.services.artifactStore.markDeletedScoped(scoped);
       return reply.status(200).send({
         deleted: true,
-        already_deleted: !result.deleted,
+        already_deleted: !deletion.result.deleted,
         artifact_id: scoped.artifactId
       });
     } catch {

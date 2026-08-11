@@ -1,4 +1,6 @@
 import datetime
+import hashlib
+import hmac
 import threading
 import json
 import os
@@ -8,7 +10,7 @@ from pathlib import Path
 from dataclasses import asdict
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from flask import Flask, render_template, request, redirect, url_for, jsonify, abort
+from flask import Flask, render_template, request, redirect, url_for, jsonify, abort, make_response
 
 from storage import (
     store,
@@ -540,6 +542,73 @@ def _agent_skill_publication_correlation_id() -> str:
     return (request.headers.get("X-Request-Id") or str(uuid.uuid4())).strip()[:128]
 
 
+_AGENT_SKILL_PUBLICATION_ENDPOINTS = {
+    "agent_skill_publication_review",
+    "publish_agent_skills_form",
+    "api_synchronize_agent_skills",
+    "api_agent_skill_publication_preview",
+    "api_publish_agent_skills",
+}
+_AGENT_SKILL_PUBLICATION_BROWSER_ENDPOINTS = {
+    "agent_skill_publication_review",
+    "publish_agent_skills_form",
+}
+
+
+def _agent_skill_publication_csrf_token() -> str:
+    configured_token = os.environ.get("RAGENIUS_BUILDER_ADMIN_TOKEN", "").strip()
+    return hmac.new(
+        configured_token.encode("utf-8"),
+        b"ragenius-agent-skill-publication-form-v1",
+        hashlib.sha256,
+    ).hexdigest()
+
+
+@app.before_request
+def _require_agent_skill_publication_admin():
+    if request.endpoint not in _AGENT_SKILL_PUBLICATION_ENDPOINTS:
+        return None
+
+    configured_token = os.environ.get("RAGENIUS_BUILDER_ADMIN_TOKEN", "").strip()
+    if not configured_token:
+        return jsonify(
+            {
+                "error": {
+                    "code": "BUILDER_ADMIN_AUTH_NOT_CONFIGURED",
+                    "message": "Builder publication authentication is not configured.",
+                }
+            }
+        ), 503
+
+    supplied_token = ""
+    authorization = request.headers.get("Authorization", "")
+    if authorization.startswith("Bearer "):
+        supplied_token = authorization[7:].strip()
+    elif (
+        request.endpoint in _AGENT_SKILL_PUBLICATION_BROWSER_ENDPOINTS
+        and request.authorization
+        and request.authorization.type.lower() == "basic"
+    ):
+        supplied_token = request.authorization.password or ""
+
+    if supplied_token and hmac.compare_digest(supplied_token, configured_token):
+        return None
+
+    response = make_response(
+        jsonify(
+            {
+                "error": {
+                    "code": "BUILDER_ADMIN_AUTH_REQUIRED",
+                    "message": "A valid Builder administrator credential is required.",
+                }
+            }
+        ),
+        401,
+    )
+    response.headers["WWW-Authenticate"] = 'Basic realm="RAGenius Builder publication"'
+    return response
+
+
 def _public_agent_skill_publication_result(result):
     return {key: value for key, value in result.items() if key != "projection_state"}
 
@@ -549,6 +618,7 @@ def _agent_skill_publication_review_context(preview, result=None):
     return {
         "preview": preview,
         "result": result,
+        "csrf_token": _agent_skill_publication_csrf_token(),
         "affected_apps": [
             {"id": app_id, "name": apps.get(app_id, app_id)}
             for app_id in preview["changes"]["affected_apps"]
@@ -1559,6 +1629,14 @@ def agent_skill_publication_review():
 
 @app.route("/agent-skills/publications", methods=["POST"])
 def publish_agent_skills_form():
+    supplied_csrf = str(request.form.get("csrf_token") or "")
+    if not hmac.compare_digest(supplied_csrf, _agent_skill_publication_csrf_token()):
+        return jsonify({
+            "error": {
+                "code": "BUILDER_PUBLICATION_CSRF_INVALID",
+                "message": "Publication form validation failed. Reload the review page.",
+            }
+        }), 403
     try:
         expected_revision = int(request.form.get("expected_local_revision", ""))
         result = publish_agent_skill_revision(

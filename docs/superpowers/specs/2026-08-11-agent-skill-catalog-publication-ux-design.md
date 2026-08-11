@@ -188,6 +188,22 @@ returns acknowledged revision/digest plus a bounded summary.
 The legacy synchronize POST may temporarily delegate to the new service for
 compatibility, but the Builder UI must use reviewed compare-and-set publication.
 
+Publication preview, publication, and legacy synchronize routes require a
+separate inbound Builder administrator credential. API callers use Bearer
+authentication; the browser review flow may use HTTP Basic with the same token
+as its password plus a page-issued CSRF token on publication POST. API and
+legacy synchronize routes are Bearer-only and do not accept ambient Basic
+credentials. `X-RAGenius-Admin-Id` is audit metadata only and never grants
+access. This credential is distinct from Builder's outbound execution-service
+credential, and publication fails closed when it is not configured.
+
+Projection state and projection items are captured under one governance lock.
+If execution accepts a reviewed revision while a newer local edit is created,
+the accepted revision becomes the published baseline and the newer revision
+remains an explicit pending draft.
+Acknowledgment persistence is serialized under the same governance lock and
+uses an atomic no-rollback database predicate.
+
 ## App Inventory Refresh
 
 Execution inventory changes immediately after successful publication. The app

@@ -36,8 +36,8 @@ def _generated_at_for_revision(revision: int) -> str:
 
 
 def build_agent_skill_projection(store: Any, builder_instance_id: str) -> Dict[str, Any]:
-    state = store.configure_agent_skill_projection(builder_instance_id)
-    items = sorted(store.list_agent_skill_projection_items(), key=_canonical_json)
+    state, snapshot_items = store.read_agent_skill_projection_snapshot(builder_instance_id)
+    items = sorted(snapshot_items, key=_canonical_json)
     payload = {
         "builder_instance_id": builder_instance_id,
         "revision": int(state["local_revision"]),

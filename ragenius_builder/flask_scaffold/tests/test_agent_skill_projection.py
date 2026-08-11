@@ -5,6 +5,7 @@ import json
 import shutil
 import sqlite3
 import sys
+import threading
 import unittest
 from pathlib import Path
 from uuid import uuid4
@@ -55,6 +56,26 @@ class AgentSkillProjectionTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.store.close()
         shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_projection_builder_uses_one_consistent_governance_snapshot(self) -> None:
+        class SnapshotOnlyStore:
+            def read_agent_skill_projection_snapshot(self, builder_instance_id: str):
+                self.builder_instance_id = builder_instance_id
+                return {"local_revision": 1720000000000}, []
+
+            def configure_agent_skill_projection(self, _builder_instance_id: str):
+                raise AssertionError("projection state and items must not be read separately")
+
+            def list_agent_skill_projection_items(self):
+                raise AssertionError("projection state and items must not be read separately")
+
+        store = SnapshotOnlyStore()
+
+        projection = build_agent_skill_projection(store, "builder-atomic")
+
+        self.assertEqual(store.builder_instance_id, "builder-atomic")
+        self.assertEqual(projection["revision"], 1720000000000)
+        self.assertEqual(projection["items"], [])
 
     def _populate(self) -> None:
         app = self.store.create_application(
@@ -286,6 +307,34 @@ class AgentSkillProjectionTests(unittest.TestCase):
             state["published_snapshot_json"],
             json.dumps(snapshot, sort_keys=True, separators=(",", ":")),
         )
+
+    def test_publication_acknowledgment_is_serialized_by_governance_lock(self) -> None:
+        self._populate()
+        projection = build_agent_skill_projection(self.store, "builder-test")
+        completed = threading.Event()
+        errors = []
+
+        def acknowledge() -> None:
+            try:
+                self.store.mark_agent_skill_projection_published(
+                    builder_instance_id="builder-test",
+                    revision=projection["revision"],
+                    digest=projection["digest"],
+                    redacted_snapshot={"sources": [], "skills": [], "bindings": []},
+                )
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                completed.set()
+
+        with self.store._agent_skill_governance_lock:
+            worker = threading.Thread(target=acknowledge)
+            worker.start()
+            self.assertFalse(completed.wait(0.1))
+        worker.join(timeout=2)
+
+        self.assertTrue(completed.is_set())
+        self.assertEqual(errors, [])
 
     def test_malformed_or_unsafe_published_snapshot_is_rejected(self) -> None:
         with self.store.conn:

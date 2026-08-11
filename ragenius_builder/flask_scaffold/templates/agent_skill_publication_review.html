@@ -47,6 +47,7 @@
 
 {% if preview.state != 'published' %}
   <form class="mt-5" method="post" action="{{ url_for('publish_agent_skills_form') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="expected_local_revision" value="{{ preview.local_revision }}">
     <button type="submit" autofocus class="px-5 py-3 rounded bg-blue-700 text-white font-semibold hover:bg-blue-800">Publish revision {{ preview.local_revision }}</button>
   </form>

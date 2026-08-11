@@ -326,10 +326,15 @@ def publish_agent_skill_revision(
         counts=counts,
         outcome="published",
     )
+    publication_state = (
+        "published"
+        if int(projection_state["local_revision"]) == int(projection["revision"])
+        else "draft_changes"
+    )
     return {
         **preview,
         "ok": True,
-        "state": "published",
+        "state": publication_state,
         "published_revision": projection["revision"],
         "published_digest": projection["digest"],
         "projection_state": projection_state,

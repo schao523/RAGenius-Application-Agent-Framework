@@ -59,6 +59,7 @@ class ArtifactUploadService:
         mime_type: str | None,
         source: BinaryIO,
         analysis: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
+        analysis_mode: str = "none",
         now: str | None = None,
         retention_hours: int = 24,
     ) -> dict[str, Any]:
@@ -85,6 +86,7 @@ class ArtifactUploadService:
             user_id=user_id,
             upload_operation_id=upload_operation_id,
             staging_expires_at=expires,
+            analysis_mode=analysis_mode,
         )
         return self._prepare(operation, analysis=analysis)
 
@@ -117,15 +119,24 @@ class ArtifactUploadService:
             "user_id": operation["user_id"],
             "upload_operation_id": operation["upload_operation_id"],
         }
-        operation = self.session_repo.update_upload_operation(
-            **scope, status="preparing", artifact_id=operation.get("artifact_id"),
-            error_code=None, retryable=True,
-        )
+        claimed = self.session_repo.claim_upload_operation_for_preparation(**scope)
+        if claimed is None:
+            current = self.session_repo.get_upload_operation(**scope)
+            if current is not None and current["status"] in {"ready", "preparing"}:
+                return self._response(current, reused=True)
+            raise ValueError("Upload operation is not retryable")
+        operation = claimed
         file_path = Path(str(operation.get("file_path") or ""))
         if file_path.is_symlink() or not file_path.is_file():
             failed = self.session_repo.update_upload_operation(
                 **scope, status="failed", artifact_id=None,
                 error_code="UPLOAD_STAGING_UNAVAILABLE", retryable=False,
+            )
+            return self._response(failed)
+        if operation.get("analysis_mode") == "normal_query" and analysis is None:
+            failed = self.session_repo.update_upload_operation(
+                **scope, status="failed", artifact_id=operation.get("artifact_id"),
+                error_code="UPLOAD_ANALYSIS_REQUIRED", retryable=True,
             )
             return self._response(failed)
         result = self.execution_client.import_session_upload(
@@ -153,7 +164,14 @@ class ArtifactUploadService:
                 error_code="INVALID_EXECUTION_INPUT_RESPONSE", retryable=True,
             )
             return self._response(failed)
-        analysis_result = analysis(operation) if analysis is not None else None
+        try:
+            analysis_result = analysis(operation) if analysis is not None else None
+        except Exception:
+            failed = self.session_repo.update_upload_operation(
+                **scope, status="failed", artifact_id=str(artifact["artifact_id"]),
+                artifact=artifact, error_code="UPLOAD_ANALYSIS_FAILED", retryable=True,
+            )
+            return self._response(failed)
         ready = self.session_repo.update_upload_operation(
             **scope, status="ready", artifact_id=str(artifact["artifact_id"]),
             artifact=artifact, error_code=None, retryable=False,
@@ -169,13 +187,16 @@ class ArtifactUploadService:
     def cleanup_expired(self, now: str | None = None) -> int:
         current = now or _format_time(datetime.datetime.now(datetime.timezone.utc))
         expired = self.session_repo.list_expired_upload_operations(current)
+        deleted = 0
         for operation in expired:
-            self.session_repo.delete_upload_operation(
+            if self.session_repo.expire_upload_operation(
                 app_id=operation["app_id"], session_id=operation["session_id"],
                 user_id=operation["user_id"],
                 upload_operation_id=operation["upload_operation_id"],
-            )
-        return len(expired)
+                now=current,
+            ):
+                deleted += 1
+        return deleted
 
     @staticmethod
     def _legacy_operation_id(upload_id: str) -> str:

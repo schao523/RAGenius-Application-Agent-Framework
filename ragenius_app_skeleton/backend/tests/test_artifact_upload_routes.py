@@ -41,6 +41,33 @@ def setup_runtime(tmp_path: Path, monkeypatch):
     return repo, execution, TestClient(app)
 
 
+def test_application_startup_cleans_expired_upload_staging(monkeypatch):
+    cleanup_calls = []
+
+    class CleanupService:
+        def cleanup_expired(self):
+            cleanup_calls.append("cleanup")
+            return 0
+
+    monkeypatch.setenv("RAGENIUS_UPLOAD_CLEANUP_INTERVAL_SECONDS", "3600")
+    monkeypatch.setattr(app_main, "_artifact_upload_service", lambda: CleanupService())
+
+    with TestClient(app):
+        assert cleanup_calls == ["cleanup"]
+
+
+def test_application_cleanup_survives_transient_failure(monkeypatch):
+    class FailingCleanupService:
+        def cleanup_expired(self):
+            raise OSError("temporary cleanup failure")
+
+    monkeypatch.setenv("RAGENIUS_UPLOAD_CLEANUP_INTERVAL_SECONDS", "3600")
+    monkeypatch.setattr(app_main, "_artifact_upload_service", lambda: FailingCleanupService())
+
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code in {200, 404}
+
+
 def test_unified_upload_and_retry_are_idempotent_and_path_safe(tmp_path, monkeypatch):
     _, execution, client = setup_runtime(tmp_path, monkeypatch)
     response = client.post(
@@ -112,6 +139,58 @@ def test_normal_query_upload_returns_analysis_result(tmp_path, monkeypatch):
 
     assert response.status_code == 201
     assert response.json()["analysis_result"]["content"] == "Upload analyzed."
+
+    monkeypatch.setattr(
+        app_main,
+        "_load_builder_context",
+        lambda _app_id: (_ for _ in ()).throw(AssertionError("ready retry must not reload Builder")),
+    )
+    retry = client.post(
+        "/sessions/session-1/artifacts/uploads/upload-op-analysis/retry",
+        params={"app_id": "app-1", "user_id": "user-1"},
+    )
+    assert retry.status_code == 200
+    assert retry.json()["status"] == "ready"
+
+
+def test_normal_query_retry_reconstructs_required_analysis(tmp_path, monkeypatch):
+    _, _, client = setup_runtime(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        app_main,
+        "_load_builder_context",
+        lambda _app_id: {
+            "config_json": {}, "adapter_json": {}, "template_registry": {}
+        },
+    )
+    attempts = {"count": 0}
+
+    def analyze(operation, **_kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("planner unavailable")
+        return {"session_id": operation["session_id"], "content": "Upload analyzed on retry."}
+
+    monkeypatch.setattr(app_main, "_analyze_canonical_upload", analyze)
+    failed = client.post(
+        "/sessions/session-1/artifacts/uploads",
+        data={
+            "app_id": "app-1", "user_id": "user-1",
+            "upload_operation_id": "upload-op-retry-analysis",
+            "analysis_mode": "normal_query",
+        },
+        files={"file": ("notes.txt", b"notes", "text/plain")},
+    )
+    retried = client.post(
+        "/sessions/session-1/artifacts/uploads/upload-op-retry-analysis/retry",
+        params={"app_id": "app-1", "user_id": "user-1"},
+    )
+
+    assert failed.status_code == 201
+    assert failed.json()["error_code"] == "UPLOAD_ANALYSIS_FAILED"
+    assert retried.status_code == 200
+    assert retried.json()["status"] == "ready"
+    assert retried.json()["analysis_result"]["content"] == "Upload analyzed on retry."
+    assert attempts["count"] == 2
 
 
 def test_legacy_duplicate_report_is_scoped_and_read_only(tmp_path, monkeypatch):

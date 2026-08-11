@@ -85,6 +85,44 @@ def test_upload_returns_analysis_before_removing_staging_bytes(tmp_path, monkeyp
     assert result["analysis_result"]["content"] == "Upload analyzed."
 
 
+def test_failed_required_analysis_stays_retryable_and_cannot_be_skipped(tmp_path, monkeypatch):
+    repo, client, service = make_service(
+        tmp_path, monkeypatch, [ready_response(), ready_response(reused=True)]
+    )
+
+    def fail_analysis(_operation):
+        raise RuntimeError("planner unavailable")
+
+    failed = service.upload(
+        app_id="app-1", session_id="session-1", user_id="user-1",
+        upload_operation_id="upload-op-required-analysis", filename="notes.txt",
+        mime_type="text/plain", source=io.BytesIO(b"notes"),
+        analysis_mode="normal_query", analysis=fail_analysis,
+    )
+    skipped = service.retry(
+        app_id="app-1", session_id="session-1", user_id="user-1",
+        upload_operation_id="upload-op-required-analysis",
+    )
+    retried = service.retry(
+        app_id="app-1", session_id="session-1", user_id="user-1",
+        upload_operation_id="upload-op-required-analysis",
+        analysis=lambda _operation: {"content": "Upload analyzed."},
+    )
+
+    operation = repo.get_upload_operation(
+        app_id="app-1", session_id="session-1", user_id="user-1",
+        upload_operation_id="upload-op-required-analysis",
+    )
+    assert failed["status"] == "failed"
+    assert failed["error_code"] == "UPLOAD_ANALYSIS_FAILED"
+    assert skipped["status"] == "failed"
+    assert skipped["error_code"] == "UPLOAD_ANALYSIS_REQUIRED"
+    assert retried["status"] == "ready"
+    assert retried["analysis_result"]["content"] == "Upload analyzed."
+    assert operation["analysis_mode"] == "normal_query"
+    assert len(client.calls) == 2
+
+
 def test_failed_import_retries_existing_staging_without_browser_bytes(tmp_path, monkeypatch):
     repo, client, service = make_service(tmp_path, monkeypatch, [
         {"error": {"code": "EXECUTION_SUBSYSTEM_UNAVAILABLE", "message": "offline"}},
@@ -142,6 +180,76 @@ def test_ready_operation_is_idempotent_and_cleanup_expires_failed_staging(tmp_pa
     )
     assert expired["status"] == "deleted"
     assert expired["retryable"] is False
+
+
+def test_cleanup_does_not_delete_staging_claimed_by_concurrent_retry(tmp_path, monkeypatch):
+    repo, _, service = make_service(tmp_path, monkeypatch, [
+        {"error": {"code": "EXECUTION_SUBSYSTEM_UNAVAILABLE", "message": "offline"}}
+    ])
+    service.upload(
+        app_id="app-1", session_id="session-1", user_id="user-1",
+        upload_operation_id="upload-op-race", filename="notes.txt",
+        mime_type="text/plain", source=io.BytesIO(b"notes"),
+        now="2026-08-10T00:00:00Z", retention_hours=1,
+    )
+    stale = repo.get_upload_operation(
+        app_id="app-1", session_id="session-1", user_id="user-1",
+        upload_operation_id="upload-op-race",
+    )
+    repo.update_upload_operation(
+        app_id="app-1", session_id="session-1", user_id="user-1",
+        upload_operation_id="upload-op-race", status="preparing",
+        artifact_id=None, error_code=None, retryable=True,
+    )
+    monkeypatch.setattr(repo, "list_expired_upload_operations", lambda _now: [stale])
+
+    cleaned = service.cleanup_expired("2026-08-11T00:00:00Z")
+
+    current = repo.get_upload_operation(
+        app_id="app-1", session_id="session-1", user_id="user-1",
+        upload_operation_id="upload-op-race",
+    )
+    assert cleaned == 0
+    assert current["status"] == "preparing"
+    assert Path(current["file_path"]).is_file()
+
+
+def test_retry_does_not_resurrect_operation_claimed_by_cleanup(tmp_path, monkeypatch):
+    repo, _, service = make_service(tmp_path, monkeypatch, [
+        {"error": {"code": "EXECUTION_SUBSYSTEM_UNAVAILABLE", "message": "offline"}}
+    ])
+    service.upload(
+        app_id="app-1", session_id="session-1", user_id="user-1",
+        upload_operation_id="upload-op-cleanup-first", filename="notes.txt",
+        mime_type="text/plain", source=io.BytesIO(b"notes"),
+        now="2026-08-10T00:00:00Z", retention_hours=1,
+    )
+    original_get = repo.get_upload_operation
+    first_read = True
+
+    def cleanup_after_retry_read(**scope):
+        nonlocal first_read
+        operation = original_get(**scope)
+        if first_read:
+            first_read = False
+            assert repo.expire_upload_operation(**scope, now="2026-08-11T00:00:00Z")
+        return operation
+
+    monkeypatch.setattr(repo, "get_upload_operation", cleanup_after_retry_read)
+
+    with pytest.raises(ValueError, match="not retryable"):
+        service.retry(
+            app_id="app-1", session_id="session-1", user_id="user-1",
+            upload_operation_id="upload-op-cleanup-first",
+        )
+
+    current = original_get(
+        app_id="app-1", session_id="session-1", user_id="user-1",
+        upload_operation_id="upload-op-cleanup-first",
+    )
+    assert current["status"] == "deleted"
+    assert current["retryable"] is False
+    assert not Path(current["file_path"]).exists()
 
 
 def test_legacy_upload_import_is_idempotent_and_preserves_original_bytes(tmp_path, monkeypatch):

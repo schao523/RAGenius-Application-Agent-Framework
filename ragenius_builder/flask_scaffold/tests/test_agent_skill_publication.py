@@ -294,6 +294,41 @@ class AgentSkillPublicationTests(unittest.TestCase):
         self.assertEqual(after["published_revision"], before_state["published_revision"])
         self.assertEqual(self.store.get_published_agent_skill_snapshot(), before_snapshot)
 
+    def test_concurrent_governance_edit_remains_draft_after_reviewed_revision_is_accepted(self) -> None:
+        store = self.store
+        binding_id = self.ids["binding_id"]
+
+        class EditingPublicationClient(FakePublicationClient):
+            def publish_governance_projection(self, payload: dict) -> dict:
+                store.update_app_agent_skill_binding(
+                    binding_id, enabled=False, actor_id="admin-concurrent"
+                )
+                return super().publish_governance_projection(payload)
+
+        reviewed_revision = self.store.configure_agent_skill_projection("builder-test")[
+            "local_revision"
+        ]
+        result = publish_agent_skill_revision(
+            store=self.store,
+            execution_client=EditingPublicationClient(),
+            builder_instance_id="builder-test",
+            expected_local_revision=reviewed_revision,
+            actor_id="admin-1",
+            correlation_id="correlation-concurrent",
+        )
+
+        state = self.store.get_agent_skill_projection_state()
+        preview = build_publication_preview(
+            store=self.store, builder_instance_id="builder-test"
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["state"], "draft_changes")
+        self.assertEqual(state["published_revision"], reviewed_revision)
+        self.assertGreater(state["local_revision"], reviewed_revision)
+        self.assertEqual(state["sync_status"], "pending")
+        self.assertEqual(preview["state"], "draft_changes")
+        self.assertEqual(preview["counts"]["binding_changes"], 1)
+
     def test_exception_and_ack_mismatch_are_bounded_failures(self) -> None:
         for mode, code in (
             ("raise", "EXECUTION_SUBSYSTEM_UNAVAILABLE"),
