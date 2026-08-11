@@ -668,3 +668,33 @@ Provider-local paths are debug-only.
 - Composer preserves incompatible selected artifacts with an explanation instead of silently dropping them.
 - Required output verification or persistence failures fail the execution.
 - Optional output failures are visible in inspector diagnostics.
+
+## Composer Session Upload Preparation Design
+
+The detailed approved design is
+[`docs/superpowers/specs/2026-08-10-composer-session-upload-execution-artifact-design.md`](superpowers/specs/2026-08-10-composer-session-upload-execution-artifact-design.md).
+The end-to-end flow is:
+
+1. The browser streams a new file to the app backend, or selects an existing
+   current-session upload.
+2. The app verifies user/app/session ownership, persists and hashes the upload,
+   then streams it to the service-authenticated execution import endpoint.
+3. The execution subsystem validates MIME type, 512 MiB default limit, exact
+   size, and SHA-256 before atomically publishing one session-scoped artifact.
+4. Composer refreshes upload and artifact inventories, selects the returned
+   artifact, and submits a provider-neutral `file_backed` attachment ref.
+5. Only after confirmation, the selected provider copies the immutable artifact
+   into its run-scoped `inputs/` directory and verifies the staged hash.
+
+Codex uses a streamed filesystem copy under
+`storage/codex-runs/<execution_id>/inputs/`. OpenClaw transfers bytes directly
+to `/home/openclaw/.openclaw/workspace/runs/<execution_id>/inputs/`; it does not
+route binary content through stdout, base64, or a Windows path embedded in the
+prompt. Provider prompts contain only run-workspace-relative or WSL run paths.
+
+Temporary import files are non-addressable and removed after success/failure or
+by retention cleanup. App and execution limits must match
+(`RAGENIUS_AGENT_INPUT_MAX_BYTES` and `AGENT_INPUT_MAX_BYTES`). Preparation
+failure is retryable and never creates confirmation authority. External writes,
+including publication, still require their independently verified operation
+plan and single-use confirmation.

@@ -30,6 +30,15 @@ incorrect.
 Use the same strong token in both services. Do not expose it to the frontend or
 commit it to Git.
 
+When scoped credentials are configured, the `ragenius_app` credential requires
+both `agent_skills:read` and `artifacts:write`. The latter authorizes the app
+backend to stream a session upload into the execution artifact store; it does
+not grant the browser direct access.
+
+```powershell
+$env:RAGENIUS_EXECUTION_SERVICE_CREDENTIALS_JSON = '[{"service_id":"ragenius_app","token":"replace-app-token","scopes":["agent_skills:read","artifacts:write"]},{"service_id":"ragenius_builder","token":"replace-builder-token","scopes":["agent_skills:admin"]}]'
+```
+
 ### `RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED=true`
 
 This setting tells the execution subsystem that service authentication is
@@ -83,6 +92,13 @@ cd D:\GitHub\Codex-RAGenius-System\ragenius_app_skeleton
 ```
 
 Both services must be restarted after changing the token.
+
+For Composer Agent inputs, keep the app and execution limits aligned:
+
+```powershell
+$env:RAGENIUS_AGENT_INPUT_MAX_BYTES = "536870912"
+$env:AGENT_INPUT_MAX_BYTES = "536870912"
+```
 
 ## Verify Authentication
 

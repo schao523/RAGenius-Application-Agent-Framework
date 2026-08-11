@@ -624,6 +624,38 @@ The execution subsystem remains responsible for:
 - Inspector shows provider diagnostics and raw paths only as debug information.
 - Non-zero provider exit codes are reported as failures.
 
+## Composer Session Upload Import Addendum
+
+This addendum is normative for Composer file preparation. The approved UX and
+ownership design is linked in
+[`docs/superpowers/specs/2026-08-10-composer-session-upload-execution-artifact-design.md`](superpowers/specs/2026-08-10-composer-session-upload-execution-artifact-design.md).
+
+The app backend owns browser upload and `{app_id, session_id, user_id}`
+authorization. It calls `POST /v1/artifact-imports/session-upload` using a
+service credential with `artifacts:write` and multipart fields `app_id`,
+`session_id`, `source_upload_id`, `display_name`, `mime_type`,
+`declared_size_bytes`, `declared_sha256`, and exactly one `file`. Filesystem
+paths are never accepted or returned.
+
+A successful response contains `preparation_status = "ready"`, safe upload and
+artifact metadata, and `reused_existing_artifact`. The immutable idempotency key
+is `{app_id, session_id, source_upload_id}`. Reusing that key with the same size
+and SHA-256 returns the same artifact; different content is
+`SESSION_UPLOAD_CONTENT_CONFLICT`.
+
+Imported records use `artifact_type = "session_upload"`,
+`provider_origin = "session_upload"`, and `source_upload_id`. They are scoped to
+the exact app/session, default to `file_backed`, and retain exact byte size plus
+`sha256:<lowercase hex>`. The default limit is 512 MiB. Upload, import, and
+provider staging are streamed; payloads above the binary in-memory threshold
+must not be base64-buffered.
+
+Composer exposes `uploading`, `preparing`, `ready`, and `failed`. Run is blocked
+while preparation is pending or failed. A ready input is submitted only as an
+artifact ref with role `attachment` and reuse mode `file_backed`. Preparation
+does not authorize execution or external writes; the normal policy classifier
+and single-use confirmation state machine remain authoritative.
+
 ## Migration Notes
 
 Phase 1 may keep approved-content plumbing internally.
