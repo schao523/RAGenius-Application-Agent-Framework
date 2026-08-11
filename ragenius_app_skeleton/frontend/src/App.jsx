@@ -1942,6 +1942,8 @@ function ChatPanel({
   artifactInventoryLoading,
   artifactInventoryError,
   onPrepareExecutionComposer,
+  onUploadExecutionInput,
+  onPrepareSessionUpload,
   onRunExecutionComposer,
   selectedExportMessageIds,
   onToggleMessageExportSelection,
@@ -2451,6 +2453,9 @@ function ChatPanel({
               agentSkillInventoryError={agentSkillInventoryError}
               agentSkillProjectionStatusByBackend={agentSkillProjectionStatusByBackend}
               artifactInventory={artifactInventory}
+              sessionUploads={sessionUploads}
+              onUploadExecutionInput={onUploadExecutionInput}
+              onPrepareSessionUpload={onPrepareSessionUpload}
               initialArtifactSuggestion={artifactSuggestionForComposer}
               initialArtifactSuggestions={artifactSuggestionsForComposer}
               initialTargetId={artifactPreferredTargetIdForComposer}
@@ -2569,6 +2574,8 @@ export default function App() {
   const [execAgentSkillInventoryErrorByScope, setExecAgentSkillInventoryErrorByScope] = useState({});
   const [execAgentSkillInventoryLoadingByScope, setExecAgentSkillInventoryLoadingByScope] = useState({});
   const agentSkillInventoryRequestSequence = useRef({});
+  const preparedExecutionSessionKeys = useRef(new Set());
+  const executionSessionPreparationPromises = useRef(new Map());
   const [execArtifactInventory, setExecArtifactInventory] = useState([]);
   const [execArtifactInventoryLoading, setExecArtifactInventoryLoading] = useState(false);
   const [execArtifactInventoryError, setExecArtifactInventoryError] = useState("");
@@ -2764,12 +2771,19 @@ export default function App() {
     }
   };
 
-  const prepareExecutionComposer = async () => {
+  const ensureExecutionSessionPrepared = async () => {
     if (!selectedAppId || !sessionId || !userId) {
       return;
     }
-    if (!currentSession) {
-      await fetchJson(`${baseUrl}/sessions/${sessionId}/prepare`, {
+    if (currentSession || preparedExecutionSessionKeys.current.has(activeThreadKey)) {
+      return;
+    }
+    const existingPreparation = executionSessionPreparationPromises.current.get(activeThreadKey);
+    if (existingPreparation) {
+      await existingPreparation;
+      return;
+    }
+    const preparation = fetchJson(`${baseUrl}/sessions/${sessionId}/prepare`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2779,15 +2793,74 @@ export default function App() {
           adapter_version: 1,
           template_version: 1,
         }),
+      }).then(() => {
+        preparedExecutionSessionKeys.current.add(activeThreadKey);
+      }).finally(() => {
+        executionSessionPreparationPromises.current.delete(activeThreadKey);
       });
+    executionSessionPreparationPromises.current.set(activeThreadKey, preparation);
+    await preparation;
+  };
+
+  const prepareExecutionComposer = async () => {
+    if (!selectedAppId || !sessionId || !userId) {
+      return;
     }
+    const sessionWasDraft = !currentSession;
+    await ensureExecutionSessionPrepared();
     await Promise.all([
       loadAgentSkillInventory("codex_cli", selectedAppId, sessionId, userId),
       loadAgentSkillInventory("openclaw_cli", selectedAppId, sessionId, userId),
     ]);
-    if (!currentSession) {
+    if (sessionWasDraft) {
       await loadSessions(selectedAppId, userId, includeArchivedSessions);
     }
+  };
+
+  const storePreparedSessionUpload = (data) => {
+    const upload = data?.upload;
+    if (!upload?.id) return;
+    setSessionUploadsBySession((previous) => {
+      const current = previous[activeThreadKey] || [];
+      const next = current.some((item) => item.id === upload.id)
+        ? current.map((item) => (item.id === upload.id ? { ...item, ...upload } : item))
+        : [...current, upload];
+      return { ...previous, [activeThreadKey]: next };
+    });
+  };
+
+  const uploadExecutionInput = async (file) => {
+    if (!selectedAppId || !sessionId || !userId || !file) {
+      throw new Error("An application, session, user, and file are required.");
+    }
+    await ensureExecutionSessionPrepared();
+    const formData = new FormData();
+    formData.append("app_id", selectedAppId);
+    formData.append("user_id", userId);
+    formData.append("file", file);
+    const data = await fetchJson(`${baseUrl}/sessions/${sessionId}/execution-inputs`, {
+      method: "POST",
+      body: formData,
+    });
+    storePreparedSessionUpload(data);
+    await loadArtifactInventory(selectedAppId, sessionId, userId);
+    return data;
+  };
+
+  const prepareSessionUpload = async (uploadId) => {
+    const normalizedUploadId = String(uploadId || "").trim();
+    if (!selectedAppId || !sessionId || !userId || !normalizedUploadId) {
+      throw new Error("An application, session, user, and upload are required.");
+    }
+    await ensureExecutionSessionPrepared();
+    const data = await fetchJson(
+      `${baseUrl}/sessions/${sessionId}/uploads/${encodeURIComponent(normalizedUploadId)}/prepare-for-execution`
+      + `?app_id=${encodeURIComponent(selectedAppId)}&user_id=${encodeURIComponent(userId)}`,
+      { method: "POST" },
+    );
+    storePreparedSessionUpload(data);
+    await loadArtifactInventory(selectedAppId, sessionId, userId);
+    return data;
   };
 
   const loadSessions = async (
@@ -3627,6 +3700,8 @@ export default function App() {
               artifactInventoryLoading={execArtifactInventoryLoading}
               artifactInventoryError={execArtifactInventoryError}
               onPrepareExecutionComposer={prepareExecutionComposer}
+              onUploadExecutionInput={uploadExecutionInput}
+              onPrepareSessionUpload={prepareSessionUpload}
               onRunExecutionComposer={runExecutionComposer}
               selectedExportMessageIds={activeSelectedExportMessageIds}
               onToggleMessageExportSelection={toggleMessageExportSelection}

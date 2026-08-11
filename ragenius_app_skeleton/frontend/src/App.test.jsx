@@ -77,8 +77,11 @@ function createDeferred() {
 function buildAppFetchMock({
   artifactResponse,
   agentSkillResponse,
+  executionInputResponse,
+  prepareUploadResponse,
   instructionPreview = { compiled_id: "compiled-test" },
   messages = [],
+  sessionUploads = [],
   sessions = [],
   onRequest,
 } = {}) {
@@ -144,7 +147,7 @@ function buildAppFetchMock({
         session_lane_state: {},
         workflow_status: null,
         diagnostics: {},
-        session_uploads: [],
+        session_uploads: sessionUploads,
         approved_content: [],
       });
     }
@@ -153,6 +156,16 @@ function buildAppFetchMock({
         return artifactResponse(normalizedUrl);
       }
       return mockJsonResponse({ items: [] });
+    }
+    if (normalizedUrl.endsWith("/execution-inputs") && options.method === "POST") {
+      return typeof executionInputResponse === "function"
+        ? executionInputResponse(normalizedUrl, options)
+        : mockJsonResponse({});
+    }
+    if (normalizedUrl.includes("/prepare-for-execution") && options.method === "POST") {
+      return typeof prepareUploadResponse === "function"
+        ? prepareUploadResponse(normalizedUrl, options)
+        : mockJsonResponse({});
     }
     return mockJsonResponse({});
   });
@@ -919,6 +932,78 @@ describe("App artifact fetch propagation", () => {
         persist_as_artifact: true,
       });
     });
+  });
+
+  it("prepares a draft session before uploading an Agent input and submits only its artifact ref", async () => {
+    const requests = [];
+    const preparedInput = {
+      upload: { id: "upload_video", filename: "video.mp4", size_bytes: 11, mime_type: "video/mp4" },
+      artifact: {
+        artifact_id: "artifact_video", display_name: "video.mp4", artifact_type: "session_upload",
+        mime_type: "video/mp4", status: "ready",
+        consumption: { default_mode: "file_backed", supported_modes: ["file_backed"] },
+      },
+      preparation_status: "ready",
+    };
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [],
+      onRequest: (url, options) => requests.push({ url: String(url || ""), options }),
+      executionInputResponse: () => mockJsonResponse(preparedInput),
+      artifactResponse: () => mockJsonResponse({ items: [preparedInput.artifact] }),
+    }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /run tool or skill/i }));
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    const file = new File(["video-bytes"], "video.mp4", { type: "video/mp4" });
+    fireEvent.change(screen.getByLabelText("Upload file"), { target: { files: [file] } });
+    await waitFor(() => expect(screen.getAllByText(/video\.mp4.*file backed/i)).toHaveLength(2));
+    fireEvent.change(screen.getByLabelText("Agent Request"), { target: { value: "Publish the selected video." } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    await waitFor(() => expect(requests.some((request) => request.url.endsWith("/chat"))).toBe(true));
+    const prepareIndex = requests.findIndex((request) => request.url.endsWith("/prepare"));
+    const uploadIndex = requests.findIndex((request) => request.url.endsWith("/execution-inputs"));
+    expect(prepareIndex).toBeGreaterThanOrEqual(0);
+    expect(uploadIndex).toBeGreaterThan(prepareIndex);
+    const uploadBody = requests[uploadIndex].options.body;
+    expect(uploadBody).toBeInstanceOf(FormData);
+    expect(uploadBody.get("app_id")).toBe("app-1");
+    expect(uploadBody.get("user_id")).toBe("user1");
+    const chatBody = JSON.parse(requests.find((request) => request.url.endsWith("/chat")).options.body);
+    expect(chatBody.execution_request.artifact_refs).toEqual([
+      { artifact_id: "artifact_video", role: "attachment", reuse_mode: "file_backed" },
+    ]);
+    expect(JSON.stringify(chatBody)).not.toMatch(/C:\\\\|\/mnt\//);
+  });
+
+  it("prepares an existing session upload for Agent execution", async () => {
+    const requests = [];
+    const upload = { id: "upload_notes", filename: "notes.txt", size_bytes: 5, mime_type: "text/plain" };
+    const artifact = {
+      artifact_id: "artifact_notes", display_name: "notes.txt", artifact_type: "session_upload",
+      mime_type: "text/plain", status: "ready",
+      consumption: { default_mode: "file_backed", supported_modes: ["file_backed"] },
+    };
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Persisted session" }],
+      sessionUploads: [upload],
+      onRequest: (url, options) => requests.push({ url: String(url || ""), options }),
+      prepareUploadResponse: () => mockJsonResponse({ upload, artifact, preparation_status: "ready" }),
+      artifactResponse: () => mockJsonResponse({ items: [artifact] }),
+    }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /run tool or skill/i }));
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    fireEvent.change(await screen.findByLabelText("Select session file"), { target: { value: "upload_notes" } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare selected file" }));
+    await waitFor(() => expect(screen.getAllByText(/notes\.txt.*file backed/i)).toHaveLength(2));
+    expect(requests.some((request) => (
+      request.url.includes("/sessions/session-1/uploads/upload_notes/prepare-for-execution")
+      && request.url.includes("app_id=app-1")
+      && request.url.includes("user_id=user1")
+    ))).toBe(true);
   });
 
   it("loads session-scoped Agent Skills and submits the approved immutable reference", async () => {
