@@ -6,6 +6,74 @@ import { PrismaExecutionStore } from "../../src/core/execution/prisma-execution-
 import type { ExecutionStorePrismaClient } from "../../src/db/prisma.js";
 
 describe("prisma execution store", () => {
+  it("queries active requests for an exact scoped artifact reference", async () => {
+    let observedWhere: Record<string, unknown> | undefined;
+    const rows = [
+      {
+        id: "execution_queued",
+        requestType: "execute_agent",
+        appId: "app_001",
+        sessionId: "sess_001",
+        skillId: "codex_cli",
+        requestPayload: {
+          request_type: "execute_agent",
+          app_id: "app_001",
+          session_id: "sess_001",
+          agent_backend: "codex_cli",
+          agent_query: "Use the source.",
+          artifact_refs: [{
+            artifact_id: "artifact_001",
+            role: "source",
+            reuse_mode: "file_backed"
+          }]
+        },
+        status: "queued",
+        resultType: "json",
+        result: {},
+        executionProvenance: null,
+        executionMetadata: null,
+        files: [],
+        errors: [],
+        logsSummary: "Queued.",
+        createdAt: new Date("2026-08-11T00:00:00.000Z"),
+        updatedAt: new Date("2026-08-11T00:00:00.000Z")
+      }
+    ];
+    const prisma = {
+      execution: {
+        async upsert() { return undefined; },
+        async findFirst() { return null; },
+        async findMany(args: { where: Record<string, unknown> }) {
+          observedWhere = args.where;
+          return rows;
+        }
+      },
+      executionLog: {
+        async createMany() { return { count: 0 }; },
+        async findMany() { return []; }
+      },
+      $connect: async () => undefined,
+      $disconnect: async () => undefined
+    } satisfies ExecutionStorePrismaClient;
+    const store = new PrismaExecutionStore(prisma);
+
+    assert.equal(await store.hasActiveArtifactReference({
+      appId: "app_001",
+      sessionId: "sess_001",
+      artifactId: "artifact_001"
+    }), true);
+    assert.deepEqual(observedWhere, {
+      appId: "app_001",
+      sessionId: "sess_001",
+      status: { in: ["queued", "running", "pending_confirmation"] }
+    });
+    assert.equal(await store.hasActiveArtifactReference({
+      appId: "app_001",
+      sessionId: "sess_001",
+      artifactId: "artifact_other"
+    }), false);
+  });
+
   it("persists and reloads execution records, requests, and logs", async () => {
     let upsertPayload: Record<string, unknown> | undefined;
     let createdLogs:

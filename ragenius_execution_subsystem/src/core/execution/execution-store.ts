@@ -2,6 +2,7 @@ import type {
   ExecuteAgentRequest,
   ExecutionRequest
 } from "../../api/schemas/execution-request.schema.js";
+import { executionRequestSchema } from "../../api/schemas/execution-request.schema.js";
 import type {
   NormalizedExecutionResult,
   ToolExecutionProvenance
@@ -76,6 +77,11 @@ export interface ExecutionStore {
   get(scope: ExecutionScope): Promise<ExecutionRecord | null>;
   getLogs(scope: ExecutionScope): Promise<ExecutionLogEntry[]>;
   getRequest(scope: ExecutionScope): Promise<ExecutionRequest | null>;
+  hasActiveArtifactReference(input: {
+    appId: string;
+    sessionId: string;
+    artifactId: string;
+  }): Promise<boolean>;
   listRecent(input: ListRecentExecutionsInput): Promise<ExecutionRecord[]>;
   listByStatuses(
     statuses: NormalizedExecutionResult["status"][]
@@ -156,6 +162,32 @@ export class InMemoryExecutionStore implements ExecutionStore {
     return (await this.get(scope))
       ? (this.requests.get(scope.executionId) ?? null)
       : null;
+  }
+
+  async hasActiveArtifactReference(input: {
+    appId: string;
+    sessionId: string;
+    artifactId: string;
+  }): Promise<boolean> {
+    const activeStatuses = new Set(["queued", "running", "pending_confirmation"]);
+    for (const record of this.records.values()) {
+      if (
+        record.app_id !== input.appId ||
+        record.session_id !== input.sessionId ||
+        !activeStatuses.has(record.status)
+      ) {
+        continue;
+      }
+      const parsed = executionRequestSchema.safeParse(this.requests.get(record.execution_id));
+      if (
+        parsed.success &&
+        parsed.data.request_type === "execute_agent" &&
+        parsed.data.artifact_refs?.some((ref) => ref.artifact_id === input.artifactId)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async listRecent(input: ListRecentExecutionsInput): Promise<ExecutionRecord[]> {

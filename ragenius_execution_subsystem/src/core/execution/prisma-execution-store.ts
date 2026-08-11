@@ -1,4 +1,7 @@
-import type { ExecutionRequest } from "../../api/schemas/execution-request.schema.js";
+import {
+  executionRequestSchema,
+  type ExecutionRequest
+} from "../../api/schemas/execution-request.schema.js";
 import type {
   ExecutionMetadata,
   NormalizedError,
@@ -218,6 +221,27 @@ export class PrismaExecutionStore implements ExecutionStore {
     });
 
     return (row?.requestPayload as ExecutionRequest | null) ?? null;
+  }
+
+  async hasActiveArtifactReference(input: {
+    appId: string;
+    sessionId: string;
+    artifactId: string;
+  }): Promise<boolean> {
+    const rows = await this.prisma.execution.findMany({
+      orderBy: { updatedAt: "asc" },
+      where: {
+        appId: input.appId,
+        sessionId: input.sessionId,
+        status: { in: ["queued", "running", "pending_confirmation"] }
+      }
+    });
+    return rows.some((row) => {
+      const parsed = executionRequestSchema.safeParse(row.requestPayload);
+      return parsed.success &&
+        parsed.data.request_type === "execute_agent" &&
+        parsed.data.artifact_refs?.some((ref) => ref.artifact_id === input.artifactId) === true;
+    });
   }
 
   async listRecent(input: ListRecentExecutionsInput): Promise<ExecutionRecord[]> {
