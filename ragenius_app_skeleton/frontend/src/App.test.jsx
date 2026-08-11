@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const uploadArtifactMock = vi.hoisted(() => vi.fn());
@@ -1058,6 +1058,100 @@ describe("App artifact fetch propagation", () => {
         approved_fingerprint: "sha256:v1:research",
       });
     });
+  });
+
+  it("refreshes only the active scoped Agent Skill inventory while Composer is open", async () => {
+    const requests = [];
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Persisted session" }],
+      onRequest: (url, options) => requests.push({ url: String(url || ""), options }),
+      agentSkillResponse: () => mockJsonResponse({
+        inventory_revision: "builder-1:9:sha256:refresh",
+        projection_status: "active",
+        items: [],
+      }),
+    }));
+    render(<App />);
+
+    fireEvent(window, new Event("focus"));
+    expect(requests.filter((request) => request.url.includes("/exec/agent-skills?")).length).toBe(0);
+
+    fireEvent.click(await screen.findByRole("button", { name: /run tool or skill/i }));
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    await waitFor(() => expect(
+      requests.filter((request) => request.url.includes("/exec/agent-skills?")).length,
+    ).toBe(2));
+
+    fireEvent.change(screen.getByLabelText("Agent Backend"), {
+      target: { value: "openclaw_cli" },
+    });
+    await waitFor(() => expect(
+      requests.filter((request) => request.url.includes("backend=openclaw_cli")).length,
+    ).toBe(2));
+
+    fireEvent(window, new Event("focus"));
+    await waitFor(() => expect(
+      requests.filter((request) => request.url.includes("backend=openclaw_cli")).length,
+    ).toBe(3));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Agent Skills" }));
+    await waitFor(() => expect(
+      requests.filter((request) => request.url.includes("backend=openclaw_cli")).length,
+    ).toBe(4));
+
+    const inventoryRequests = requests.filter((request) => request.url.includes("/exec/agent-skills?"));
+    expect(inventoryRequests.every((request) => request.url.includes("app_id=app-1"))).toBe(true);
+    expect(inventoryRequests.every((request) => request.url.includes("user_id=user1"))).toBe(true);
+
+    fireEvent.click(within(screen.getByRole("region", { name: "Execution Composer" }))
+      .getByRole("button", { name: "Close" }));
+    const countAfterClose = requests.filter((request) => request.url.includes("/exec/agent-skills?")).length;
+    fireEvent(window, new Event("focus"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests.filter((request) => request.url.includes("/exec/agent-skills?")).length).toBe(countAfterClose);
+  });
+
+  it("preserves selected Agent Skill when refresh returns the same inventory revision", async () => {
+    let codexCalls = 0;
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Persisted session" }],
+      agentSkillResponse: (url) => {
+        const backend = new URL(url).searchParams.get("backend");
+        if (backend !== "codex_cli") {
+          return mockJsonResponse({
+            inventory_revision: "builder-1:10:sha256:same",
+            projection_status: "active",
+            items: [],
+          });
+        }
+        codexCalls += 1;
+        return mockJsonResponse({
+          inventory_revision: "builder-1:10:sha256:same",
+          projection_status: "active",
+          items: codexCalls === 1
+            ? [{
+                agent_skill_id: "agent-stable",
+                approved_fingerprint: "sha256:v1:stable",
+                backend: "codex_cli",
+                display_name: "Stable Skill",
+                provider_skill_name: "stable-skill",
+              }]
+            : [],
+        });
+      },
+    }));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /run tool or skill/i }));
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    await waitFor(() => expect(screen.getByRole("option", { name: "Stable Skill" })).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("Agent Skill"), {
+      target: { value: "agent-stable" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Agent Skills" }));
+
+    await waitFor(() => expect(codexCalls).toBe(2));
+    expect(screen.getByLabelText("Agent Skill")).toHaveValue("agent-stable");
+    expect(screen.getByRole("option", { name: "Stable Skill" })).toBeInTheDocument();
   });
 
   it("prepares a draft session before loading Agent Skills in Composer", async () => {

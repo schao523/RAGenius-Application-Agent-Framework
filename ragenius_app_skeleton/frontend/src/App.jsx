@@ -1957,6 +1957,7 @@ function ChatPanel({
   artifactInventoryLoading,
   artifactInventoryError,
   onPrepareExecutionComposer,
+  onRefreshAgentSkills,
   onUploadExecutionInput,
   onRunExecutionComposer,
   selectedExportMessageIds,
@@ -2425,6 +2426,7 @@ function ChatPanel({
               selectedApprovedContent={
                 approvedContent.find((item) => item.approved_content_id === selectedApprovedContentId) || null
               }
+              onRefreshAgentSkills={onRefreshAgentSkills}
               onSubmit={async (payload) => {
                 await onRunExecutionComposer?.(payload);
                 setArtifactSuggestionForComposer(null);
@@ -2704,14 +2706,21 @@ export default function App() {
       if (agentSkillInventoryRequestSequence.current[scopeKey] !== sequence) {
         return;
       }
-      setExecAgentSkillInventoryByScope((previous) => ({
-        ...previous,
-        [scopeKey]: {
+      setExecAgentSkillInventoryByScope((previous) => {
+        const nextInventory = {
           items: Array.isArray(data?.items) ? data.items : [],
           inventory_revision: data?.inventory_revision ?? null,
           projection_status: String(data?.projection_status || "unavailable"),
-        },
-      }));
+        };
+        const currentInventory = previous[scopeKey];
+        if (
+          nextInventory.inventory_revision !== null
+          && currentInventory?.inventory_revision === nextInventory.inventory_revision
+        ) {
+          return previous;
+        }
+        return { ...previous, [scopeKey]: nextInventory };
+      });
     } catch (error) {
       if (agentSkillInventoryRequestSequence.current[scopeKey] !== sequence) {
         return;
@@ -2775,6 +2784,19 @@ export default function App() {
     if (sessionWasDraft) {
       await loadSessions(selectedAppId, userId, includeArchivedSessions);
     }
+  };
+
+  const refreshAgentSkills = async ({ backend = "", force = false } = {}) => {
+    if (!selectedAppId || !sessionId || !userId) {
+      return;
+    }
+    await ensureExecutionSessionPrepared();
+    const requestedBackends = ["codex_cli", "openclaw_cli"].includes(backend)
+      ? [backend]
+      : ["codex_cli", "openclaw_cli"];
+    await Promise.all(requestedBackends.map((requestedBackend) => (
+      loadAgentSkillInventory(requestedBackend, selectedAppId, sessionId, userId, { force })
+    )));
   };
 
   const uploadCanonicalArtifact = async (file, operationId, onProgress, analysisMode, signal) => {
@@ -3623,6 +3645,7 @@ export default function App() {
               artifactInventoryLoading={execArtifactInventoryLoading}
               artifactInventoryError={execArtifactInventoryError}
               onPrepareExecutionComposer={prepareExecutionComposer}
+              onRefreshAgentSkills={refreshAgentSkills}
               onUploadExecutionInput={uploadExecutionInput}
               onRunExecutionComposer={runExecutionComposer}
               selectedExportMessageIds={activeSelectedExportMessageIds}

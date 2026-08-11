@@ -605,6 +605,47 @@ describe("ExecutionComposer", () => {
     });
   });
 
+  it("refreshes Agent Skills on backend change, window focus, and manual request", async () => {
+    const onRefreshAgentSkills = vi.fn().mockResolvedValue(undefined);
+    const { unmount } = render(
+      <ExecutionComposer
+        toolInventory={[]}
+        skillInventory={[]}
+        agentSkillInventory={[]}
+        onRefreshAgentSkills={onRefreshAgentSkills}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+        styles={styles}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    fireEvent.change(screen.getByLabelText("Agent Backend"), {
+      target: { value: "openclaw_cli" },
+    });
+    expect(onRefreshAgentSkills).toHaveBeenCalledWith({
+      backend: "openclaw_cli",
+      force: false,
+    });
+
+    fireEvent(window, new Event("focus"));
+    expect(onRefreshAgentSkills).toHaveBeenCalledWith({
+      backend: "openclaw_cli",
+      force: false,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Agent Skills" }));
+    expect(onRefreshAgentSkills).toHaveBeenLastCalledWith({
+      backend: "openclaw_cli",
+      force: true,
+    });
+
+    const callCount = onRefreshAgentSkills.mock.calls.length;
+    unmount();
+    fireEvent(window, new Event("focus"));
+    expect(onRefreshAgentSkills).toHaveBeenCalledTimes(callCount);
+  });
+
   it("shows missing projection and inventory failures without inventing skills", () => {
     render(
       <ExecutionComposer

@@ -406,6 +406,7 @@ export default function ExecutionComposer({
   initialAgentBackend,
   selectedApprovedContent,
   onUploadExecutionInput,
+  onRefreshAgentSkills,
   onSubmit,
   onClose,
   styles,
@@ -459,6 +460,18 @@ export default function ExecutionComposer({
     () => availableAgentSkills.find((item) => item.agent_skill_id === selectedAgentSkillId) || null,
     [availableAgentSkills, selectedAgentSkillId],
   );
+
+  const requestAgentSkillRefresh = (force) => {
+    Promise.resolve(onRefreshAgentSkills?.({ backend: agentBackend, force })).catch((refreshError) => {
+      setError(String(refreshError?.message || refreshError || "Unable to refresh Agent Skills."));
+    });
+  };
+
+  useEffect(() => {
+    const handleWindowFocus = () => requestAgentSkillRefresh(false);
+    window.addEventListener("focus", handleWindowFocus);
+    return () => window.removeEventListener("focus", handleWindowFocus);
+  }, [agentBackend, onRefreshAgentSkills]);
 
   useEffect(() => {
     if (selectedAgentSkillId && !selectedAgentSkill) {
@@ -1266,8 +1279,15 @@ export default function ExecutionComposer({
                 style={styles.select}
                 value={agentBackend}
                 onChange={(e) => {
-                  setAgentBackend(e.target.value);
+                  const nextBackend = e.target.value;
+                  setAgentBackend(nextBackend);
                   setSelectedAgentSkillId("");
+                  Promise.resolve(onRefreshAgentSkills?.({
+                    backend: nextBackend,
+                    force: false,
+                  })).catch((refreshError) => {
+                    setError(String(refreshError?.message || refreshError || "Unable to refresh Agent Skills."));
+                  });
                 }}
                 aria-label="Agent Backend"
               >
@@ -1296,6 +1316,14 @@ export default function ExecutionComposer({
               {agentSkillProjectionStatusByBackend?.[agentBackend] === "unavailable" ? (
                 <div style={styles.small}>Approved skill projection is unavailable. Auto remains available.</div>
               ) : null}
+              <button
+                type="button"
+                style={{ ...styles.secondaryButton, marginTop: 8 }}
+                onClick={() => requestAgentSkillRefresh(true)}
+                disabled={agentSkillInventoryLoading}
+              >
+                Refresh Agent Skills
+              </button>
             </label>
           </>
         ) : (
