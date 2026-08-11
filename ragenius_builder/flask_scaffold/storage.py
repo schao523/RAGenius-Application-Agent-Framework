@@ -1810,6 +1810,9 @@ class DatabaseStore:
             "enabled": bool(enabled) if enabled is not None else before["enabled"],
             "updated_at": self._agent_skill_now(),
         }
+        resulting_revision = int(
+            self.get_agent_skill_projection_state()["local_revision"]
+        )
         with self.conn:
             cursor = self.conn.cursor()
             cursor.execute(
@@ -1827,14 +1830,17 @@ class DatabaseStore:
                 ),
             )
             if any(after[key] != before[key] for key in ("display_name", "precedence", "enabled")):
-                self._mark_agent_skill_projection_pending(cursor)
+                resulting_revision = self._mark_agent_skill_projection_pending(cursor)
             self._record_agent_skill_audit(
                 cursor,
                 actor_id=actor_id,
                 action="agent_skill_source.updated",
                 source_id=source_id,
                 before={key: before[key] for key in ("display_name", "precedence", "enabled")},
-                after={key: after[key] for key in ("display_name", "precedence", "enabled")},
+                after={
+                    **{key: after[key] for key in ("display_name", "precedence", "enabled")},
+                    "local_revision": resulting_revision,
+                },
                 correlation_id=correlation_id,
             )
         return self.get_agent_skill_source(source_id)

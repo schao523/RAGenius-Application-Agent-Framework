@@ -161,7 +161,7 @@ enablement changes, and app-binding changes are audited.
 
 ### `agent_skill_projection_state`
 
-Builder maintains one synchronization state row:
+Builder maintains one draft/publication state row:
 
 | Column | Type | Rules |
 | --- | --- | --- |
@@ -169,6 +169,7 @@ Builder maintains one synchronization state row:
 | `local_revision` | INTEGER | Monotonically increasing governance revision |
 | `published_revision` | INTEGER | Last execution-acknowledged revision |
 | `published_digest` | TEXT | Digest acknowledged for that revision |
+| `published_snapshot_json` | TEXT | Nullable deterministic redacted comparison baseline |
 | `sync_status` | TEXT | `synchronized`, `pending`, or `failed` |
 | `last_attempt_at` | TEXT | Optional UTC ISO-8601 |
 | `last_success_at` | TEXT | Optional UTC ISO-8601 |
@@ -180,6 +181,13 @@ Every governance mutation that can change runtime authorization increments
 transaction. Discovery metadata changes that do not alter an approval, source
 enablement, or app binding need not publish until they affect the projected
 runtime state.
+
+`sync_status` remains an internal compatibility field. Administrator UX uses
+`Published`, `Draft changes`, and `Publish failed`. The redacted baseline is
+compact, key-sorted JSON containing only source ids/enabled state, stable skill
+ids/provider references/fingerprints/approval state, and app ids/binding flags.
+Protected locators, local paths, credentials, tokens, and raw provider output
+are forbidden.
 
 `builder_instance_id` is supplied through Builder configuration and persisted
 with projection state. Revision generation uses
@@ -357,7 +365,8 @@ secrets.
 
 The execution subsystem validates the full snapshot and atomically activates
 it. Its response echoes the accepted instance id, revision, and digest. Builder
-marks a revision `synchronized` only when all three values match.
+marks a revision published only when all three values match; the internal
+`sync_status` name remains solely for storage/API compatibility.
 
 Publication rules:
 
@@ -370,8 +379,9 @@ Publication rules:
   endpoint;
 - failed publication leaves the previous execution projection active and the
   Builder change visibly `pending` or `failed`;
-- Builder retries the latest complete snapshot on startup, after relevant
-  mutations, and through a manual `Synchronize now` action.
+- relevant mutations remain local drafts until an administrator reviews and
+  explicitly publishes the current revision; a failed publication can be
+  retried from the same review surface.
 
 Builder does not claim a restrictive change such as revocation, source disable,
 or unbinding is runtime-effective until the corresponding revision is
@@ -402,6 +412,12 @@ availability, and name. Each detail page displays normalized metadata,
 requirements, provider capability flags, current fingerprint, approved
 fingerprint, collision warnings, last seen time, and bounded provider evidence.
 
+The catalog has an active aggregate tab, one tab per enabled source, and a
+disabled-sources history tab. Disabled records remain inspectable, grouped by
+source, but approval, re-approval, and binding enablement controls are blocked
+with a reason. Source disable/re-enable first shows deterministic impact counts
+and affected applications, then creates a local draft only.
+
 Approval and re-approval are explicit administrator actions. Re-approval must
 show that content changed and require confirmation of the new fingerprint.
 
@@ -412,15 +428,24 @@ approved skills by backend and allows an administrator to bind or unbind them.
 Changed, revoked, unavailable, or disabled skills remain visible to the
 administrator with a reason but cannot be newly enabled.
 
-### Synchronization status
+### Publication review
 
 The Agent Skills administration surface shows local revision, active execution
-revision, last successful synchronization, and the latest bounded error. After
-an approval, revocation, source enablement change, or binding mutation, it shows
-whether that exact change is pending or active in execution.
+revision, last successful publication, and the latest bounded error. After an
+approval, revocation, source enablement change, or binding mutation, it labels
+the change as a draft until execution acknowledges the complete revision.
 
-`Synchronize now` republishes the latest complete snapshot. It does not perform
-discovery and does not create approvals.
+`Review & Publish Changes` opens a deterministic redacted diff of sources,
+approvals, bindings, availability impact, and affected applications. Confirming
+`Publish revision N` uses compare-and-set on the reviewed local revision and
+publishes one complete canonical projection. The legacy synchronize API is a
+deprecated delegate and is not called by Builder UI.
+
+If an upgraded database lacks a redacted baseline, Builder reconstructs it only
+when local revision equals published revision and the current canonical digest
+equals the acknowledged digest. Otherwise it displays a baseline-unavailable
+full-replacement review. Failed publication never overwrites the prior baseline
+or implies that a restrictive draft is active.
 
 ## Error Handling
 
@@ -472,11 +497,12 @@ metadata accessible only to administrators.
 - stale catalog remains available to administrators after refresh failure;
 - compare-and-set approval rejects a changed fingerprint;
 - projection serialization is deterministic;
-- same revision and digest is an idempotent synchronization success;
+- same revision and digest is an idempotent publication success;
 - failed publication remains visibly pending and retries the latest snapshot;
-- a mutation is marked synchronized only after matching execution
+- a mutation is marked published only after matching execution
   acknowledgment;
-- Builder restart resumes an unsynchronized revision.
+- stale reviewed revisions fail before an execution call;
+- Builder restart retains both draft state and the last published baseline.
 
 ### UI and route tests
 
@@ -495,7 +521,7 @@ metadata accessible only to administrators.
 3. Add source and catalog administrator APIs.
 4. Add approval and app-binding APIs.
 5. Add projection state, deterministic snapshot generation, and publication.
-6. Add administrator pages and synchronization status.
+6. Add source tabs, impact review, and reviewed publication UX.
 
 The feature remains hidden from ordinary users until execution-subsystem and
 app-skeleton designs are implemented and their contract tests pass.
@@ -510,6 +536,6 @@ app-skeleton designs are implemented and their contract tests pass.
 - Ordinary APIs do not expose source paths or provider state.
 - Builder can be stopped after a projection is acknowledged without preventing
   selection or execution of the synchronized skills.
-- Unsynchronized governance changes are clearly distinguished from the active
+- Draft governance changes are clearly distinguished from the active
   execution revision.
 - Existing executable RAGenius skill workflows remain unchanged.

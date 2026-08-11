@@ -307,6 +307,39 @@ class AgentSkillPublicationTests(unittest.TestCase):
                     self.store.get_agent_skill_projection_state()["published_revision"]
                 )
 
+    def test_source_toggle_and_publication_audit_are_revisioned_bounded_and_redacted(self) -> None:
+        self.store.update_agent_skill_source(
+            self.ids["source_id"],
+            enabled=False,
+            actor_id="admin-audit",
+            correlation_id="correlation-toggle",
+        )
+        revision = self.store.get_agent_skill_projection_state()["local_revision"]
+        self._publish_current()
+
+        events = self.store.list_agent_skill_audit_events(limit=50)
+        toggle = next(
+            event for event in events if event["action"] == "agent_skill_source.updated"
+        )
+        self.assertEqual(toggle["actor_id"], "admin-audit")
+        self.assertEqual(toggle["correlation_id"], "correlation-toggle")
+        self.assertEqual(toggle["after"]["local_revision"], revision)
+
+        publication_events = [
+            event for event in events if event["action"].startswith("agent_skill.publication_")
+        ]
+        self.assertTrue(publication_events)
+        self.assertTrue(all("counts" in event["after"] for event in publication_events))
+        self.assertTrue(all("outcome" in event["after"] for event in publication_events))
+        serialized = str(publication_events)
+        for forbidden in (
+            "protected-secret-path",
+            "raw_provider_output",
+            "token",
+            "credential",
+        ):
+            self.assertNotIn(forbidden, serialized)
+
 
 if __name__ == "__main__":
     unittest.main()

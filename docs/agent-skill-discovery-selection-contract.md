@@ -483,9 +483,10 @@ must validate an explicit Agent-skill selection in this order:
 Any failure stops before provider invocation and must not consume a pending
 confirmation as a successful run.
 
-Validation must use authoritative Builder state or a synchronized trusted read
-model. Client-provided approval, binding, eligibility, or path fields are
-untrusted.
+Validation must use execution's active, atomically published trusted read
+model. Builder owns draft governance, but the app never reads Builder and a
+draft mutation is not runtime-effective. Client-provided approval, binding,
+eligibility, or path fields are untrusted.
 
 The resolved `agent_skill_id`, backend, runtime target, provider skill name,
 and approved fingerprint must be included in the immutable operation plan and
@@ -657,6 +658,28 @@ Builder must retain auditable events for:
 - skill approval, re-approval, disable, and revocation;
 - app binding creation, enable, disable, and deletion;
 - detected fingerprint changes.
+- publication attempts, successes, and failures, including actor, local
+  revision, correlation id, outcome, and bounded change counts.
+
+Builder catalog views are source-backed: one active aggregate, one tab per
+enabled source, and retained disabled-source history. Disabling or re-enabling
+a source changes only the local draft. Approval and binding-enable operations
+are rejected while the source is disabled. Runtime authorization changes only
+after an administrator reviews and publishes the complete local revision.
+
+The publication preview compares the current canonical projection with the
+last execution-acknowledged redacted baseline. The baseline contains only
+stable source, Agent-skill, fingerprint, approval, app, and binding fields. It
+must exclude protected locators, filesystem paths, credentials, tokens, and
+raw provider output. A missing trustworthy baseline produces an explicit
+full-replacement preview, never an invented empty history.
+
+Publication is compare-and-set on `expected_local_revision`. Execution must
+acknowledge the exact Builder instance, revision, and digest before Builder
+updates its published revision or baseline. Stale review, transport failure,
+or acknowledgment mismatch leaves the previous execution revision active and
+all local edits in draft. The legacy synchronize endpoint may delegate to this
+same service temporarily, but new UI and clients use publication APIs.
 
 Execution results must retain:
 
@@ -707,6 +730,10 @@ after the app-facing inventory is available.
 - Explicit selection submits a structured `agent_skill_ref`.
 - Missing or stale selection fails without provider invocation or Auto
   fallback.
+- Composer refreshes execution's trusted inventory on open, backend change,
+  window focus return while open, and explicit user refresh. It does not call
+  Builder, and an unchanged `inventory_revision` preserves the current list
+  and valid selection.
 
 ### Activation
 
