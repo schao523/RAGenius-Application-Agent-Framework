@@ -267,6 +267,45 @@ class AgentSkillManagementTests(unittest.TestCase):
             self.store.get_agent_skill_projection_state()["sync_status"], "pending"
         )
 
+    def test_catalog_views_and_source_impact_are_deterministic(self) -> None:
+        source = self._source()
+        app_b = self._app()
+        app_a = self._app()
+        first = self.store.refresh_agent_skill_catalog(
+            source_id=source["id"], candidates=[candidate()], actor_id="admin-1"
+        )[0]
+        self.store.approve_agent_skill(
+            agent_skill_id=first["id"], expected_fingerprint=first["content_fingerprint"],
+            approved_by="admin-1",
+        )
+        self.store.create_app_agent_skill_binding(
+            app_id=app_b["id"], agent_skill_id=first["id"], created_by="admin-1",
+        )
+        self.store.create_app_agent_skill_binding(
+            app_id=app_a["id"], agent_skill_id=first["id"], created_by="admin-1",
+        )
+
+        self.assertEqual(len(self.store.list_agent_skill_catalog_view(view="active")), 1)
+        self.assertEqual(
+            len(self.store.list_agent_skill_catalog_view(view="source", source_id=source["id"])), 1
+        )
+        self.store.update_agent_skill_source(source["id"], actor_id="admin-1", enabled=False)
+        self.assertEqual(self.store.list_agent_skill_catalog_view(view="active"), [])
+        disabled = self.store.list_agent_skill_catalog_view(view="disabled")
+        self.assertEqual(disabled[0]["governance_state"], "source_disabled")
+
+        impact = self.store.get_agent_skill_source_impact(source["id"])
+        self.assertEqual(impact["discovered_skill_count"], 1)
+        self.assertEqual(impact["approved_current_fingerprint_count"], 1)
+        self.assertEqual(impact["enabled_binding_count"], 2)
+        self.assertEqual(
+            impact["affected_apps"],
+            sorted(
+                [{"id": app_a["id"], "name": app_a["name"]}, {"id": app_b["id"], "name": app_b["name"]}],
+                key=lambda item: (item["name"].casefold(), item["id"]),
+            ),
+        )
+
 
 class FakeAgentSkillExecutionClient:
     def __init__(self) -> None:
@@ -503,6 +542,44 @@ class AgentSkillAdminRouteTests(unittest.TestCase):
         self.assertFalse(self.store.get_agent_skill_source(source["id"])["enabled"])
         self.assertEqual(unbound.status_code, 302)
         self.assertEqual(self.store.list_app_agent_skill_bindings(self.app_record["id"]), [])
+
+    def test_source_tabs_retain_disabled_history_and_disable_review_is_compare_and_set(self) -> None:
+        source, skill = self._create_and_discover()
+        self.client.post(
+            f"/api/agent-skills/{skill['id']}/approve",
+            json={"expected_fingerprint": skill["content_fingerprint"]},
+        )
+        self.client.post(
+            f"/api/apps/{self.app_record['id']}/agent-skill-bindings",
+            json={"agent_skill_id": skill["id"]},
+        )
+        revision = self.store.get_agent_skill_projection_state()["local_revision"]
+
+        source_tab = self.client.get(f"/agent-skills?catalog_view=source:{source['id']}")
+        review = self.client.get(f"/agent-skill-sources/{source['id']}/disable-review")
+        stale = self.client.post(
+            f"/agent-skill-sources/{source['id']}/toggle",
+            data={"enabled": "false", "expected_local_revision": revision - 1},
+        )
+        disabled = self.client.post(
+            f"/agent-skill-sources/{source['id']}/toggle",
+            data={"enabled": "false", "expected_local_revision": revision},
+        )
+        disabled_page = self.client.get("/agent-skills?catalog_view=disabled")
+
+        self.assertEqual(source_tab.status_code, 200)
+        self.assertIn('aria-current="page"', source_tab.get_data(as_text=True))
+        self.assertIn("Research Papers", source_tab.get_data(as_text=True))
+        self.assertIn("Disable source in draft", review.get_data(as_text=True))
+        self.assertIn(self.app_record["name"], review.get_data(as_text=True))
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(disabled.status_code, 302)
+        self.assertIn("source_disabled", disabled_page.get_data(as_text=True))
+        rejected = self.client.post(
+            f"/agent-skills/{skill['id']}/approve",
+            data={"expected_fingerprint": skill["content_fingerprint"]},
+        )
+        self.assertEqual(rejected.status_code, 422)
 
 
 if __name__ == "__main__":

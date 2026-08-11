@@ -576,6 +576,7 @@ def _public_agent_skill(skill_obj):
     } | {
         "approved_fingerprint": approval.get("approved_fingerprint"),
         "approval_state": approval.get("state"),
+        "source": skill_obj.get("source"),
     }
 
 
@@ -1429,10 +1430,25 @@ def agent_skills():
         }
         for index, option in enumerate(source_options)
     ]
+    sources = sorted(
+        [_public_agent_skill_source(item) for item in store.list_agent_skill_sources()],
+        key=lambda item: (item["display_name"].casefold(), item["id"]),
+    )
+    catalog_view = (request.args.get("catalog_view") or "active").strip()
+    source_id = catalog_view.split(":", 1)[1] if catalog_view.startswith("source:") else None
+    normalized_view = "source" if source_id else catalog_view
+    if normalized_view not in {"active", "source", "disabled"}:
+        abort(404)
+    if source_id and not store.get_agent_skill_source(source_id):
+        abort(404)
     return render_template(
         "agent_skills.html",
-        sources=[_public_agent_skill_source(item) for item in store.list_agent_skill_sources()],
-        agent_skills=[_public_agent_skill(item) for item in store.list_agent_skill_catalog()],
+        sources=sources,
+        agent_skills=[
+            _public_agent_skill(item)
+            for item in store.list_agent_skill_catalog_view(view=normalized_view, source_id=source_id)
+        ],
+        catalog_view=catalog_view,
         source_options=display_options,
         source_options_error=source_options_error,
         projection_state=store.get_agent_skill_projection_state(),
@@ -1466,20 +1482,39 @@ def discover_agent_skill_source_form(source_id):
     items, error = _discover_agent_skill_source(source_id)
     if error:
         return jsonify(error[0]), error[1]
-    return redirect(url_for("agent_skills"))
+    return redirect(url_for(
+        "agent_skills",
+        catalog_view=request.form.get("catalog_view") or f"source:{source_id}",
+    ))
 
 
 @app.route("/agent-skill-sources/<source_id>/toggle", methods=["POST"])
 def toggle_agent_skill_source_form(source_id):
     try:
+        expected_raw = (request.form.get("expected_local_revision") or "").strip()
         store.update_agent_skill_source(
             source_id,
             enabled=(request.form.get("enabled") or "").strip().lower() == "true",
             actor_id=_agent_skill_actor_id(),
+            expected_local_revision=int(expected_raw) if expected_raw else None,
         )
     except ValueError as exc:
-        return jsonify({"errors": [validation_error("source", str(exc), "invalid")]}), 422
-    return redirect(url_for("agent_skills"))
+        status = 409 if str(exc) == "AGENT_SKILL_LOCAL_REVISION_STALE" else 422
+        return jsonify({"errors": [validation_error("source", str(exc), "invalid")]}), status
+    return redirect(url_for("agent_skills", catalog_view=request.form.get("catalog_view") or "active"))
+
+
+@app.route("/agent-skill-sources/<source_id>/disable-review")
+def agent_skill_source_disable_review(source_id):
+    source = store.get_agent_skill_source(source_id)
+    if not source:
+        abort(404)
+    return render_template(
+        "agent_skill_source_disable_review.html",
+        source=_public_agent_skill_source(source),
+        impact=store.get_agent_skill_source_impact(source_id),
+        projection_state=store.get_agent_skill_projection_state(),
+    )
 
 
 @app.route("/agent-skills/<agent_skill_id>")

@@ -1785,10 +1785,15 @@ class DatabaseStore:
         precedence: int | None = None,
         enabled: bool | None = None,
         correlation_id: str | None = None,
+        expected_local_revision: int | None = None,
     ) -> Dict[str, Any]:
         before = self.get_agent_skill_source(source_id)
         if not before:
             raise ValueError("Agent skill source not found")
+        if expected_local_revision is not None:
+            current_revision = int(self.get_agent_skill_projection_state()["local_revision"])
+            if int(expected_local_revision) != current_revision:
+                raise ValueError("AGENT_SKILL_LOCAL_REVISION_STALE")
         after = {
             **before,
             "display_name": display_name.strip() if display_name is not None else before["display_name"],
@@ -1876,6 +1881,12 @@ class DatabaseStore:
             governance_state = "changed_pending_review"
         item["governance_state"] = governance_state
         item["approval"] = approval
+        item["source"] = {
+            "id": source["id"],
+            "backend": source["backend"],
+            "display_name": source["display_name"],
+            "enabled": source["enabled"],
+        } if source else None
         return item
 
     def get_agent_skill_catalog_item(self, agent_skill_id: str) -> Optional[Dict[str, Any]]:
@@ -1895,6 +1906,68 @@ class DatabaseStore:
                 "SELECT * FROM agent_skill_catalog ORDER BY display_name, id"
             ).fetchall()
         return [self._agent_skill_catalog_from_row(row) for row in rows]
+
+    def list_agent_skill_catalog_view(
+        self, *, view: str, source_id: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        normalized_view = str(view or "active").strip().lower()
+        if normalized_view not in {"active", "source", "disabled"}:
+            raise ValueError("Unsupported Agent skill catalog view")
+        if normalized_view == "source" and not source_id:
+            raise ValueError("Agent skill source is required")
+        items = self.list_agent_skill_catalog(source_id if normalized_view == "source" else None)
+        if normalized_view == "active":
+            items = [item for item in items if item.get("source", {}).get("enabled")]
+        elif normalized_view == "disabled":
+            items = [item for item in items if not item.get("source", {}).get("enabled")]
+        return sorted(
+            items,
+            key=lambda item: (
+                str(item.get("backend") or "").casefold(),
+                str(item.get("display_name") or "").casefold(),
+                str(item.get("provider_skill_reference") or "").casefold(),
+                str(item.get("id") or ""),
+            ),
+        )
+
+    def get_agent_skill_source_impact(self, source_id: str) -> Dict[str, Any]:
+        source = self.get_agent_skill_source(source_id)
+        if not source:
+            raise ValueError("Agent skill source not found")
+        skills = self.list_agent_skill_catalog(source_id)
+        current_approved = sum(
+            1
+            for skill in skills
+            if skill.get("approval", {}).get("state") == "approved"
+            and skill.get("approval", {}).get("approved_fingerprint") == skill.get("content_fingerprint")
+        )
+        skill_ids = [str(skill["id"]) for skill in skills]
+        bindings: list[sqlite3.Row] = []
+        if skill_ids:
+            placeholders = ",".join("?" for _ in skill_ids)
+            bindings = self.conn.execute(
+                f"""
+                SELECT b.*, a.name AS app_name
+                FROM app_agent_skill_bindings b
+                JOIN applications a ON a.id = b.app_id
+                WHERE b.agent_skill_id IN ({placeholders}) AND b.enabled = 1
+                """,
+                tuple(skill_ids),
+            ).fetchall()
+        affected = {
+            (str(binding["app_id"]), str(binding["app_name"]))
+            for binding in bindings
+        }
+        return {
+            "source_id": source_id,
+            "discovered_skill_count": len(skills),
+            "approved_current_fingerprint_count": current_approved,
+            "enabled_binding_count": len(bindings),
+            "affected_apps": [
+                {"id": app_id, "name": name}
+                for app_id, name in sorted(affected, key=lambda item: (item[1].casefold(), item[0]))
+            ],
+        }
 
     def refresh_agent_skill_catalog(
         self,
@@ -2032,6 +2105,8 @@ class DatabaseStore:
             raise ValueError("Agent skill not found")
         if skill["content_fingerprint"] != expected_fingerprint:
             raise ValueError("AGENT_SKILL_FINGERPRINT_CHANGED")
+        if skill["governance_state"] == "source_disabled":
+            raise ValueError("Agent skill source is disabled")
         if skill["discovery_status"] != "available":
             raise ValueError("Agent skill is not available")
         approval_id = str(uuid.uuid4())
@@ -2191,6 +2266,10 @@ class DatabaseStore:
         before = self.get_app_agent_skill_binding(binding_id)
         if not before:
             raise ValueError("Agent skill binding not found")
+        if enabled:
+            skill = self.get_agent_skill_catalog_item(before["agent_skill_id"])
+            if not skill or skill["governance_state"] != "approved":
+                raise ValueError("Agent skill source is disabled or approval is not current")
         now = self._agent_skill_now()
         with self.conn:
             cursor = self.conn.cursor()
