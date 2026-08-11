@@ -138,4 +138,15 @@ describe("session upload artifact import route", () => {
     assert.equal(secondBody.reused_existing_artifact, true);
     assert.equal(secondBody.artifact.artifact_id, firstBody.artifact.artifact_id);
   });
+
+  it("returns the canonical artifact for content-identical operations", async () => {
+    const app = createApp();
+    const first = await inject(app, multipartBody({ sourceUploadId: "upload_1" }));
+    const second = await inject(app, multipartBody({ sourceUploadId: "upload_2" }));
+
+    assert.equal(first.statusCode, 201);
+    assert.equal(second.statusCode, 200);
+    assert.equal(second.json().reused_existing_artifact, true);
+    assert.equal(second.json().artifact.artifact_id, first.json().artifact.artifact_id);
+  });
 });
