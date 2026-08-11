@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 function normalizeObjectSchema(schema) {
   if (!schema || typeof schema !== "object") {
@@ -334,7 +334,7 @@ function buildAgentArtifactRef(artifact) {
   }
   return {
     artifact_id: artifactId,
-    role: "source",
+    role: artifact?.artifact_type === "session_upload" ? "attachment" : "source",
     reuse_mode: String(artifact?.consumption?.default_mode || "inline_text").trim() || "inline_text",
   };
 }
@@ -404,6 +404,9 @@ export default function ExecutionComposer({
   initialCommandKind,
   initialAgentBackend,
   selectedApprovedContent,
+  sessionUploads = [],
+  onUploadExecutionInput,
+  onPrepareSessionUpload,
   onSubmit,
   onClose,
   styles,
@@ -435,6 +438,10 @@ export default function ExecutionComposer({
     normalizedInitialCommandKind === "agent" ? initialAgentArtifactIds : [],
   );
   const [persistAgentOutput, setPersistAgentOutput] = useState(true);
+  const [preparedArtifactsByUploadId, setPreparedArtifactsByUploadId] = useState({});
+  const [preparationStateByUploadId, setPreparationStateByUploadId] = useState({});
+  const [selectedSessionUploadId, setSelectedSessionUploadId] = useState("");
+  const preparationOperationsRef = useRef(new Map());
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showOptionalFields, setShowOptionalFields] = useState(false);
@@ -476,6 +483,11 @@ export default function ExecutionComposer({
       : null;
   const artifacts = useMemo(() => {
     const rows = [...inventoryArtifacts];
+    for (const artifact of Object.values(preparedArtifactsByUploadId)) {
+      if (artifact?.artifact_id && !rows.some((item) => item.artifact_id === artifact.artifact_id)) {
+        rows.push(artifact);
+      }
+    }
     for (const initialArtifact of initialSuggestedArtifacts) {
       const suggestedArtifactId = String(initialArtifact?.artifact_id || "").trim();
       if (suggestedArtifactId && !rows.some((item) => String(item.artifact_id || "").trim() === suggestedArtifactId)) {
@@ -483,7 +495,7 @@ export default function ExecutionComposer({
       }
     }
     return rows;
-  }, [inventoryArtifacts, initialSuggestedArtifacts]);
+  }, [inventoryArtifacts, initialSuggestedArtifacts, preparedArtifactsByUploadId]);
   const resolvedSuggestedArtifact = useMemo(() => {
     const suggestedArtifactId = String(suggestedArtifact?.artifact_id || "").trim();
     if (!suggestedArtifactId) {
@@ -603,6 +615,12 @@ export default function ExecutionComposer({
     () => selectedAgentArtifacts.map(buildAgentArtifactRef).filter(Boolean),
     [selectedAgentArtifacts],
   );
+  const selectedSessionUpload = useMemo(
+    () => sessionUploads.find((upload) => String(upload?.id || "") === selectedSessionUploadId) || null,
+    [selectedSessionUploadId, sessionUploads],
+  );
+  const agentPreparationBlocked = Object.values(preparationStateByUploadId)
+    .some((state) => ["uploading", "preparing", "failed"].includes(state?.status));
 
   useEffect(() => {
     if (commandKind === "agent") {
@@ -699,6 +717,93 @@ export default function ExecutionComposer({
     setAgentArtifactIds((prev) => prev.filter((item) => String(item || "").trim() !== normalizedId));
   };
 
+  const acceptPreparedInput = (result, requestKey) => {
+    const uploadId = String(result?.upload?.id || "").trim();
+    const rawArtifact = result?.artifact;
+    if (!uploadId || !rawArtifact?.artifact_id) {
+      throw new Error("Execution input preparation returned no artifact.");
+    }
+    const artifact = {
+      ...rawArtifact,
+      artifact_type: rawArtifact.artifact_type || "session_upload",
+      display_name: rawArtifact.display_name || result.upload.filename || rawArtifact.artifact_id,
+      consumption: rawArtifact.consumption || {
+        default_mode: "file_backed",
+        supported_modes: ["file_backed", "binary_payload", "metadata_only"],
+      },
+    };
+    setPreparedArtifactsByUploadId((previous) => ({ ...previous, [uploadId]: artifact }));
+    setPreparationStateByUploadId((previous) => {
+      const next = { ...previous };
+      if (requestKey && requestKey !== uploadId) delete next[requestKey];
+      next[uploadId] = { status: "ready", error: "", label: artifact.display_name };
+      return next;
+    });
+    setAgentArtifactIds((previous) => [...new Set([...previous, artifact.artifact_id])]);
+  };
+
+  const prepareUpload = async (uploadId, operation, { startsWithUpload = false, label = "File" } = {}) => {
+    preparationOperationsRef.current.set(uploadId, operation);
+    setPreparationStateByUploadId((previous) => ({
+      ...previous,
+      [uploadId]: { status: startsWithUpload ? "uploading" : "preparing", error: "", label },
+    }));
+    try {
+      if (startsWithUpload) {
+        await Promise.resolve();
+        setPreparationStateByUploadId((previous) => ({
+          ...previous,
+          [uploadId]: { status: "preparing", error: "", label },
+        }));
+      }
+      const result = await operation();
+      acceptPreparedInput(result, uploadId);
+      preparationOperationsRef.current.delete(uploadId);
+    } catch (uploadError) {
+      setPreparationStateByUploadId((previous) => ({
+        ...previous,
+        [uploadId]: {
+          status: "failed",
+          error: String(uploadError?.message || uploadError || "Preparation failed."),
+          label,
+        },
+      }));
+    }
+  };
+
+  const removePreparation = (uploadId) => {
+    preparationOperationsRef.current.delete(uploadId);
+    const artifact = preparedArtifactsByUploadId[uploadId];
+    if (artifact?.artifact_id) removeAgentArtifactSelection(artifact.artifact_id);
+    setPreparedArtifactsByUploadId((previous) => {
+      const next = { ...previous };
+      delete next[uploadId];
+      return next;
+    });
+    setPreparationStateByUploadId((previous) => {
+      const next = { ...previous };
+      delete next[uploadId];
+      return next;
+    });
+  };
+
+  const retryPreparation = (uploadId) => {
+    const operation = preparationOperationsRef.current.get(uploadId);
+    const state = preparationStateByUploadId[uploadId];
+    if (operation) prepareUpload(uploadId, operation, { label: state?.label || "File" });
+  };
+
+  const handleExecutionInputUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const temporaryId = `new:${file.name}`;
+    await prepareUpload(temporaryId, () => onUploadExecutionInput(file), {
+      startsWithUpload: true,
+      label: file.name,
+    });
+    event.target.value = "";
+  };
+
   const renderAgentArtifactSelector = () => {
     const selectedIds = new Set(agentArtifactIds.map((artifactId) => String(artifactId || "").trim()).filter(Boolean));
     return (
@@ -706,6 +811,74 @@ export default function ExecutionComposer({
         <div style={{ fontWeight: 700, color: "#334155" }}>Agent artifacts</div>
         <div style={styles.small}>
           Selected artifacts are sent as structured artifact refs. OpenClaw stages file-backed artifacts before invoking the agent.
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          <label>
+            <div style={styles.label}>Upload file</div>
+            <input aria-label="Upload file" type="file" onChange={handleExecutionInputUpload} />
+          </label>
+          <label>
+            <div style={styles.label}>Select session file</div>
+            <select
+              aria-label="Select session file"
+              style={styles.select}
+              value={selectedSessionUploadId}
+              onChange={(event) => setSelectedSessionUploadId(event.target.value)}
+            >
+              <option value="">Select</option>
+              {sessionUploads.map((upload) => (
+                <option key={upload.id} value={upload.id}>{upload.filename || upload.id}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            style={styles.secondaryButton}
+            disabled={!selectedSessionUploadId}
+            onClick={() => prepareUpload(
+              selectedSessionUploadId,
+              () => onPrepareSessionUpload(selectedSessionUploadId),
+              { label: selectedSessionUpload?.filename || "File" },
+            )}
+          >
+            Prepare selected file
+          </button>
+          {selectedSessionUpload ? (
+            <div style={styles.small}>
+              {[
+                selectedSessionUpload.filename,
+                selectedSessionUpload.mime_type,
+                Number.isFinite(Number(selectedSessionUpload.size_bytes))
+                  ? `${Number(selectedSessionUpload.size_bytes).toLocaleString()} bytes`
+                  : "",
+              ].filter(Boolean).join(" | ")}
+            </div>
+          ) : null}
+          <div aria-live="polite" style={styles.small}>
+            {Object.entries(preparationStateByUploadId).map(([uploadId, state]) => (
+              <div key={uploadId} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span>{state.status === "ready" ? "Ready" : state.error || state.status}</span>
+                {state.status === "failed" ? (
+                  <button
+                    type="button"
+                    style={styles.inlineActionButton || styles.secondaryButton}
+                    onClick={() => retryPreparation(uploadId)}
+                  >
+                    {`Retry ${state.label || "file"}`}
+                  </button>
+                ) : null}
+                {state.status === "failed" ? (
+                  <button
+                    type="button"
+                    style={styles.inlineActionButton || styles.secondaryButton}
+                    onClick={() => removePreparation(uploadId)}
+                  >
+                    {`Remove ${state.label || "file"} preparation`}
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </div>
         </div>
         {selectedAgentArtifacts.length > 0 ? (
           <div style={{ display: "grid", gap: 6 }}>
@@ -1392,7 +1565,7 @@ export default function ExecutionComposer({
           type="button"
           style={styles.button}
           onClick={handleSubmit}
-          disabled={(commandKind !== "agent" && !selected) || submitting}
+          disabled={(commandKind !== "agent" && !selected) || submitting || (commandKind === "agent" && agentPreparationBlocked)}
         >
           {submitting ? "Running..." : "Run"}
         </button>
