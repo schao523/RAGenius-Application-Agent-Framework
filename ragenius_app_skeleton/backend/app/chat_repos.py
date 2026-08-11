@@ -219,6 +219,7 @@ class _RuntimeStateMemory:
                 "user_id": "TEXT",
                 "status": "TEXT NOT NULL DEFAULT 'legacy'",
                 "artifact_id": "TEXT",
+                "artifact_json": "TEXT",
                 "normalized_mime_type": "TEXT",
                 "error_code": "TEXT",
                 "retryable": "INTEGER NOT NULL DEFAULT 0",
@@ -622,6 +623,7 @@ class _RuntimeStateMemory:
                 "user_id": user_id,
                 "status": "staged" if upload_operation_id else "legacy",
                 "artifact_id": None,
+                "artifact_json": None,
                 "normalized_mime_type": str(mime_type or "application/octet-stream").split(";", 1)[0].strip().lower(),
                 "error_code": None,
                 "retryable": bool(upload_operation_id),
@@ -636,15 +638,15 @@ class _RuntimeStateMemory:
                             id, session_id, filename, mime_type, size_bytes, file_path,
                             text_content, sha256, created_at, upload_operation_id,
                             app_id, user_id, status, artifact_id, normalized_mime_type,
-                            error_code, retryable, staging_expires_at, deleted_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            artifact_json, error_code, retryable, staging_expires_at, deleted_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             row["id"], row["session_id"], row["filename"], row["mime_type"],
                             row["size_bytes"], row["file_path"], row["text_content"],
                             row["sha256"], row["created_at"], row["upload_operation_id"],
                             row["app_id"], row["user_id"], row["status"], row["artifact_id"],
-                            row["normalized_mime_type"], row["error_code"], int(row["retryable"]),
+                            row["normalized_mime_type"], row["artifact_json"], row["error_code"], int(row["retryable"]),
                             row["staging_expires_at"], row["deleted_at"],
                         ),
                     )
@@ -673,6 +675,7 @@ class _RuntimeStateMemory:
             "user_id": row["user_id"],
             "status": row["status"],
             "artifact_id": row["artifact_id"],
+            "artifact": json.loads(row["artifact_json"]) if row["artifact_json"] else None,
             "normalized_mime_type": row["normalized_mime_type"],
             "error_code": row["error_code"],
             "retryable": bool(row["retryable"]),
@@ -698,7 +701,7 @@ class _RuntimeStateMemory:
     def update_upload_operation(
         self, *, app_id: str, session_id: str, user_id: str,
         upload_operation_id: str, status: str, artifact_id: str | None,
-        error_code: str | None, retryable: bool,
+        error_code: str | None, retryable: bool, artifact: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         if status not in {"staged", "preparing", "ready", "failed", "deleted"}:
             raise ValueError("Invalid upload operation status")
@@ -707,11 +710,14 @@ class _RuntimeStateMemory:
             cursor = connection.execute(
                 """
                 UPDATE uploads
-                SET status = ?, artifact_id = ?, error_code = ?, retryable = ?, deleted_at = ?
+                SET status = ?, artifact_id = ?, artifact_json = COALESCE(?, artifact_json),
+                    error_code = ?, retryable = ?, deleted_at = ?
                 WHERE app_id = ? AND session_id = ? AND user_id = ?
                   AND upload_operation_id = ?
                 """,
-                (status, artifact_id, error_code, int(retryable), deleted_at,
+                (status, artifact_id,
+                 json.dumps(artifact, ensure_ascii=False, sort_keys=True) if artifact is not None else None,
+                 error_code, int(retryable), deleted_at,
                  app_id, session_id, user_id, upload_operation_id),
             )
             if cursor.rowcount != 1:
