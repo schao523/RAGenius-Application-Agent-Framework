@@ -37,8 +37,16 @@ test("serves and deletes only session-scoped contained artifact bytes", async ()
     url: `/v1/artifacts/${saved.artifact_id}?app_id=app_001&session_id=session_001`
   });
   assert.equal(deleted.statusCode, 200);
-  assert.equal((await fs.stat(String(saved.path)).catch(() => null)), null);
   assert.equal((await fs.stat(String(saved.file_path)).catch(() => null)), null);
+  const tombstone = JSON.parse(await fs.readFile(String(saved.path), "utf-8"));
+  assert.equal(tombstone.status, "deleted");
+  assert.equal(typeof tombstone.deleted_at, "string");
+  assert.equal(tombstone.file_path, undefined);
+  const deletedPreview = await app.inject({
+    method: "GET",
+    url: `/v1/artifacts/${saved.artifact_id}/preview?app_id=app_001&session_id=session_001`
+  });
+  assert.equal(deletedPreview.statusCode, 404);
   await app.close();
 });
 

@@ -28,8 +28,17 @@ export interface StoredArtifactRecord {
   size_bytes?: number;
   path: string;
   file_path?: string;
-  status: "ready";
+  status: "ready" | "deleted";
+  deleted_at?: string;
   content: unknown;
+}
+
+export interface ArtifactContentIdentity {
+  appId: string;
+  sessionId: string;
+  sha256: string;
+  sizeBytes: number;
+  mediaType: string;
 }
 
 export type ScopedArtifactFile = {
@@ -72,6 +81,13 @@ function inferMimeType(name: string, artifactType: string, content: unknown): st
     return "application/json";
   }
   return undefined;
+}
+
+function normalizeMimeType(value: string | undefined): string {
+  return String(value || "application/octet-stream")
+    .split(";", 1)[0]!
+    .trim()
+    .toLowerCase();
 }
 
 export class ArtifactStore {
@@ -340,7 +356,8 @@ export class ArtifactStore {
       created_at?: string;
       app_id?: string;
       session_id?: string;
-      status?: "ready";
+      status?: "ready" | "deleted";
+      deleted_at?: string;
       provider_origin?: "local";
       size_bytes?: number;
       mime_type?: string;
@@ -425,7 +442,10 @@ export class ArtifactStore {
       ...(typeof parsed.size_bytes === "number" ? { size_bytes: parsed.size_bytes } : {}),
       path: normalizedMetadataPath,
       ...(normalizedFilePath ? { file_path: normalizedFilePath } : {}),
-      status: "ready",
+      status: parsed.status === "deleted" ? "deleted" : "ready",
+      ...(typeof parsed.deleted_at === "string" && parsed.deleted_at.length > 0
+        ? { deleted_at: parsed.deleted_at }
+        : {}),
       content: parsed.content
     };
   }
@@ -473,7 +493,11 @@ export class ArtifactStore {
     artifactId: string;
   }): Promise<ScopedArtifactFile> {
     const record = await this.load(input.appId, input.artifactId);
-    if (record.app_id !== input.appId || record.session_id !== input.sessionId) {
+    if (
+      record.status !== "ready" ||
+      record.app_id !== input.appId ||
+      record.session_id !== input.sessionId
+    ) {
       throw new Error(`Artifact not found: ${input.artifactId}`);
     }
     const candidate = record.file_path ?? record.path;
@@ -497,16 +521,29 @@ export class ArtifactStore {
     sessionId: string;
     artifactId: string;
   }): Promise<boolean> {
+    await this.markDeletedScoped(input);
+    return true;
+  }
+
+  async markDeletedScoped(input: {
+    appId: string;
+    sessionId: string;
+    artifactId: string;
+  }): Promise<{ deleted: boolean }> {
     const record = await this.load(input.appId, input.artifactId);
     if (record.app_id !== input.appId || record.session_id !== input.sessionId) {
       throw new Error(`Artifact not found: ${input.artifactId}`);
     }
+    if (record.status === "deleted") {
+      return { deleted: false };
+    }
     const root = await this.canonicalRoot();
-    const candidates = [record.file_path, record.path].filter(
+    const metadataPath = this.assertContained(root, await fs.realpath(record.path));
+    const byteCandidates = [record.file_path].filter(
       (value): value is string => typeof value === "string" && value.length > 0
     );
     const canonicalPaths: string[] = [];
-    for (const candidate of candidates) {
+    for (const candidate of byteCandidates) {
       try {
         canonicalPaths.push(this.assertContained(root, await fs.realpath(candidate)));
       } catch (error) {
@@ -516,6 +553,14 @@ export class ArtifactStore {
         throw error;
       }
     }
+    const tombstone: StoredArtifactRecord = {
+      ...record,
+      status: "deleted",
+      deleted_at: new Date().toISOString(),
+      content: null
+    };
+    delete tombstone.file_path;
+    await fs.writeFile(metadataPath, JSON.stringify(tombstone, null, 2), "utf-8");
     for (const candidate of [...new Set(canonicalPaths)]) {
       await fs.unlink(candidate).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT") {
@@ -523,7 +568,7 @@ export class ArtifactStore {
         }
       });
     }
-    return true;
+    return { deleted: true };
   }
 
   async list(
@@ -533,7 +578,7 @@ export class ArtifactStore {
       allowedArtifactTypes?: string[];
       allowedMimeTypes?: string[];
       sessionId?: string;
-      status?: "ready";
+      status?: "ready" | "deleted";
     }
   ): Promise<Array<Omit<StoredArtifactRecord, "content">>> {
     const appRoot = path.join(this.rootDir, appId);
@@ -568,7 +613,7 @@ export class ArtifactStore {
       : null;
     const requestedArtifactType = String(options?.artifactType || "").trim();
     const requestedSessionId = String(options?.sessionId || "").trim();
-    const requestedStatus = options?.status;
+    const requestedStatus = options?.status ?? "ready";
 
     const items = await Promise.all(
       entries
@@ -621,5 +666,22 @@ export class ArtifactStore {
       status: "ready"
     });
     return items.find((item) => item.source_upload_id === input.sourceUploadId);
+  }
+
+  async findReadyByContentIdentity(
+    identity: ArtifactContentIdentity
+  ): Promise<Omit<StoredArtifactRecord, "content"> | undefined> {
+    const sha256 = String(identity.sha256 || "").trim().toLowerCase();
+    const mediaType = normalizeMimeType(identity.mediaType);
+    const items = await this.list(identity.appId, {
+      artifactType: "session_upload",
+      sessionId: identity.sessionId,
+      status: "ready"
+    });
+    return items.find((item) =>
+      String(item.content_hash || "").trim().toLowerCase() === sha256 &&
+      item.size_bytes === identity.sizeBytes &&
+      normalizeMimeType(String(item.mime_type || "")) === mediaType
+    );
   }
 }
