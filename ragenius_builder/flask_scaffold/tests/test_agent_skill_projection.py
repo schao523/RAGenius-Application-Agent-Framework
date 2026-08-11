@@ -180,6 +180,13 @@ class AgentSkillProjectionTests(unittest.TestCase):
             client.payloads[0]["items"][0]["provider_skill_reference"],
             "summarizer",
         )
+        publication_actions = [
+            event["action"]
+            for event in self.store.list_agent_skill_audit_events(limit=20)
+            if event["action"].startswith("agent_skill.publication_")
+        ]
+        self.assertEqual(publication_actions.count("agent_skill.publication_attempted"), 2)
+        self.assertEqual(publication_actions.count("agent_skill.publication_succeeded"), 2)
 
     def test_failed_sync_remains_pending_and_retries_after_restart(self) -> None:
         self._populate()

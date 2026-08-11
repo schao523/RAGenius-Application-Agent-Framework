@@ -2341,6 +2341,29 @@ class DatabaseStore:
             for row in rows
         ]
 
+    def record_agent_skill_publication_event(
+        self,
+        *,
+        action: str,
+        actor_id: str,
+        details: Dict[str, Any],
+        correlation_id: str,
+    ) -> None:
+        if action not in {
+            "agent_skill.publication_attempted",
+            "agent_skill.publication_succeeded",
+            "agent_skill.publication_failed",
+        }:
+            raise ValueError("Unsupported Agent skill publication audit action")
+        with self.conn:
+            self._record_agent_skill_audit(
+                self.conn.cursor(),
+                actor_id=actor_id,
+                action=action,
+                after=details,
+                correlation_id=correlation_id,
+            )
+
     def configure_agent_skill_projection(self, builder_instance_id: str) -> Dict[str, Any]:
         state = self.get_agent_skill_projection_state()
         current = state.get("builder_instance_id")
