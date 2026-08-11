@@ -178,3 +178,35 @@ def test_prepare_existing_upload_enforces_scope_and_is_idempotent(tmp_path, monk
     assert denied.status_code == 404
     assert ready.status_code == 200
     assert ready.json()["reused_existing_artifact"] is True
+
+
+def test_session_upload_http_responses_do_not_expose_server_paths(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path, monkeypatch)
+    repo.get_or_create(
+        "session-1", collection_id="app-1", user_id="user-1",
+        config_version=1, adapter_version=1, template_version=1,
+    )
+    repo.add_upload(
+        "session-1", filename="notes.txt", mime_type="text/plain",
+        content=b"private notes", text_content="private notes",
+    )
+    monkeypatch.setattr(app_main, "session_repo", repo)
+    monkeypatch.setattr(app_main, "_load_builder_readonly_context", lambda _app_id: {"config_json": {}})
+    client = TestClient(app)
+
+    messages = client.get(
+        "/sessions/session-1/messages",
+        params={"app_id": "app-1", "user_id": "user-1"},
+    )
+    uploads = client.get(
+        "/sessions/session-1/uploads",
+        params={"app_id": "app-1", "user_id": "user-1"},
+    )
+
+    assert messages.status_code == 200
+    assert uploads.status_code == 200
+    for upload in [*messages.json()["session_uploads"], *uploads.json()["uploads"]]:
+        assert upload["filename"] == "notes.txt"
+        assert upload["sha256"].startswith("sha256:")
+        assert "file_path" not in upload
+        assert "text_content" not in upload

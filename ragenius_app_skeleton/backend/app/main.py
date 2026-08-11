@@ -2921,7 +2921,7 @@ async def get_session_messages(session_id: str, app_id: str, user_id: str):
             "configured_task_models": _configured_task_models_payload(context.get("config_json", {})),
             "latest_turn_task_models": _latest_task_model_diagnostics(history),
         },
-        "session_uploads": session_repo.list_uploads(session_id),
+        "session_uploads": _public_session_uploads(session_repo.list_uploads(session_id)),
         "approved_content": session_repo.list_approved_content(session_id),
     }
 
@@ -3351,7 +3351,15 @@ async def list_session_uploads(session_id: str, app_id: str, user_id: str):
         return {"session_id": session_id, "uploads": []}
     if session["collection_id"] != app_id or session["user_id"] != user_id:
         raise HTTPException(status_code=400, detail="Session identity mismatch.")
-    return {"session_id": session_id, "uploads": session_repo.list_uploads(session_id)}
+    return {"session_id": session_id, "uploads": _public_session_uploads(session_repo.list_uploads(session_id))}
+
+
+def _public_session_uploads(uploads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    public_keys = ("id", "session_id", "filename", "mime_type", "size_bytes", "sha256", "created_at")
+    return [
+        {key: upload[key] for key in public_keys if key in upload}
+        for upload in uploads
+    ]
 
 
 def _agent_input_max_bytes() -> int:
