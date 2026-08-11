@@ -12,7 +12,7 @@ Use this checklist after configuring administrator-approved Codex and OpenClaw s
 ## Configuration
 
 - [ ] Set distinct app and Builder service credentials in `RAGENIUS_EXECUTION_SERVICE_CREDENTIALS_JSON`.
-- [ ] Give the app credential `agent_skills:read` and the Builder credential `agent_skills:admin`.
+- [ ] Give the app credential `agent_skills:read` and `artifacts:write`, and give the Builder credential `agent_skills:admin`.
 - [ ] Set matching `AGENT_SKILL_TRUSTED_BUILDER_INSTANCE_ID` and `RAGENIUS_BUILDER_INSTANCE_ID` values.
 - [ ] Configure only administrator-approved Codex directories and OpenClaw WSL targets.
 - [ ] Enable asynchronous Agent execution and the provider CLI being tested.

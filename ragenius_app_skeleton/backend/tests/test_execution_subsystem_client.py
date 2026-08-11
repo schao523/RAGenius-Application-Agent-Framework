@@ -265,3 +265,27 @@ def test_artifact_byte_request_forwards_auth_and_scope(monkeypatch):
         "app_id": ["app_1"],
         "session_id": ["session_1"],
     }
+
+
+def test_bodyless_artifact_delete_does_not_declare_json_content(monkeypatch):
+    captured = []
+
+    def fake_urlopen(http_request, timeout=None):
+        captured.append(http_request)
+        return _JsonResponse({"deleted": True})
+
+    monkeypatch.setattr(client_module.request, "urlopen", fake_urlopen)
+    client = ExecutionSubsystemClient(
+        "http://execution.local/v1",
+        service_token="service-secret",
+    )
+
+    result = client.delete_artifact(
+        app_id="app_1",
+        session_id="session_1",
+        artifact_id="artifact_1",
+    )
+
+    assert result == {"deleted": True}
+    assert captured[0].data is None
+    assert captured[0].get_header("Content-type") is None

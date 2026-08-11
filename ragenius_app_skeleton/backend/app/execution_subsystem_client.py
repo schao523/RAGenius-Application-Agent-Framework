@@ -111,10 +111,11 @@ class ExecutionSubsystemClient:
         query: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         body = None
-        headers = {"Content-Type": "application/json"}
+        headers = {}
         if self.service_token:
             headers["Authorization"] = f"Bearer {self.service_token}"
         if payload is not None:
+            headers["Content-Type"] = "application/json"
             body = json.dumps(payload).encode("utf-8")
         url = f"{self.base_url}{path}"
         if query:
