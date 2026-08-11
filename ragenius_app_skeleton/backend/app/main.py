@@ -24,7 +24,6 @@ from .approved_content_service import content_hash_for, resolve_approved_snapsho
 from .approved_content_service import create_approved_snapshot, create_snapshot_from_latest_assistant_message, create_snapshot_from_message_id
 from .chat_repos import ChatRepo, InstructionUnderstandingRepo, RetrievalRepo, SessionRepo
 from .artifact_upload_service import ArtifactUploadService
-from .execution_input_service import ExecutionInputPreparationError, prepare_session_upload
 from .chat_service import run_chat_pipeline
 from .instruction_understanding_service import (
     SEMANTIC_COMPILE_PROMPT_VERSION,
@@ -3370,6 +3369,17 @@ def _public_session_uploads(uploads: List[Dict[str, Any]]) -> List[Dict[str, Any
     ]
 
 
+@app.get("/sessions/{session_id}/uploads/duplicate-report")
+async def legacy_upload_duplicate_report(session_id: str, app_id: str, user_id: str):
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    return await run_in_threadpool(
+        _artifact_upload_service().legacy_duplicate_report,
+        app_id=app_id,
+        session_id=session_id,
+        user_id=user_id,
+    )
+
+
 def _agent_input_max_bytes() -> int:
     return int(os.getenv("RAGENIUS_AGENT_INPUT_MAX_BYTES") or "536870912")
 
@@ -3522,18 +3532,32 @@ async def retry_canonical_session_artifact(
 
 
 def _prepare_execution_upload(app_id: str, session_id: str, upload_id: str) -> Dict[str, Any]:
-    try:
-        return prepare_session_upload(
-            session_repo=session_repo,
-            execution_client=execution_client,
-            app_id=app_id,
-            session_id=session_id,
-            upload_id=upload_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="Session upload not found.") from exc
-    except ExecutionInputPreparationError as exc:
-        raise HTTPException(status_code=502, detail={"code": exc.code, "message": str(exc)}) from exc
+    session = session_repo.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session upload not found.")
+    user_id = str(session.get("user_id") or "")
+    upload = session_repo.get_upload(session_id, upload_id)
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Session upload not found.")
+    result = _artifact_upload_service().import_legacy_upload(
+        app_id=app_id, session_id=session_id, user_id=user_id, upload_id=upload_id,
+    )
+    if result.get("status") != "ready" or not isinstance(result.get("artifact"), dict):
+        raise HTTPException(status_code=410, detail={
+            "code": str(result.get("error_code") or "LEGACY_UPLOAD_UNAVAILABLE"),
+            "message": "Session upload is no longer available.",
+        })
+    public_upload = {
+        key: upload[key]
+        for key in ("id", "session_id", "filename", "mime_type", "size_bytes", "sha256", "created_at")
+        if key in upload
+    }
+    return {
+        "upload": public_upload,
+        "artifact": result["artifact"],
+        "preparation_status": "ready",
+        "reused_existing_artifact": bool(result.get("reused_existing_artifact")),
+    }
 
 
 @app.post("/sessions/{session_id}/execution-inputs", status_code=201)

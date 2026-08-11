@@ -145,3 +145,18 @@ Remove-Item Env:RAGENIUS_EXECUTION_SERVICE_TOKEN -ErrorAction SilentlyContinue
 
 Do not disable service authentication when the execution subsystem is exposed
 beyond a trusted local development environment.
+
+## Artifact Lifecycle Notes
+
+The `artifacts:write` scope authorizes scoped artifact import and deletion
+delegation. It does not bypass app/session ownership, execution confirmation, or
+provider policy. The browser never receives this credential and never calls
+execution storage directly.
+
+Repeated upload operation ids are idempotent, and same-session duplicate content
+is deduplicated by hash, size, and normalized MIME type. Artifact deletion
+creates a tombstone rather than erasing all metadata. Normal listing and reuse
+reject tombstoned artifacts, while completed execution records retain stable
+evidence. A queued, running, or pending-confirmation execution blocks deletion
+with `ARTIFACT_IN_USE`; the user may retry after execution reaches a terminal
+state.

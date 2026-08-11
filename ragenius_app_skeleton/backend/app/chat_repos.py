@@ -1001,7 +1001,7 @@ class _RuntimeStateMemory:
     def list_session_uploads(self, session_id: str) -> List[Dict[str, Any]]:
         with self._managed_connection() as connection:
             rows = connection.execute(
-                "SELECT * FROM uploads WHERE session_id = ? ORDER BY created_at ASC, id ASC",
+                "SELECT * FROM uploads WHERE session_id = ? AND upload_operation_id IS NULL ORDER BY created_at ASC, id ASC",
                 (session_id,),
             ).fetchall()
         return [

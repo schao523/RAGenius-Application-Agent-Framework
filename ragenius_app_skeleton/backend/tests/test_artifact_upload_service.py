@@ -142,3 +142,67 @@ def test_ready_operation_is_idempotent_and_cleanup_expires_failed_staging(tmp_pa
     )
     assert expired["status"] == "deleted"
     assert expired["retryable"] is False
+
+
+def test_legacy_upload_import_is_idempotent_and_preserves_original_bytes(tmp_path, monkeypatch):
+    repo, client, service = make_service(tmp_path, monkeypatch, [ready_response("artifact-legacy")])
+    legacy = repo.add_upload(
+        "session-1", filename="legacy.txt", mime_type="text/plain",
+        content=b"legacy", text_content="legacy",
+    )
+    original_path = Path(legacy["file_path"])
+
+    first = service.import_legacy_upload(
+        app_id="app-1", session_id="session-1", user_id="user-1", upload_id=legacy["id"],
+    )
+    second = service.import_legacy_upload(
+        app_id="app-1", session_id="session-1", user_id="user-1", upload_id=legacy["id"],
+    )
+
+    assert first["artifact"]["artifact_id"] == "artifact-legacy"
+    assert second["artifact"]["artifact_id"] == "artifact-legacy"
+    assert len(client.calls) == 1
+    assert original_path.read_bytes() == b"legacy"
+
+
+def test_legacy_upload_missing_file_is_bounded_and_non_retryable(tmp_path, monkeypatch):
+    repo, _, service = make_service(tmp_path, monkeypatch, [])
+    legacy = repo.add_upload(
+        "session-1", filename="missing.txt", mime_type="text/plain",
+        content=b"missing", text_content="missing",
+    )
+    Path(legacy["file_path"]).unlink()
+
+    result = service.import_legacy_upload(
+        app_id="app-1", session_id="session-1", user_id="user-1", upload_id=legacy["id"],
+    )
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "LEGACY_UPLOAD_UNAVAILABLE"
+    assert result["retryable"] is False
+    assert "file_path" not in str(result)
+
+
+def test_legacy_duplicate_report_is_read_only_and_reports_canonical_mapping(tmp_path, monkeypatch):
+    repo, _, service = make_service(tmp_path, monkeypatch, [ready_response("artifact-shared")])
+    first = repo.add_upload(
+        "session-1", filename="first.txt", mime_type="text/plain",
+        content=b"same", text_content="same",
+    )
+    second = repo.add_upload(
+        "session-1", filename="second.txt", mime_type="text/plain",
+        content=b"same", text_content="same",
+    )
+    service.import_legacy_upload(
+        app_id="app-1", session_id="session-1", user_id="user-1", upload_id=first["id"],
+    )
+
+    report = service.legacy_duplicate_report(
+        app_id="app-1", session_id="session-1", user_id="user-1",
+    )
+
+    assert report["total_legacy_bytes"] == 8
+    assert report["duplicate_bytes"] == 4
+    assert set(report["groups"][0]["upload_ids"]) == {first["id"], second["id"]}
+    assert report["canonical_mappings"][first["id"]] == "artifact-shared"
+    assert report["canonical_mappings"][second["id"]] is None

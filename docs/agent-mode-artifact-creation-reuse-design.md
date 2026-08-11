@@ -698,3 +698,30 @@ by retention cleanup. App and execution limits must match
 failure is retryable and never creates confirmation authority. External writes,
 including publication, still require their independently verified operation
 plan and single-use confirmation.
+
+## Unified Upload Implementation Design
+
+The current implementation replaces the visible session-upload/preparation
+split with `ArtifactUploadControl` in both normal chat and Agent Composer. Both
+call `POST /sessions/{session_id}/artifacts/uploads` through one XHR transport
+that reports byte progress, retains one operation id across retry, supports
+cancellation before staging completes, and renders bounded errors. Normal chat
+uses `analysis_mode=normal_query`; Composer uses `analysis_mode=none` and selects
+the returned artifact ref.
+
+`ragenius_app_skeleton` streams browser bytes into an operation-scoped staging
+record, calls the execution import endpoint with an `artifacts:write` service
+credential, optionally runs bounded normal-query extraction while staging bytes
+still exist, persists safe artifact metadata, then removes staging bytes.
+`ragenius_execution_subsystem` performs canonical content deduplication and owns
+the immutable artifact bytes.
+
+Artifact Library is the only successful-upload inventory and the only deletion
+surface. Execution storage tombstones deletions and rejects active references.
+Composer derives selection from ready Artifact Library records.
+
+Legacy rows are not migrated destructively. Compatibility access hashes/imports
+the selected legacy row with deterministic operation id `legacy.<upload_id>`;
+the original app-owned bytes remain. The read-only endpoint
+`GET /sessions/{session_id}/uploads/duplicate-report` reports duplicate content
+groups and retention totals so cleanup can be planned separately.

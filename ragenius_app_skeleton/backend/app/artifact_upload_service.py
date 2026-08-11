@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 from pathlib import Path
 from typing import Any, BinaryIO, Callable
 
@@ -175,3 +176,107 @@ class ArtifactUploadService:
                 upload_operation_id=operation["upload_operation_id"],
             )
         return len(expired)
+
+    @staticmethod
+    def _legacy_operation_id(upload_id: str) -> str:
+        return f"legacy.{upload_id}"
+
+    def import_legacy_upload(
+        self, *, app_id: str, session_id: str, user_id: str, upload_id: str,
+    ) -> dict[str, Any]:
+        operation_id = self._legacy_operation_id(upload_id)
+        session = self.session_repo.get(session_id)
+        if (
+            session is None
+            or session.get("collection_id") != app_id
+            or session.get("user_id") != user_id
+        ):
+            return {
+                "upload_operation_id": operation_id, "status": "failed", "artifact": None,
+                "reused_existing_artifact": False, "error_code": "LEGACY_UPLOAD_UNAVAILABLE",
+                "retryable": False,
+            }
+        try:
+            upload = self.session_repo.ensure_upload_sha256(session_id, upload_id)
+            path = Path(str(upload.get("file_path") or ""))
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("Legacy upload is unavailable")
+            with path.open("rb") as source:
+                return self.upload(
+                    app_id=app_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    upload_operation_id=operation_id,
+                    filename=str(upload.get("filename") or "upload.bin"),
+                    mime_type=upload.get("mime_type"),
+                    source=source,
+                )
+        except (OSError, ValueError):
+            return {
+                "upload_operation_id": operation_id, "status": "failed", "artifact": None,
+                "reused_existing_artifact": False, "error_code": "LEGACY_UPLOAD_UNAVAILABLE",
+                "retryable": False,
+            }
+
+    def legacy_duplicate_report(
+        self, *, app_id: str, session_id: str, user_id: str,
+    ) -> dict[str, Any]:
+        session = self.session_repo.get(session_id)
+        if (
+            session is None
+            or session.get("collection_id") != app_id
+            or session.get("user_id") != user_id
+        ):
+            return {
+                "groups": [], "canonical_mappings": {}, "total_legacy_bytes": 0,
+                "duplicate_bytes": 0, "unavailable_upload_ids": [],
+            }
+        groups: dict[tuple[str, int, str], list[dict[str, Any]]] = {}
+        mappings: dict[str, str | None] = {}
+        unavailable: list[str] = []
+        total_bytes = 0
+        for upload in self.session_repo.list_uploads(session_id):
+            upload_id = str(upload.get("id") or "")
+            size_bytes = int(upload.get("size_bytes") or 0)
+            total_bytes += size_bytes
+            digest = str(upload.get("sha256") or "")
+            path = Path(str(upload.get("file_path") or ""))
+            if not digest:
+                try:
+                    hasher = hashlib.sha256()
+                    with path.open("rb") as source:
+                        while chunk := source.read(1024 * 1024):
+                            hasher.update(chunk)
+                    digest = f"sha256:{hasher.hexdigest()}"
+                except OSError:
+                    unavailable.append(upload_id)
+                    continue
+            mime_type = str(upload.get("mime_type") or "application/octet-stream").split(";", 1)[0].strip().lower()
+            groups.setdefault((digest, size_bytes, mime_type), []).append(upload)
+            operation = self.session_repo.get_upload_operation(
+                app_id=app_id, session_id=session_id, user_id=user_id,
+                upload_operation_id=self._legacy_operation_id(upload_id),
+            )
+            mappings[upload_id] = str(operation.get("artifact_id")) if operation and operation.get("artifact_id") else None
+        duplicates = []
+        duplicate_bytes = 0
+        for (digest, size_bytes, mime_type), uploads in groups.items():
+            if len(uploads) < 2:
+                continue
+            ids = sorted(str(upload["id"]) for upload in uploads)
+            duplicate_bytes += size_bytes * (len(ids) - 1)
+            duplicates.append({
+                "sha256": digest,
+                "size_bytes": size_bytes,
+                "mime_type": mime_type,
+                "upload_ids": ids,
+                "retained_bytes": size_bytes * len(ids),
+            })
+        duplicates.sort(key=lambda group: (group["sha256"], group["mime_type"]))
+        return {
+            "groups": duplicates,
+            "canonical_mappings": mappings,
+            "total_legacy_bytes": total_bytes,
+            "duplicate_bytes": duplicate_bytes,
+            "unavailable_upload_ids": sorted(unavailable),
+        }

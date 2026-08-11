@@ -114,6 +114,32 @@ def test_normal_query_upload_returns_analysis_result(tmp_path, monkeypatch):
     assert response.json()["analysis_result"]["content"] == "Upload analyzed."
 
 
+def test_legacy_duplicate_report_is_scoped_and_read_only(tmp_path, monkeypatch):
+    repo, _, client = setup_runtime(tmp_path, monkeypatch)
+    repo.add_upload(
+        "session-1", filename="first.txt", mime_type="text/plain",
+        content=b"same", text_content="same",
+    )
+    repo.add_upload(
+        "session-1", filename="second.txt", mime_type="text/plain",
+        content=b"same", text_content="same",
+    )
+
+    response = client.get(
+        "/sessions/session-1/uploads/duplicate-report",
+        params={"app_id": "app-1", "user_id": "user-1"},
+    )
+    wrong_scope = client.get(
+        "/sessions/session-1/uploads/duplicate-report",
+        params={"app_id": "app-1", "user_id": "other-user"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["duplicate_bytes"] == 4
+    assert len(repo.list_uploads("session-1")) == 2
+    assert wrong_scope.status_code == 404
+
+
 def test_delete_preserves_artifact_in_use_conflict(tmp_path, monkeypatch):
     _, _, client = setup_runtime(tmp_path, monkeypatch)
 
