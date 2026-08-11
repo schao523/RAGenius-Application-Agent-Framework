@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="flex items-start justify-between gap-4 mb-5">
+  <div>
+    <p class="text-sm font-semibold uppercase tracking-wide text-blue-700">Provider governance</p>
+    <h1 class="text-3xl font-bold text-gray-950">Review Agent Skill Publication</h1>
+    <p class="mt-1 text-gray-600">Review one complete governance revision before making it runtime-effective.</p>
+  </div>
+  <a href="{{ url_for('agent_skills') }}" class="px-4 py-2 rounded border border-gray-300">Back to catalog</a>
+</div>
+
+<section class="rounded-xl border p-5 {% if preview.state == 'published' %}border-emerald-300 bg-emerald-50{% else %}border-amber-300 bg-amber-50{% endif %}" aria-live="polite">
+  <h2 class="text-xl font-bold">{% if preview.state == 'published' %}Published{% elif preview.state == 'publish_failed' %}Publish failed{% else %}Draft changes{% endif %}</h2>
+  <p class="mt-1 text-sm">Local revision {{ preview.local_revision }} | Published revision {{ preview.published_revision if preview.published_revision is not none else 'none' }}</p>
+  {% if preview.last_success_at %}<p class="mt-1 text-sm">Last successful publication: {{ preview.last_success_at }}</p>{% endif %}
+  {% if preview.full_replacement %}<p class="mt-2 text-sm font-semibold">The last published comparison baseline is unavailable. This review represents a full replacement.</p>{% endif %}
+  {% if result and result.error %}<p class="mt-2 text-sm text-red-800">{{ result.error.code }}: {{ result.error.message }}</p>{% endif %}
+</section>
+
+<div class="grid md:grid-cols-3 gap-4 mt-5">
+  <section class="bg-white border border-gray-200 rounded-xl p-4">
+    <h2 class="font-bold">Sources</h2>
+    <ul class="mt-2 space-y-2 text-sm">
+      {% for change in preview.changes.sources %}<li><span class="font-semibold">{{ change.change }}</span> {{ change.source_id }}</li>{% else %}<li>No source changes.</li>{% endfor %}
+    </ul>
+  </section>
+  <section class="bg-white border border-gray-200 rounded-xl p-4">
+    <h2 class="font-bold">Approvals</h2>
+    <ul class="mt-2 space-y-2 text-sm">
+      {% for change in preview.changes.approvals %}<li><span class="font-semibold">{{ change.change }}</span> {{ change.agent_skill_id }}</li>{% else %}<li>No approval changes.</li>{% endfor %}
+    </ul>
+  </section>
+  <section class="bg-white border border-gray-200 rounded-xl p-4">
+    <h2 class="font-bold">Bindings</h2>
+    <ul class="mt-2 space-y-2 text-sm">
+      {% for change in preview.changes.bindings %}<li><span class="font-semibold">{{ change.change }}</span> {{ change.app_id }} / {{ change.agent_skill_id }}</li>{% else %}<li>No binding changes.</li>{% endfor %}
+    </ul>
+  </section>
+</div>
+
+<section class="bg-white border border-gray-200 rounded-xl p-5 mt-5">
+  <h2 class="font-bold">Affected applications</h2>
+  <ul class="mt-2 text-sm">
+    {% for app in affected_apps %}<li>{{ app.name }} <span class="text-gray-500">({{ app.id }})</span></li>{% else %}<li>No affected applications.</li>{% endfor %}
+  </ul>
+</section>
+
+{% if preview.state != 'published' %}
+  <form class="mt-5" method="post" action="{{ url_for('publish_agent_skills_form') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="expected_local_revision" value="{{ preview.local_revision }}">
+    <button type="submit" autofocus class="px-5 py-3 rounded bg-blue-700 text-white font-semibold hover:bg-blue-800">Publish revision {{ preview.local_revision }}</button>
+  </form>
+{% endif %}
+{% endblock %}

@@ -153,9 +153,13 @@ For defense in depth, the backend requires that the selected item's backend
 equals the requested Agent backend. The execution subsystem remains
 authoritative and revalidates app binding and fingerprint.
 
-`inventory_revision` identifies the active synchronized Builder instance,
+`inventory_revision` identifies the active published Builder instance,
 revision, and digest. The app treats it as opaque diagnostic metadata and never
 uses it as authorization.
+
+The app reads this inventory only through the execution subsystem. It never
+calls Builder for selection, and Builder does not need to be running after a
+revision has been successfully published.
 
 ## Frontend State
 
@@ -231,7 +235,20 @@ Loading behavior:
 If execution has no active governance projection, the inventory is empty and
 the app shows a bounded setup message. Auto Agent execution remains available;
 explicit Agent-skill selection is unavailable until Builder successfully
-synchronizes a projection.
+publishes a projection.
+
+While Composer is open, the app refreshes the current execution inventory on:
+
+- Composer open, after preparing a draft session when necessary;
+- Agent backend change, for that backend only;
+- window focus return, for the selected backend only;
+- explicit `Refresh Agent Skills`, with a forced network request.
+
+The focus listener exists only while Composer is mounted. Every request remains
+scoped by current app, session, user, and backend. Responses replace inventory
+only when `inventory_revision` changes; an unchanged non-null revision preserves
+the list identity and any still-valid selection. Scope changes and a changed
+revision still clear a selection that no longer exists.
 
 Auto is a user-visible choice but is serialized as no `agent_skill_ref`.
 
@@ -370,7 +387,7 @@ source details. Administrator remediation belongs in Builder.
 - typed command continues to send the legacy hint;
 - downstream unavailable and stale-selection errors are bounded;
 - inventory and explicit execution do not require Builder connectivity after a
-  projection has been synchronized.
+  projection has been published.
 
 ### Composer tests
 
@@ -378,6 +395,9 @@ source details. Administrator remediation belongs in Builder.
 - Auto is always available and submits no reference;
 - explicit selection submits opaque id and fingerprint;
 - backend change clears selection;
+- backend change, focus return, and explicit refresh reload from execution;
+- focus while Composer is closed performs no request;
+- unchanged `inventory_revision` preserves the current list and selection;
 - app/session change cannot retain a stale selection;
 - empty inventory and loading failure preserve Auto;
 - missing projection shows setup guidance without blocking Auto;
@@ -391,7 +411,7 @@ source details. Administrator remediation belongs in Builder.
 - structured request is present even without artifacts or expected outputs;
 - confirmation and async status preserve selected-skill metadata;
 - drift error refreshes inventory and never retries as Auto;
-- synchronized inventory and explicit execution continue while Builder is
+- published inventory and explicit execution continue while Builder is
   stopped;
 - inspector renders normalized requested/resolved/process-observed evidence;
 - existing tool, executable skill, Codex Auto, and OpenClaw Auto flows do not

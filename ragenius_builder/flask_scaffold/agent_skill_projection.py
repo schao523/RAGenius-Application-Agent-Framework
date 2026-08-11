@@ -36,8 +36,8 @@ def _generated_at_for_revision(revision: int) -> str:
 
 
 def build_agent_skill_projection(store: Any, builder_instance_id: str) -> Dict[str, Any]:
-    state = store.configure_agent_skill_projection(builder_instance_id)
-    items = sorted(store.list_agent_skill_projection_items(), key=_canonical_json)
+    state, snapshot_items = store.read_agent_skill_projection_snapshot(builder_instance_id)
+    items = sorted(snapshot_items, key=_canonical_json)
     payload = {
         "builder_instance_id": builder_instance_id,
         "revision": int(state["local_revision"]),
@@ -48,44 +48,21 @@ def build_agent_skill_projection(store: Any, builder_instance_id: str) -> Dict[s
     return payload
 
 
-def _response_error(response: Dict[str, Any]) -> tuple[str, str]:
-    error = response.get("body", {}).get("error", {})
-    return (
-        str(error.get("code") or "AGENT_SKILL_PROJECTION_SYNC_FAILED"),
-        str(error.get("message") or "Execution subsystem rejected the projection."),
-    )
-
-
 def synchronize_agent_skill_projection(
     store: Any,
     client: ProjectionClient,
     builder_instance_id: str,
 ) -> Dict[str, Any]:
-    payload = build_agent_skill_projection(store, builder_instance_id)
-    store.mark_agent_skill_projection_attempt()
-    response = client.publish_governance_projection(payload)
-    if not response.get("ok"):
-        code, message = _response_error(response)
-        return store.mark_agent_skill_projection_failed(code=code, message=message)
+    # Local import avoids a module cycle while keeping this compatibility API thin.
+    from agent_skill_publication import publish_agent_skill_revision
 
-    acknowledgment = response.get("body", {})
-    expected = (
-        payload["builder_instance_id"],
-        payload["revision"],
-        payload["digest"],
+    state = store.configure_agent_skill_projection(builder_instance_id)
+    result = publish_agent_skill_revision(
+        store=store,
+        execution_client=client,
+        builder_instance_id=builder_instance_id,
+        expected_local_revision=int(state["local_revision"]),
+        actor_id="legacy-agent-skill-synchronizer",
+        correlation_id=f"legacy-sync:{state['local_revision']}",
     )
-    observed = (
-        acknowledgment.get("builder_instance_id"),
-        acknowledgment.get("revision"),
-        acknowledgment.get("digest"),
-    )
-    if observed != expected:
-        return store.mark_agent_skill_projection_failed(
-            code="AGENT_SKILL_PROJECTION_ACK_MISMATCH",
-            message="Execution acknowledgment did not match instance, revision, and digest.",
-        )
-    return store.mark_agent_skill_projection_synchronized(
-        builder_instance_id=payload["builder_instance_id"],
-        revision=payload["revision"],
-        digest=payload["digest"],
-    )
+    return result["projection_state"]

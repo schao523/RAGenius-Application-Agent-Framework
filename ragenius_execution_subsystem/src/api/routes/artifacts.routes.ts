@@ -25,6 +25,17 @@ function notFound(reply: FastifyReply) {
   });
 }
 
+function inUse(reply: FastifyReply) {
+  return reply.status(409).send({
+    error: {
+      code: "ARTIFACT_IN_USE",
+      message: "Artifact is in use by an active execution.",
+      recoverable: true,
+      suggested_action: "Wait for the execution to finish, then retry deletion."
+    }
+  });
+}
+
 function contentDisposition(kind: "inline" | "attachment", name: string): string {
   const asciiFallback = name
     .replace(/[^\x20-\x7e]/g, "_")
@@ -66,8 +77,19 @@ export async function registerArtifactRoutes(app: FastifyInstance): Promise<void
       return notFound(reply);
     }
     try {
-      await app.services.artifactStore.deleteScoped(scoped);
-      return reply.status(200).send({ deleted: true, artifact_id: scoped.artifactId });
+      const deletion = await app.services.artifactReferenceCoordinator.deleteIfUnused(
+        scoped,
+        () => app.services.executionStore.hasActiveArtifactReference(scoped),
+        () => app.services.artifactStore.markDeletedScoped(scoped)
+      );
+      if (deletion.inUse) {
+        return inUse(reply);
+      }
+      return reply.status(200).send({
+        deleted: true,
+        already_deleted: !deletion.result.deleted,
+        artifact_id: scoped.artifactId
+      });
     } catch {
       return notFound(reply);
     }

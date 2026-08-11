@@ -87,6 +87,27 @@ describe("session upload artifact importer", () => {
     assert.equal(second.artifact.artifact_id, first.artifact.artifact_id);
   });
 
+  it("reuses identical scoped content from a different upload operation", async () => {
+    const importer = createImporter(createRoot());
+    const first = await importer.import(input());
+    const second = await importer.import(input({ sourceUploadId: "upload_2" }));
+
+    assert.equal(second.reusedExistingArtifact, true);
+    assert.equal(second.artifact.artifact_id, first.artifact.artifact_id);
+  });
+
+  it("does not reuse identical content from another session", async () => {
+    const importer = createImporter(createRoot());
+    const first = await importer.import(input());
+    const second = await importer.import(input({
+      sessionId: "session_2",
+      sourceUploadId: "upload_2"
+    }));
+
+    assert.equal(second.reusedExistingArtifact, false);
+    assert.notEqual(second.artifact.artifact_id, first.artifact.artifact_id);
+  });
+
   it("rejects reuse of a source upload id with different content", async () => {
     const importer = createImporter(createRoot());
     await importer.import(input());
@@ -128,6 +149,17 @@ describe("session upload artifact importer", () => {
     const [first, second] = await Promise.all([
       importer.import(input()),
       importer.import(input())
+    ]);
+
+    assert.equal(first.artifact.artifact_id, second.artifact.artifact_id);
+    assert.equal([first.reusedExistingArtifact, second.reusedExistingArtifact].filter(Boolean).length, 1);
+  });
+
+  it("serializes concurrent content-identical operations to one artifact", async () => {
+    const importer = createImporter(createRoot());
+    const [first, second] = await Promise.all([
+      importer.import(input({ sourceUploadId: "upload_1" })),
+      importer.import(input({ sourceUploadId: "upload_2" }))
     ]);
 
     assert.equal(first.artifact.artifact_id, second.artifact.artifact_id);

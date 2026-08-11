@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-5">
+  <div>
+    <p class="text-sm font-semibold uppercase tracking-wide text-amber-700">Source impact review</p>
+    <h1 class="text-3xl font-bold text-gray-950">Disable {{ source.display_name }}</h1>
+    <p class="mt-2 text-gray-700">This changes Builder draft revision {{ projection_state.local_revision }}. The published execution revision remains active until separately published.</p>
+  </div>
+  <section class="bg-white border border-gray-200 rounded-xl p-5">
+    <dl class="grid sm:grid-cols-3 gap-4">
+      <div><dt class="text-sm text-gray-600">Discovered skills</dt><dd class="text-2xl font-bold">{{ impact.discovered_skill_count }}</dd></div>
+      <div><dt class="text-sm text-gray-600">Current approvals</dt><dd class="text-2xl font-bold">{{ impact.approved_current_fingerprint_count }}</dd></div>
+      <div><dt class="text-sm text-gray-600">Enabled bindings</dt><dd class="text-2xl font-bold">{{ impact.enabled_binding_count }}</dd></div>
+    </dl>
+    <h2 class="font-bold mt-5">Affected applications</h2>
+    <ul class="mt-2 list-disc pl-5">{% for app in impact.affected_apps %}<li>{{ app.name }}</li>{% else %}<li>None</li>{% endfor %}</ul>
+  </section>
+  <div class="border border-amber-300 bg-amber-50 text-amber-950 rounded-lg p-4">
+    Disabled in Builder; still active in the published execution revision until changes are published.
+  </div>
+  <form method="post" action="{{ url_for('toggle_agent_skill_source_form', source_id=source.id) }}" class="flex gap-3">
+    <input type="hidden" name="enabled" value="false">
+    <input type="hidden" name="expected_local_revision" value="{{ projection_state.local_revision }}">
+    <input type="hidden" name="catalog_view" value="disabled">
+    <button type="submit" class="px-4 py-2 rounded bg-amber-700 text-white">Disable source in draft</button>
+    <a href="{{ url_for('agent_skills', catalog_view='source:' ~ source.id) }}" class="px-4 py-2 rounded border">Cancel</a>
+  </form>
+</div>
+{% endblock %}

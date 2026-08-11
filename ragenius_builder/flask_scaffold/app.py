@@ -1,4 +1,6 @@
 import datetime
+import hashlib
+import hmac
 import threading
 import json
 import os
@@ -8,7 +10,7 @@ from pathlib import Path
 from dataclasses import asdict
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from flask import Flask, render_template, request, redirect, url_for, jsonify, abort
+from flask import Flask, render_template, request, redirect, url_for, jsonify, abort, make_response
 
 from storage import (
     store,
@@ -22,6 +24,11 @@ from storage import (
 from execution_client import ExecutionSubsystemClient
 from agent_skill_execution_client import AgentSkillExecutionClient
 from agent_skill_projection import synchronize_agent_skill_projection
+from agent_skill_publication import (
+    PublicationRevisionStale,
+    build_publication_preview,
+    publish_agent_skill_revision,
+)
 from instruction_model_adapter import InstructionModelAdapter
 from policy import get_template_family_policy
 from skill_normalization import AUTHOR_TOOL_ALIAS_MAP, EXPLICIT_REQUIRED_TOOL_TEMPLATE_MAP
@@ -531,6 +538,94 @@ def _agent_skill_builder_instance_id() -> str:
     return (os.environ.get("RAGENIUS_BUILDER_INSTANCE_ID") or "builder-local-default").strip()
 
 
+def _agent_skill_publication_correlation_id() -> str:
+    return (request.headers.get("X-Request-Id") or str(uuid.uuid4())).strip()[:128]
+
+
+_AGENT_SKILL_PUBLICATION_ENDPOINTS = {
+    "agent_skill_publication_review",
+    "publish_agent_skills_form",
+    "api_synchronize_agent_skills",
+    "api_agent_skill_publication_preview",
+    "api_publish_agent_skills",
+}
+_AGENT_SKILL_PUBLICATION_BROWSER_ENDPOINTS = {
+    "agent_skill_publication_review",
+    "publish_agent_skills_form",
+}
+
+
+def _agent_skill_publication_csrf_token() -> str:
+    configured_token = os.environ.get("RAGENIUS_BUILDER_ADMIN_TOKEN", "").strip()
+    return hmac.new(
+        configured_token.encode("utf-8"),
+        b"ragenius-agent-skill-publication-form-v1",
+        hashlib.sha256,
+    ).hexdigest()
+
+
+@app.before_request
+def _require_agent_skill_publication_admin():
+    if request.endpoint not in _AGENT_SKILL_PUBLICATION_ENDPOINTS:
+        return None
+
+    configured_token = os.environ.get("RAGENIUS_BUILDER_ADMIN_TOKEN", "").strip()
+    if not configured_token:
+        return jsonify(
+            {
+                "error": {
+                    "code": "BUILDER_ADMIN_AUTH_NOT_CONFIGURED",
+                    "message": "Builder publication authentication is not configured.",
+                }
+            }
+        ), 503
+
+    supplied_token = ""
+    authorization = request.headers.get("Authorization", "")
+    if authorization.startswith("Bearer "):
+        supplied_token = authorization[7:].strip()
+    elif (
+        request.endpoint in _AGENT_SKILL_PUBLICATION_BROWSER_ENDPOINTS
+        and request.authorization
+        and request.authorization.type.lower() == "basic"
+    ):
+        supplied_token = request.authorization.password or ""
+
+    if supplied_token and hmac.compare_digest(supplied_token, configured_token):
+        return None
+
+    response = make_response(
+        jsonify(
+            {
+                "error": {
+                    "code": "BUILDER_ADMIN_AUTH_REQUIRED",
+                    "message": "A valid Builder administrator credential is required.",
+                }
+            }
+        ),
+        401,
+    )
+    response.headers["WWW-Authenticate"] = 'Basic realm="RAGenius Builder publication"'
+    return response
+
+
+def _public_agent_skill_publication_result(result):
+    return {key: value for key, value in result.items() if key != "projection_state"}
+
+
+def _agent_skill_publication_review_context(preview, result=None):
+    apps = {item["id"]: item["name"] for item in store.list_applications()}
+    return {
+        "preview": preview,
+        "result": result,
+        "csrf_token": _agent_skill_publication_csrf_token(),
+        "affected_apps": [
+            {"id": app_id, "name": apps.get(app_id, app_id)}
+            for app_id in preview["changes"]["affected_apps"]
+        ],
+    }
+
+
 def _public_agent_skill_source(source_obj):
     return {
         key: source_obj[key]
@@ -576,6 +671,7 @@ def _public_agent_skill(skill_obj):
     } | {
         "approved_fingerprint": approval.get("approved_fingerprint"),
         "approval_state": approval.get("state"),
+        "source": skill_obj.get("source"),
     }
 
 
@@ -1429,13 +1525,32 @@ def agent_skills():
         }
         for index, option in enumerate(source_options)
     ]
+    sources = sorted(
+        [_public_agent_skill_source(item) for item in store.list_agent_skill_sources()],
+        key=lambda item: (item["display_name"].casefold(), item["id"]),
+    )
+    catalog_view = (request.args.get("catalog_view") or "active").strip()
+    source_id = catalog_view.split(":", 1)[1] if catalog_view.startswith("source:") else None
+    normalized_view = "source" if source_id else catalog_view
+    if normalized_view not in {"active", "source", "disabled"}:
+        abort(404)
+    if source_id and not store.get_agent_skill_source(source_id):
+        abort(404)
+    publication_preview = build_publication_preview(
+        store=store, builder_instance_id=_agent_skill_builder_instance_id()
+    )
     return render_template(
         "agent_skills.html",
-        sources=[_public_agent_skill_source(item) for item in store.list_agent_skill_sources()],
-        agent_skills=[_public_agent_skill(item) for item in store.list_agent_skill_catalog()],
+        sources=sources,
+        agent_skills=[
+            _public_agent_skill(item)
+            for item in store.list_agent_skill_catalog_view(view=normalized_view, source_id=source_id)
+        ],
+        catalog_view=catalog_view,
         source_options=display_options,
         source_options_error=source_options_error,
         projection_state=store.get_agent_skill_projection_state(),
+        publication_preview=publication_preview,
     )
 
 
@@ -1466,20 +1581,102 @@ def discover_agent_skill_source_form(source_id):
     items, error = _discover_agent_skill_source(source_id)
     if error:
         return jsonify(error[0]), error[1]
-    return redirect(url_for("agent_skills"))
+    return redirect(url_for(
+        "agent_skills",
+        catalog_view=request.form.get("catalog_view") or f"source:{source_id}",
+    ))
 
 
 @app.route("/agent-skill-sources/<source_id>/toggle", methods=["POST"])
 def toggle_agent_skill_source_form(source_id):
     try:
+        expected_raw = (request.form.get("expected_local_revision") or "").strip()
         store.update_agent_skill_source(
             source_id,
             enabled=(request.form.get("enabled") or "").strip().lower() == "true",
             actor_id=_agent_skill_actor_id(),
+            expected_local_revision=int(expected_raw) if expected_raw else None,
         )
     except ValueError as exc:
-        return jsonify({"errors": [validation_error("source", str(exc), "invalid")]}), 422
-    return redirect(url_for("agent_skills"))
+        status = 409 if str(exc) == "AGENT_SKILL_LOCAL_REVISION_STALE" else 422
+        return jsonify({"errors": [validation_error("source", str(exc), "invalid")]}), status
+    return redirect(url_for("agent_skills", catalog_view=request.form.get("catalog_view") or "active"))
+
+
+@app.route("/agent-skill-sources/<source_id>/disable-review")
+def agent_skill_source_disable_review(source_id):
+    source = store.get_agent_skill_source(source_id)
+    if not source:
+        abort(404)
+    return render_template(
+        "agent_skill_source_disable_review.html",
+        source=_public_agent_skill_source(source),
+        impact=store.get_agent_skill_source_impact(source_id),
+        projection_state=store.get_agent_skill_projection_state(),
+    )
+
+
+@app.route("/agent-skills/publication-review")
+def agent_skill_publication_review():
+    preview = build_publication_preview(
+        store=store, builder_instance_id=_agent_skill_builder_instance_id()
+    )
+    return render_template(
+        "agent_skill_publication_review.html",
+        **_agent_skill_publication_review_context(preview),
+    )
+
+
+@app.route("/agent-skills/publications", methods=["POST"])
+def publish_agent_skills_form():
+    supplied_csrf = str(request.form.get("csrf_token") or "")
+    if not hmac.compare_digest(supplied_csrf, _agent_skill_publication_csrf_token()):
+        return jsonify({
+            "error": {
+                "code": "BUILDER_PUBLICATION_CSRF_INVALID",
+                "message": "Publication form validation failed. Reload the review page.",
+            }
+        }), 403
+    try:
+        expected_revision = int(request.form.get("expected_local_revision", ""))
+        result = publish_agent_skill_revision(
+            store=store,
+            execution_client=_agent_skill_execution_client(),
+            builder_instance_id=_agent_skill_builder_instance_id(),
+            expected_local_revision=expected_revision,
+            actor_id=_agent_skill_actor_id(),
+            correlation_id=_agent_skill_publication_correlation_id(),
+        )
+    except (TypeError, ValueError) as exc:
+        preview = build_publication_preview(
+            store=store, builder_instance_id=_agent_skill_builder_instance_id()
+        )
+        status = 409 if isinstance(exc, PublicationRevisionStale) else 422
+        result = {
+            "ok": False,
+            "state": preview["state"],
+            "error": {
+                "code": getattr(exc, "code", "PUBLICATION_REQUEST_INVALID"),
+                "message": str(exc),
+            },
+        }
+        return (
+            render_template(
+                "agent_skill_publication_review.html",
+                **_agent_skill_publication_review_context(preview, result),
+            ),
+            status,
+        )
+    preview = build_publication_preview(
+        store=store, builder_instance_id=_agent_skill_builder_instance_id()
+    )
+    return (
+        render_template(
+            "agent_skill_publication_review.html",
+            **_agent_skill_publication_review_context(preview, result),
+        ),
+        200 if result["ok"] else 502,
+    )
 
 
 @app.route("/agent-skills/<agent_skill_id>")
@@ -2245,7 +2442,58 @@ def api_synchronize_agent_skills():
     except (ValueError, OSError) as exc:
         return jsonify({"error": {"code": "AGENT_SKILL_PROJECTION_SYNC_FAILED", "message": str(exc)}}), 502
     status = 200 if state["sync_status"] == "synchronized" else 502
-    return jsonify(state), status
+    public_state = {
+        key: value for key, value in state.items() if key != "published_snapshot_json"
+    }
+    public_state["_meta"] = {
+        "deprecated": True,
+        "replacement": "/api/agent-skills/publications",
+    }
+    return jsonify(public_state), status
+
+
+@app.route("/api/agent-skills/publication-preview")
+def api_agent_skill_publication_preview():
+    preview = build_publication_preview(
+        store=store, builder_instance_id=_agent_skill_builder_instance_id()
+    )
+    return jsonify(preview)
+
+
+@app.route("/api/agent-skills/publications", methods=["POST"])
+def api_publish_agent_skills():
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        expected_revision = int(data.get("expected_local_revision"))
+        result = publish_agent_skill_revision(
+            store=store,
+            execution_client=_agent_skill_execution_client(),
+            builder_instance_id=_agent_skill_builder_instance_id(),
+            expected_local_revision=expected_revision,
+            actor_id=_agent_skill_actor_id(),
+            correlation_id=_agent_skill_publication_correlation_id(),
+        )
+    except PublicationRevisionStale as exc:
+        return jsonify(
+            {
+                "error": {
+                    "code": exc.code,
+                    "message": str(exc),
+                    "expected_local_revision": exc.expected_revision,
+                    "current_local_revision": exc.current_revision,
+                }
+            }
+        ), 409
+    except (TypeError, ValueError) as exc:
+        return jsonify(
+            {
+                "error": {
+                    "code": "PUBLICATION_REQUEST_INVALID",
+                    "message": str(exc),
+                }
+            }
+        ), 422
+    return jsonify(_public_agent_skill_publication_result(result)), 200 if result["ok"] else 502
 
 
 @app.route("/api/agent-skills/synchronize", methods=["GET"])

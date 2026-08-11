@@ -157,6 +157,11 @@ record. It must not resend browser bytes unless the original staging record is
 unavailable. The app response returns safe staging status even when execution
 import fails, allowing the frontend to retry the correct phase.
 
+The requested `analysis_mode` is durable operation state. A failed
+`normal_query` analysis remains retryable, and retry must reconstruct that
+analysis before the operation can become ready. It cannot silently downgrade
+to `none` after canonical import succeeds.
+
 ### Content Reuse
 
 Within one app/session, an existing ready uploaded artifact with the same
@@ -258,10 +263,21 @@ Failed staging bytes remain available only for a configurable retry window
 with a default of 24 hours. Explicit **Delete** removes failed staging
 immediately. Startup and periodic cleanup remove expired staging files and mark
 their operations non-retryable without creating an artifact.
+Cleanup atomically claims an operation only while it is still expired,
+retryable, and in `staged|failed`. Preparation uses the reciprocal
+compare-and-set transition from `staged|failed` to `preparing`, so cleanup and
+retry cannot both claim the same operation regardless of which starts first.
+Transient cleanup failures are bounded and do not terminate the periodic loop.
 
 Execution artifact deletion uses a tombstoned/deleted state rather than
 removing historical database identity. Ordinary inventory and resolution
 exclude deleted artifacts.
+
+Deletion is coordinated with both persisted queued/running/confirmation
+references and process-local provider leases. The exclusive deletion guard
+spans the active-reference check and tombstone write, preventing a synchronous
+provider from losing bytes during execution and preventing a new lease from
+starting midway through deletion.
 
 ## Existing Data Compatibility
 

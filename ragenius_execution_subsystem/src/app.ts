@@ -75,6 +75,7 @@ import { CodexPluginInventoryReader } from "./core/agent-skills/codex-plugin-inv
 import { OpenClawAgentSkillDiscoveryAdapter } from "./core/agent-skills/openclaw-agent-skill-discovery.js";
 import { AgentSkillSelectionService } from "./core/agent-skills/agent-skill-selection-service.js";
 import { SessionUploadArtifactImporter } from "./core/artifacts/session-upload-artifact-importer.js";
+import { ArtifactReferenceCoordinator } from "./core/artifacts/artifact-reference-coordinator.js";
 
 export interface McpDiscoveryProviderState {
   discoveredToolCount: number;
@@ -95,6 +96,7 @@ export interface AppServices {
   agentSkillSelectionService: AgentSkillSelectionService;
   agentSkillProjectionStore: AgentSkillProjectionStore;
   artifactStore: ArtifactStore;
+  artifactReferenceCoordinator: ArtifactReferenceCoordinator;
   sessionUploadArtifactImporter: SessionUploadArtifactImporter;
   confirmationService: ConfirmationService;
   confirmationStore: ConfirmationStore;
@@ -122,6 +124,8 @@ export function createAppServices(
   const permissionEngine =
     overrides.permissionEngine ?? new PermissionEngine();
   const artifactStore = overrides.artifactStore ?? new ArtifactStore(runtimeConfig.artifactStore.rootDir);
+  const artifactReferenceCoordinator =
+    overrides.artifactReferenceCoordinator ?? new ArtifactReferenceCoordinator();
   const sessionUploadArtifactImporter =
     overrides.sessionUploadArtifactImporter ??
     new SessionUploadArtifactImporter(artifactStore, {
@@ -265,6 +269,7 @@ export function createAppServices(
     new ExecutionEngine({
       builderSkillClient,
       agentSkillSelectionService,
+      artifactReferenceCoordinator,
       confirmationService: configuredConfirmationService,
       agentProviders: new Map<string, AgentProvider>([
         [codexCliProvider.backend, codexCliProvider],
@@ -348,6 +353,7 @@ export function createAppServices(
     agentSkillSelectionService,
     agentSkillProjectionStore,
     artifactStore,
+    artifactReferenceCoordinator,
     sessionUploadArtifactImporter,
     confirmationService,
     confirmationStore,

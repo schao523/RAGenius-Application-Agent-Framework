@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager, suppress
 import copy
 from datetime import datetime, timezone
 import os
@@ -23,7 +25,7 @@ from .builder_store import get_builder_store
 from .approved_content_service import content_hash_for, resolve_approved_snapshot
 from .approved_content_service import create_approved_snapshot, create_snapshot_from_latest_assistant_message, create_snapshot_from_message_id
 from .chat_repos import ChatRepo, InstructionUnderstandingRepo, RetrievalRepo, SessionRepo
-from .execution_input_service import ExecutionInputPreparationError, prepare_session_upload
+from .artifact_upload_service import ArtifactUploadService
 from .chat_service import run_chat_pipeline
 from .instruction_understanding_service import (
     SEMANTIC_COMPILE_PROMPT_VERSION,
@@ -56,7 +58,28 @@ class Utf8JSONResponse(JSONResponse):
     media_type = "application/json; charset=utf-8"
 
 
-app = FastAPI(title="RAGenius App API", default_response_class=Utf8JSONResponse)
+_artifact_upload_cleanup_task: asyncio.Task | None = None
+
+
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    global _artifact_upload_cleanup_task
+    await _run_artifact_upload_cleanup_once()
+    _artifact_upload_cleanup_task = asyncio.create_task(_artifact_upload_cleanup_loop())
+    try:
+        yield
+    finally:
+        _artifact_upload_cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await _artifact_upload_cleanup_task
+        _artifact_upload_cleanup_task = None
+
+
+app = FastAPI(
+    title="RAGenius App API",
+    default_response_class=Utf8JSONResponse,
+    lifespan=_app_lifespan,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -3028,7 +3051,14 @@ async def delete_session_artifact(
         artifact_id=artifact_id,
     )
     if isinstance(result.get("error"), dict):
-        raise HTTPException(status_code=int(result.get("_http_status") or 502), detail="Artifact could not be deleted.")
+        error = result["error"]
+        raise HTTPException(
+            status_code=int(result.get("_http_status") or 502),
+            detail={
+                "code": str(error.get("code") or "ARTIFACT_DELETE_FAILED"),
+                "message": str(error.get("message") or "Artifact could not be deleted."),
+            },
+        )
     return {"deleted": True, "artifact_id": artifact_id}
 
 
@@ -3362,23 +3392,231 @@ def _public_session_uploads(uploads: List[Dict[str, Any]]) -> List[Dict[str, Any
     ]
 
 
+@app.get("/sessions/{session_id}/uploads/duplicate-report")
+async def legacy_upload_duplicate_report(session_id: str, app_id: str, user_id: str):
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    return await run_in_threadpool(
+        _artifact_upload_service().legacy_duplicate_report,
+        app_id=app_id,
+        session_id=session_id,
+        user_id=user_id,
+    )
+
+
 def _agent_input_max_bytes() -> int:
     return int(os.getenv("RAGENIUS_AGENT_INPUT_MAX_BYTES") or "536870912")
 
 
-def _prepare_execution_upload(app_id: str, session_id: str, upload_id: str) -> Dict[str, Any]:
+def _artifact_upload_service() -> ArtifactUploadService:
+    return ArtifactUploadService(
+        session_repo,
+        execution_client,
+        max_bytes=_agent_input_max_bytes(),
+    )
+
+
+async def _artifact_upload_cleanup_loop() -> None:
+    interval = max(
+        60, int(os.getenv("RAGENIUS_UPLOAD_CLEANUP_INTERVAL_SECONDS") or "3600")
+    )
+    while True:
+        await asyncio.sleep(interval)
+        await _run_artifact_upload_cleanup_once()
+
+
+async def _run_artifact_upload_cleanup_once() -> None:
     try:
-        return prepare_session_upload(
-            session_repo=session_repo,
-            execution_client=execution_client,
+        await run_in_threadpool(_artifact_upload_service().cleanup_expired)
+    except Exception as exc:
+        print(f"[artifact-upload-cleanup] cleanup failed: {exc}", file=sys.stderr)
+
+
+def _analyze_canonical_upload(
+    operation: Dict[str, Any],
+    *,
+    builder_context: Dict[str, Any],
+    session: Dict[str, Any],
+) -> Dict[str, Any]:
+    filename = str(operation.get("filename") or "upload.bin")
+    mime_type = str(operation.get("normalized_mime_type") or operation.get("mime_type") or "")
+    suffix = Path(filename).suffix.lower()
+    extractable = (
+        mime_type.startswith("text/")
+        or suffix in {".md", ".txt", ".json", ".csv", ".yaml", ".yml", ".pdf"}
+    )
+    analysis_limit = int(os.getenv("RAGENIUS_UPLOAD_ANALYSIS_MAX_BYTES") or "33554432")
+    staged_path = Path(str(operation.get("file_path") or ""))
+    content = b""
+    if extractable and int(operation.get("size_bytes") or 0) <= analysis_limit:
+        content = staged_path.read_bytes()
+    text_content = _extract_session_upload_text(filename, mime_type, content) if content else ""
+    upload_event = {
+        "id": str(operation["upload_operation_id"]),
+        "session_id": str(operation["session_id"]),
+        "filename": filename,
+        "mime_type": mime_type,
+        "size_bytes": int(operation.get("size_bytes") or 0),
+        "sha256": str(operation.get("sha256") or ""),
+        "text_content": text_content,
+        "created_at": operation.get("created_at"),
+    }
+    runtime_state = session_repo.get_runtime_state(str(operation["session_id"]))
+    state: Dict[str, Any] = {
+        "session_id": operation["session_id"],
+        "collection_id": operation["app_id"],
+        "domain": builder_context["adapter_json"].get("domain") or "general",
+        "user_id": operation["user_id"],
+        "planner_mode": builder_context.get("planner_mode", "legacy"),
+        "instruction_understanding_mode": builder_context.get("instruction_understanding_mode", "hybrid_shadow"),
+        "config_version": session["config_version"],
+        "adapter_version": session["adapter_version"],
+        "template_version": session["template_version"],
+        "user_query": _upload_analysis_query(filename),
+        "turn_input_type": "session_upload",
+        "session_upload_event_ids": [upload_event["id"]],
+        "pending_upload_analysis": True,
+        "chat_history": chat_repo.history(str(operation["session_id"])),
+        "session_uploads": [*session_repo.list_uploads(str(operation["session_id"])), upload_event],
+        "config_json": builder_context["config_json"],
+        "adapter_json": builder_context["adapter_json"],
+        "template_registry": builder_context["template_registry"],
+        "workflow_progress": runtime_state.get("workflow_progress", {}),
+        "session_execution_state": runtime_state.get("session_execution_state", {}),
+        "intermediate_outputs": runtime_state.get("intermediate_outputs", []),
+        "assembly_state": runtime_state.get("assembly_state", {}),
+        "session_lane_state": runtime_state.get("session_lane_state", {}),
+    }
+    response = run_chat_pipeline(
+        state,
+        session_repo=session_repo,
+        chat_repo=chat_repo,
+        planner_repo=planner_repo,
+        retrieval_repo=retrieval_repo,
+    )
+    response["session_id"] = operation["session_id"]
+    return response
+
+
+@app.post("/sessions/{session_id}/artifacts/uploads", status_code=201)
+async def upload_canonical_session_artifact(
+    session_id: str,
+    app_id: str = Form(...),
+    user_id: str = Form(...),
+    upload_operation_id: str = Form(...),
+    analysis_mode: str = Form("none"),
+    file: UploadFile = File(...),
+):
+    session = _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    operation_id = str(upload_operation_id or "").strip()
+    if not operation_id or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", operation_id):
+        raise HTTPException(status_code=422, detail={
+            "code": "INVALID_UPLOAD_OPERATION_ID",
+            "message": "Upload operation id is invalid.",
+        })
+    if analysis_mode not in {"none", "normal_query"}:
+        raise HTTPException(status_code=422, detail={
+            "code": "INVALID_UPLOAD_ANALYSIS_MODE",
+            "message": "Upload analysis mode is invalid.",
+        })
+    builder_context = _load_builder_context(app_id) if analysis_mode == "normal_query" else None
+    analysis = None
+    if builder_context is not None:
+        analysis = lambda operation: _analyze_canonical_upload(
+            operation,
+            builder_context=builder_context,
+            session=session,
+        )
+    try:
+        return await run_in_threadpool(
+            _artifact_upload_service().upload,
             app_id=app_id,
             session_id=session_id,
-            upload_id=upload_id,
+            user_id=user_id,
+            upload_operation_id=operation_id,
+            filename=file.filename or "upload.bin",
+            mime_type=file.content_type,
+            source=file.file,
+            analysis=analysis,
+            analysis_mode=analysis_mode,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail="Session upload not found.") from exc
-    except ExecutionInputPreparationError as exc:
-        raise HTTPException(status_code=502, detail={"code": exc.code, "message": str(exc)}) from exc
+        message = str(exc)
+        status = 413 if "maximum" in message.lower() else 409
+        raise HTTPException(status_code=status, detail={
+            "code": "ARTIFACT_UPLOAD_REJECTED",
+            "message": message,
+        }) from exc
+
+
+@app.post("/sessions/{session_id}/artifacts/uploads/{upload_operation_id}/retry")
+async def retry_canonical_session_artifact(
+    session_id: str,
+    upload_operation_id: str,
+    app_id: str,
+    user_id: str,
+):
+    session = _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    operation = session_repo.get_upload_operation(
+        app_id=app_id,
+        session_id=session_id,
+        user_id=user_id,
+        upload_operation_id=upload_operation_id,
+    )
+    analysis = None
+    if (
+        operation
+        and operation.get("status") != "ready"
+        and operation.get("analysis_mode") == "normal_query"
+    ):
+        builder_context = _load_builder_context(app_id)
+        analysis = lambda retry_operation: _analyze_canonical_upload(
+            retry_operation,
+            builder_context=builder_context,
+            session=session,
+        )
+    try:
+        return await run_in_threadpool(
+            _artifact_upload_service().retry,
+            app_id=app_id,
+            session_id=session_id,
+            user_id=user_id,
+            upload_operation_id=upload_operation_id,
+            analysis=analysis,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={
+            "code": "UPLOAD_OPERATION_NOT_FOUND",
+            "message": "Upload operation is unavailable.",
+        }) from exc
+
+
+def _prepare_execution_upload(app_id: str, session_id: str, upload_id: str) -> Dict[str, Any]:
+    session = session_repo.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session upload not found.")
+    user_id = str(session.get("user_id") or "")
+    upload = session_repo.get_upload(session_id, upload_id)
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Session upload not found.")
+    result = _artifact_upload_service().import_legacy_upload(
+        app_id=app_id, session_id=session_id, user_id=user_id, upload_id=upload_id,
+    )
+    if result.get("status") != "ready" or not isinstance(result.get("artifact"), dict):
+        raise HTTPException(status_code=410, detail={
+            "code": str(result.get("error_code") or "LEGACY_UPLOAD_UNAVAILABLE"),
+            "message": "Session upload is no longer available.",
+        })
+    public_upload = {
+        key: upload[key]
+        for key in ("id", "session_id", "filename", "mime_type", "size_bytes", "sha256", "created_at")
+        if key in upload
+    }
+    return {
+        "upload": public_upload,
+        "artifact": result["artifact"],
+        "preparation_status": "ready",
+        "reused_existing_artifact": bool(result.get("reused_existing_artifact")),
+    }
 
 
 @app.post("/sessions/{session_id}/execution-inputs", status_code=201)

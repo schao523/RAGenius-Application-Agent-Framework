@@ -209,6 +209,34 @@ class _RuntimeStateMemory:
                 connection.execute("ALTER TABLE sessions ADD COLUMN workflow_progress_json TEXT NOT NULL DEFAULT '{}'")
             if "archived" not in session_columns:
                 connection.execute("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+            upload_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(uploads)").fetchall()
+            }
+            upload_migrations = {
+                "upload_operation_id": "TEXT",
+                "app_id": "TEXT",
+                "user_id": "TEXT",
+                "status": "TEXT NOT NULL DEFAULT 'legacy'",
+                "artifact_id": "TEXT",
+                "artifact_json": "TEXT",
+                "normalized_mime_type": "TEXT",
+                "error_code": "TEXT",
+                "retryable": "INTEGER NOT NULL DEFAULT 0",
+                "staging_expires_at": "TEXT",
+                "deleted_at": "TEXT",
+                "analysis_mode": "TEXT NOT NULL DEFAULT 'none'",
+            }
+            for column, declaration in upload_migrations.items():
+                if column not in upload_columns:
+                    connection.execute(f"ALTER TABLE uploads ADD COLUMN {column} {declaration}")
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_uploads_operation_scope
+                ON uploads(app_id, session_id, upload_operation_id)
+                WHERE upload_operation_id IS NOT NULL
+                """
+            )
             if "pinned" not in session_columns:
                 connection.execute("ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
 
@@ -547,6 +575,11 @@ class _RuntimeStateMemory:
         mime_type: str | None,
         source: BinaryIO,
         max_bytes: int,
+        app_id: str | None = None,
+        user_id: str | None = None,
+        upload_operation_id: str | None = None,
+        staging_expires_at: str | None = None,
+        analysis_mode: str = "none",
     ) -> Dict[str, Any]:
         if max_bytes <= 0:
             raise ValueError("Upload maximum must be positive")
@@ -587,26 +620,222 @@ class _RuntimeStateMemory:
                 "text_content": "",
                 "sha256": f"sha256:{digest.hexdigest()}",
                 "created_at": _utcnow(),
+                "upload_operation_id": upload_operation_id,
+                "app_id": app_id,
+                "user_id": user_id,
+                "status": "staged" if upload_operation_id else "legacy",
+                "artifact_id": None,
+                "artifact_json": None,
+                "normalized_mime_type": str(mime_type or "application/octet-stream").split(";", 1)[0].strip().lower(),
+                "error_code": None,
+                "retryable": bool(upload_operation_id),
+                "staging_expires_at": staging_expires_at,
+                "deleted_at": None,
+                "analysis_mode": analysis_mode,
             }
             with self._managed_connection() as connection:
-                connection.execute(
-                    """
-                    INSERT INTO uploads (
-                        id, session_id, filename, mime_type, size_bytes, file_path,
-                        text_content, sha256, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        row["id"], row["session_id"], row["filename"], row["mime_type"],
-                        row["size_bytes"], row["file_path"], row["text_content"],
-                        row["sha256"], row["created_at"],
-                    ),
-                )
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO uploads (
+                            id, session_id, filename, mime_type, size_bytes, file_path,
+                            text_content, sha256, created_at, upload_operation_id,
+                            app_id, user_id, status, artifact_id, normalized_mime_type,
+                            artifact_json, error_code, retryable, staging_expires_at,
+                            deleted_at, analysis_mode
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            row["id"], row["session_id"], row["filename"], row["mime_type"],
+                            row["size_bytes"], row["file_path"], row["text_content"],
+                            row["sha256"], row["created_at"], row["upload_operation_id"],
+                            row["app_id"], row["user_id"], row["status"], row["artifact_id"],
+                            row["normalized_mime_type"], row["artifact_json"], row["error_code"], int(row["retryable"]),
+                            row["staging_expires_at"], row["deleted_at"],
+                            row["analysis_mode"],
+                        ),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise ValueError("Upload operation already exists") from exc
             return row
         except Exception:
             temp_path.unlink(missing_ok=True)
             final_path.unlink(missing_ok=True)
             raise
+
+    @staticmethod
+    def _upload_operation_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "session_id": row["session_id"],
+            "filename": row["filename"],
+            "mime_type": row["mime_type"],
+            "size_bytes": int(row["size_bytes"]),
+            "file_path": row["file_path"],
+            "text_content": row["text_content"],
+            "sha256": row["sha256"],
+            "created_at": row["created_at"],
+            "upload_operation_id": row["upload_operation_id"],
+            "app_id": row["app_id"],
+            "user_id": row["user_id"],
+            "status": row["status"],
+            "artifact_id": row["artifact_id"],
+            "artifact": json.loads(row["artifact_json"]) if row["artifact_json"] else None,
+            "normalized_mime_type": row["normalized_mime_type"],
+            "error_code": row["error_code"],
+            "retryable": bool(row["retryable"]),
+            "staging_expires_at": row["staging_expires_at"],
+            "deleted_at": row["deleted_at"],
+            "analysis_mode": row["analysis_mode"],
+        }
+
+    def get_upload_operation(
+        self, *, app_id: str, session_id: str, user_id: str,
+        upload_operation_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        with self._managed_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM uploads
+                WHERE app_id = ? AND session_id = ? AND user_id = ?
+                  AND upload_operation_id = ?
+                """,
+                (app_id, session_id, user_id, upload_operation_id),
+            ).fetchone()
+        return self._upload_operation_from_row(row) if row is not None else None
+
+    def update_upload_operation(
+        self, *, app_id: str, session_id: str, user_id: str,
+        upload_operation_id: str, status: str, artifact_id: str | None,
+        error_code: str | None, retryable: bool, artifact: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        if status not in {"staged", "preparing", "ready", "failed", "deleted"}:
+            raise ValueError("Invalid upload operation status")
+        deleted_at = _utcnow() if status == "deleted" else None
+        with self._managed_connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE uploads
+                SET status = ?, artifact_id = ?, artifact_json = COALESCE(?, artifact_json),
+                    error_code = ?, retryable = ?, deleted_at = ?
+                WHERE app_id = ? AND session_id = ? AND user_id = ?
+                  AND upload_operation_id = ?
+                """,
+                (status, artifact_id,
+                 json.dumps(artifact, ensure_ascii=False, sort_keys=True) if artifact is not None else None,
+                 error_code, int(retryable), deleted_at,
+                 app_id, session_id, user_id, upload_operation_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Upload operation not found")
+        result = self.get_upload_operation(
+            app_id=app_id, session_id=session_id, user_id=user_id,
+            upload_operation_id=upload_operation_id,
+        )
+        if result is None:
+            raise ValueError("Upload operation not found")
+        return result
+
+    def claim_upload_operation_for_preparation(
+        self, *, app_id: str, session_id: str, user_id: str,
+        upload_operation_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        with self._managed_connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE uploads
+                SET status = 'preparing', error_code = NULL, deleted_at = NULL
+                WHERE app_id = ? AND session_id = ? AND user_id = ?
+                  AND upload_operation_id = ? AND retryable = 1
+                  AND status IN ('staged', 'failed')
+                """,
+                (app_id, session_id, user_id, upload_operation_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            row = connection.execute(
+                """
+                SELECT * FROM uploads
+                WHERE app_id = ? AND session_id = ? AND user_id = ?
+                  AND upload_operation_id = ?
+                """,
+                (app_id, session_id, user_id, upload_operation_id),
+            ).fetchone()
+        return self._upload_operation_from_row(row) if row is not None else None
+
+    def list_expired_upload_operations(self, now: str) -> List[Dict[str, Any]]:
+        with self._managed_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM uploads
+                WHERE upload_operation_id IS NOT NULL AND retryable = 1
+                  AND status IN ('staged', 'failed')
+                  AND staging_expires_at IS NOT NULL AND staging_expires_at <= ?
+                ORDER BY staging_expires_at, id
+                """,
+                (now,),
+            ).fetchall()
+        return [self._upload_operation_from_row(row) for row in rows]
+
+    def delete_upload_operation(
+        self, *, app_id: str, session_id: str, user_id: str,
+        upload_operation_id: str,
+    ) -> bool:
+        operation = self.get_upload_operation(
+            app_id=app_id, session_id=session_id, user_id=user_id,
+            upload_operation_id=upload_operation_id,
+        )
+        if operation is None:
+            return False
+        candidate = Path(str(operation.get("file_path") or ""))
+        try:
+            resolved = candidate.resolve(strict=True)
+            if self.uploads_dir == resolved or self.uploads_dir in resolved.parents:
+                resolved.unlink(missing_ok=True)
+        except OSError:
+            pass
+        self.update_upload_operation(
+            app_id=app_id, session_id=session_id, user_id=user_id,
+            upload_operation_id=upload_operation_id, status="deleted",
+            artifact_id=operation.get("artifact_id"), error_code=None, retryable=False,
+        )
+        return True
+
+    def expire_upload_operation(
+        self, *, app_id: str, session_id: str, user_id: str,
+        upload_operation_id: str, now: str,
+    ) -> bool:
+        with self._managed_connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE uploads
+                SET status = 'deleted', retryable = 0, error_code = NULL,
+                    deleted_at = ?
+                WHERE app_id = ? AND session_id = ? AND user_id = ?
+                  AND upload_operation_id = ? AND retryable = 1
+                  AND status IN ('staged', 'failed')
+                  AND staging_expires_at IS NOT NULL AND staging_expires_at <= ?
+                """,
+                (_utcnow(), app_id, session_id, user_id, upload_operation_id, now),
+            )
+            if cursor.rowcount != 1:
+                return False
+            row = connection.execute(
+                """
+                SELECT file_path FROM uploads
+                WHERE app_id = ? AND session_id = ? AND user_id = ?
+                  AND upload_operation_id = ?
+                """,
+                (app_id, session_id, user_id, upload_operation_id),
+            ).fetchone()
+        candidate = Path(str(row["file_path"] if row else ""))
+        try:
+            resolved = candidate.resolve(strict=True)
+            if self.uploads_dir == resolved or self.uploads_dir in resolved.parents:
+                resolved.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return True
 
     def get_session_upload(self, session_id: str, upload_id: str) -> Optional[Dict[str, Any]]:
         with self._managed_connection() as connection:
@@ -841,7 +1070,7 @@ class _RuntimeStateMemory:
     def list_session_uploads(self, session_id: str) -> List[Dict[str, Any]]:
         with self._managed_connection() as connection:
             rows = connection.execute(
-                "SELECT * FROM uploads WHERE session_id = ? ORDER BY created_at ASC, id ASC",
+                "SELECT * FROM uploads WHERE session_id = ? AND upload_operation_id IS NULL ORDER BY created_at ASC, id ASC",
                 (session_id,),
             ).fetchall()
         return [
@@ -1171,6 +1400,11 @@ class SessionRepo:
         mime_type: str | None,
         source: BinaryIO,
         max_bytes: int,
+        app_id: str | None = None,
+        user_id: str | None = None,
+        upload_operation_id: str | None = None,
+        staging_expires_at: str | None = None,
+        analysis_mode: str = "none",
     ) -> Dict[str, Any]:
         return self._db.save_session_upload_stream(
             session_id,
@@ -1178,7 +1412,30 @@ class SessionRepo:
             mime_type=mime_type,
             source=source,
             max_bytes=max_bytes,
+            app_id=app_id,
+            user_id=user_id,
+            upload_operation_id=upload_operation_id,
+            staging_expires_at=staging_expires_at,
+            analysis_mode=analysis_mode,
         )
+
+    def get_upload_operation(self, **scope) -> Optional[Dict[str, Any]]:
+        return self._db.get_upload_operation(**scope)
+
+    def update_upload_operation(self, **values) -> Dict[str, Any]:
+        return self._db.update_upload_operation(**values)
+
+    def claim_upload_operation_for_preparation(self, **scope) -> Optional[Dict[str, Any]]:
+        return self._db.claim_upload_operation_for_preparation(**scope)
+
+    def list_expired_upload_operations(self, now: str) -> List[Dict[str, Any]]:
+        return self._db.list_expired_upload_operations(now)
+
+    def delete_upload_operation(self, **scope) -> bool:
+        return self._db.delete_upload_operation(**scope)
+
+    def expire_upload_operation(self, **scope) -> bool:
+        return self._db.expire_upload_operation(**scope)
 
     def get_upload(self, session_id: str, upload_id: str) -> Optional[Dict[str, Any]]:
         return self._db.get_session_upload(session_id, upload_id)

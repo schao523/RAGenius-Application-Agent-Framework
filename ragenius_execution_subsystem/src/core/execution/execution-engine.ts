@@ -12,7 +12,8 @@ import type {
 import { AppError } from "../errors/app-error.js";
 import { getArtifactConsumerSpec } from "../artifacts/artifact-consumption-registry.js";
 import { toAppError } from "../errors/error-classifier.js";
-import type { AgentProvider } from "../agents/agent-provider.js";
+import type { AgentProvider, AgentProviderResult } from "../agents/agent-provider.js";
+import type { ArtifactReferenceCoordinator } from "../artifacts/artifact-reference-coordinator.js";
 import type { AgentProviderExecutionContext } from "../agents/agent-provider-context.js";
 import type {
   AgentArtifactResolverInput,
@@ -90,6 +91,7 @@ export class ExecutionEngine {
   private readonly executionStore: ExecutionStore | undefined;
   private readonly confirmationService: ConfirmationService;
   private readonly agentProviders: Map<string, AgentProvider>;
+  private readonly artifactReferenceCoordinator: ArtifactReferenceCoordinator | undefined;
   private readonly resolveAgentArtifacts:
     | ((input: AgentArtifactResolverInput) => Promise<ResolvedAgentArtifact[]>)
     | undefined;
@@ -116,6 +118,7 @@ export class ExecutionEngine {
     confirmationService?: ConfirmationService;
     codexCliProvider?: CodexCliProvider;
     agentProviders?: Map<string, AgentProvider>;
+    artifactReferenceCoordinator?: ArtifactReferenceCoordinator;
     resolveAgentArtifacts?: (
       input: AgentArtifactResolverInput
     ) => Promise<ResolvedAgentArtifact[]>;
@@ -145,6 +148,7 @@ export class ExecutionEngine {
         ttlMs: 900000
       });
     this.resolveAgentArtifacts = options?.resolveAgentArtifacts;
+    this.artifactReferenceCoordinator = options?.artifactReferenceCoordinator;
     this.resolveScopedSkillArtifactFile = options?.resolveScopedSkillArtifactFile;
     const codexCliProvider =
       options?.codexCliProvider ??
@@ -324,6 +328,18 @@ export class ExecutionEngine {
           this.throwPolicyChanged();
         }
 
+        const artifactScope = {
+          appId: request.app_id,
+          sessionId: request.session_id
+        };
+        const releaseArtifactLeases = this.artifactReferenceCoordinator?.acquire(
+          (request.artifact_refs ?? []).map((reference) => ({
+            ...artifactScope,
+            artifactId: reference.artifact_id
+          }))
+        ) ?? (() => undefined);
+        let agentResult: AgentProviderResult;
+        try {
         let resolvedArtifacts: ResolvedAgentArtifact[] = [];
         if (request.agent_backend === "codex_cli" && request.artifact_refs?.length) {
           try {
@@ -376,11 +392,14 @@ export class ExecutionEngine {
           resolved_artifacts: resolvedArtifacts,
           expected_outputs: request.expected_outputs ?? []
         };
-        const agentResult = await provider.execute(
+        agentResult = await provider.execute(
           policyRequest,
           agentPolicy,
           providerContext
         );
+        } finally {
+          releaseArtifactLeases();
+        }
         const providerStatus = agentResult.status ?? "completed";
         const result = normalizeTerminalResult({
           executionId,

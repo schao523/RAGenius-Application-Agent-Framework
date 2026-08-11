@@ -5,6 +5,78 @@ import type { ExecutionRequest } from "../../src/api/schemas/execution-request.s
 import { InMemoryExecutionStore } from "../../src/core/execution/execution-store.js";
 
 describe("execution store", () => {
+  it("reports exact-scoped artifact references only for active executions", async () => {
+    const store = new InMemoryExecutionStore();
+    const request: ExecutionRequest = {
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "codex_cli",
+      agent_query: "Summarize the artifact.",
+      artifact_refs: [{
+        artifact_id: "artifact_001",
+        role: "source",
+        reuse_mode: "file_backed"
+      }]
+    };
+    for (const [executionId, status] of [
+      ["execution_active", "pending_confirmation"],
+      ["execution_complete", "completed"]
+    ] as const) {
+      await store.save({
+        executionId,
+        request,
+        result: {
+          execution_id: executionId,
+          status,
+          result_type: "json",
+          result: {},
+          files: [],
+          errors: [],
+          logs_summary: status
+        }
+      });
+    }
+
+    assert.equal(await store.hasActiveArtifactReference({
+      appId: "app_001",
+      sessionId: "sess_001",
+      artifactId: "artifact_001"
+    }), true);
+    assert.equal(await store.hasActiveArtifactReference({
+      appId: "app_001",
+      sessionId: "sess_002",
+      artifactId: "artifact_001"
+    }), false);
+    assert.equal(await store.hasActiveArtifactReference({
+      appId: "app_001",
+      sessionId: "sess_001",
+      artifactId: "artifact_other"
+    }), false);
+    await store.transition({
+      scope: {
+        appId: "app_001",
+        sessionId: "sess_001",
+        executionId: "execution_active"
+      },
+      from: ["pending_confirmation"],
+      result: {
+        execution_id: "execution_active",
+        status: "completed",
+        result_type: "json",
+        result: {},
+        files: [],
+        errors: [],
+        logs_summary: "Completed."
+      }
+    });
+    assert.equal(await store.hasActiveArtifactReference({
+      appId: "app_001",
+      sessionId: "sess_001",
+      artifactId: "artifact_001"
+    }), false);
+  });
+
   it("persists and retrieves execution records with logs", async () => {
     const store = new InMemoryExecutionStore();
     const request: ExecutionRequest = {

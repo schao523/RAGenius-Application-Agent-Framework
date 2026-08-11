@@ -656,6 +656,32 @@ artifact ref with role `attachment` and reuse mode `file_backed`. Preparation
 does not authorize execution or external writes; the normal policy classifier
 and single-use confirmation state machine remain authoritative.
 
+## Unified Upload Artifact Addendum
+
+This addendum supersedes the visible two-tier Composer upload/preparation UX
+above. The older `/execution-inputs` and `/uploads/{upload_id}/prepare-for-execution`
+routes remain compatibility surfaces only.
+
+Normal chat and Execution Composer use one app endpoint:
+`POST /sessions/{session_id}/artifacts/uploads`. The browser supplies a stable
+`upload_operation_id`, exact app/session/user scope, one file, and
+`analysis_mode = normal_query|none`. Retrying the same operation reuses staged
+bytes and must not require the browser to resend them. Successful upload returns
+one canonical session artifact and the frontend lists it only in Artifact
+Library. Composer selects it by `artifact_id`; no user-visible session-upload
+inventory or prepare step remains.
+
+Within one app/session, identical SHA-256, byte size, and normalized MIME type
+resolve to one canonical artifact. Deletion is an idempotent tombstone: bytes
+and normal list/resolve access are removed while metadata required by completed
+execution evidence remains. Deletion must return `ARTIFACT_IN_USE` while a
+queued, running, or pending-confirmation execution references the artifact.
+
+Legacy app uploads are imported lazily on first compatibility access through a
+deterministic `legacy.<upload_id>` operation. Original legacy bytes are retained.
+The scoped read-only duplicate report identifies duplicate groups, canonical
+mappings, retained byte totals, and unavailable rows; it never deletes data.
+
 ## Migration Notes
 
 Phase 1 may keep approved-content plumbing internally.

@@ -23,16 +23,39 @@ const styles = {
 };
 
 describe("ExecutionComposer", () => {
+  it("uses the unified upload control and removes session preparation controls", async () => {
+    const onUploadExecutionInput = vi.fn().mockResolvedValue({
+      status: "ready",
+      artifact: {
+        artifact_id: "artifact_video", display_name: "video.mp4",
+        artifact_type: "session_upload", mime_type: "video/mp4", status: "ready",
+      },
+    });
+    render(<ExecutionComposer
+      toolInventory={[]} skillInventory={[]} artifactInventory={[]}
+      initialCommandKind="agent" onUploadExecutionInput={onUploadExecutionInput}
+      onSubmit={vi.fn()} onClose={vi.fn()} styles={styles}
+    />);
+
+    expect(screen.getByLabelText("Upload artifact")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Select session file")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Prepare selected file" })).toBeNull();
+    const file = new File(["video"], "video.mp4", { type: "video/mp4" });
+    await act(async () => fireEvent.change(screen.getByLabelText("Upload artifact"), {
+      target: { files: [file] },
+    }));
+    await waitFor(() => expect(screen.getAllByText(/video\.mp4/i).length).toBeGreaterThan(0));
+  });
+
   it("uploads and automatically selects a prepared Agent input", async () => {
     const onSubmit = vi.fn();
     const onUploadExecutionInput = vi.fn().mockResolvedValue({
-      upload: { id: "upload_video", filename: "video.mp4", size_bytes: 11, mime_type: "video/mp4" },
+      status: "ready",
       artifact: {
         artifact_id: "artifact_video", display_name: "video.mp4", artifact_type: "session_upload",
         mime_type: "video/mp4", status: "ready",
         consumption: { default_mode: "file_backed", supported_modes: ["file_backed"] },
       },
-      preparation_status: "ready",
     });
     render(<ExecutionComposer
       toolInventory={[]} skillInventory={[]} artifactInventory={[]}
@@ -41,100 +64,12 @@ describe("ExecutionComposer", () => {
     />);
     fireEvent.change(screen.getByLabelText("Agent Request"), { target: { value: "Publish this video." } });
     const file = new File(["video-bytes"], "video.mp4", { type: "video/mp4" });
-    await act(async () => fireEvent.change(screen.getByLabelText("Upload file"), { target: { files: [file] } }));
+    await act(async () => fireEvent.change(screen.getByLabelText("Upload artifact"), { target: { files: [file] } }));
     await waitFor(() => expect(screen.getAllByText(/video\.mp4.*file backed/i)).toHaveLength(2));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Run" })));
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       args: expect.objectContaining({
         artifactRefs: [{ artifact_id: "artifact_video", role: "attachment", reuse_mode: "file_backed" }],
-      }),
-    }));
-  });
-
-  it("prepares an existing session file for Agent reuse", async () => {
-    const onPrepareSessionUpload = vi.fn().mockResolvedValue({
-      upload: { id: "upload_1", filename: "notes.txt", size_bytes: 5, mime_type: "text/plain" },
-      artifact: {
-        artifact_id: "artifact_1", display_name: "notes.txt", artifact_type: "session_upload",
-        mime_type: "text/plain", status: "ready",
-        consumption: { default_mode: "file_backed", supported_modes: ["file_backed"] },
-      }, preparation_status: "ready",
-    });
-    render(<ExecutionComposer
-      toolInventory={[]} skillInventory={[]} artifactInventory={[]}
-      sessionUploads={[{ id: "upload_1", filename: "notes.txt", size_bytes: 5, mime_type: "text/plain" }]}
-      initialCommandKind="agent" onPrepareSessionUpload={onPrepareSessionUpload}
-      onSubmit={vi.fn()} onClose={vi.fn()} styles={styles}
-    />);
-    fireEvent.change(screen.getByLabelText("Select session file"), { target: { value: "upload_1" } });
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Prepare selected file" })));
-    expect(onPrepareSessionUpload).toHaveBeenCalledWith("upload_1");
-    await waitFor(() => expect(screen.getAllByText(/notes\.txt.*file backed/i)).toHaveLength(2));
-  });
-
-  it("blocks Agent submission while preparation is pending or failed and supports retry", async () => {
-    let resolvePreparation;
-    const pendingResult = new Promise((resolve) => { resolvePreparation = resolve; });
-    const onPrepareSessionUpload = vi.fn()
-      .mockReturnValueOnce(pendingResult)
-      .mockResolvedValueOnce({
-        upload: { id: "upload_1", filename: "notes.txt", size_bytes: 5, mime_type: "text/plain" },
-        artifact: {
-          artifact_id: "artifact_1", display_name: "notes.txt", artifact_type: "session_upload",
-          mime_type: "text/plain", status: "ready",
-          consumption: { default_mode: "file_backed", supported_modes: ["file_backed"] },
-        }, preparation_status: "ready",
-      });
-    render(<ExecutionComposer
-      toolInventory={[]} skillInventory={[]} artifactInventory={[]}
-      sessionUploads={[{ id: "upload_1", filename: "notes.txt", size_bytes: 5, mime_type: "text/plain" }]}
-      initialCommandKind="agent" onPrepareSessionUpload={onPrepareSessionUpload}
-      onSubmit={vi.fn()} onClose={vi.fn()} styles={styles}
-    />);
-    fireEvent.change(screen.getByLabelText("Select session file"), { target: { value: "upload_1" } });
-    fireEvent.click(screen.getByRole("button", { name: "Prepare selected file" }));
-    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-
-    await act(async () => resolvePreparation(Promise.reject(new Error("Import unavailable"))));
-    await waitFor(() => expect(screen.getByText("Import unavailable")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Retry notes.txt" })));
-    await waitFor(() => expect(screen.getByText("Ready")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
-    expect(onPrepareSessionUpload).toHaveBeenCalledTimes(2);
-  });
-
-  it("removes preparation errors and preserves a prepared artifact across Agent backends", async () => {
-    const onPrepareSessionUpload = vi.fn()
-      .mockRejectedValueOnce(new Error("Import unavailable"))
-      .mockResolvedValueOnce({
-        upload: { id: "upload_1", filename: "notes.txt", size_bytes: 5, mime_type: "text/plain" },
-        artifact: {
-          artifact_id: "artifact_1", display_name: "notes.txt", artifact_type: "session_upload",
-          mime_type: "text/plain", status: "ready",
-          consumption: { default_mode: "file_backed", supported_modes: ["file_backed"] },
-        }, preparation_status: "ready",
-      });
-    const onSubmit = vi.fn();
-    render(<ExecutionComposer
-      toolInventory={[]} skillInventory={[]} artifactInventory={[]}
-      sessionUploads={[{ id: "upload_1", filename: "notes.txt", size_bytes: 5, mime_type: "text/plain" }]}
-      initialCommandKind="agent" onPrepareSessionUpload={onPrepareSessionUpload}
-      onSubmit={onSubmit} onClose={vi.fn()} styles={styles}
-    />);
-    fireEvent.change(screen.getByLabelText("Select session file"), { target: { value: "upload_1" } });
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Prepare selected file" })));
-    fireEvent.click(screen.getByRole("button", { name: "Remove notes.txt preparation" }));
-    expect(screen.queryByText("Import unavailable")).toBeNull();
-
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Prepare selected file" })));
-    fireEvent.change(screen.getByLabelText("Agent Backend"), { target: { value: "openclaw_cli" } });
-    fireEvent.change(screen.getByLabelText("Agent Request"), { target: { value: "Summarize the attachment." } });
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Run" })));
-    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      targetId: "openclaw_cli",
-      args: expect.objectContaining({
-        artifactRefs: [{ artifact_id: "artifact_1", role: "attachment", reuse_mode: "file_backed" }],
       }),
     }));
   });
@@ -668,6 +603,47 @@ describe("ExecutionComposer", () => {
         ],
       },
     });
+  });
+
+  it("refreshes Agent Skills on backend change, window focus, and manual request", async () => {
+    const onRefreshAgentSkills = vi.fn().mockResolvedValue(undefined);
+    const { unmount } = render(
+      <ExecutionComposer
+        toolInventory={[]}
+        skillInventory={[]}
+        agentSkillInventory={[]}
+        onRefreshAgentSkills={onRefreshAgentSkills}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+        styles={styles}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    fireEvent.change(screen.getByLabelText("Agent Backend"), {
+      target: { value: "openclaw_cli" },
+    });
+    expect(onRefreshAgentSkills).toHaveBeenCalledWith({
+      backend: "openclaw_cli",
+      force: false,
+    });
+
+    fireEvent(window, new Event("focus"));
+    expect(onRefreshAgentSkills).toHaveBeenCalledWith({
+      backend: "openclaw_cli",
+      force: false,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Agent Skills" }));
+    expect(onRefreshAgentSkills).toHaveBeenLastCalledWith({
+      backend: "openclaw_cli",
+      force: true,
+    });
+
+    const callCount = onRefreshAgentSkills.mock.calls.length;
+    unmount();
+    fireEvent(window, new Event("focus"));
+    expect(onRefreshAgentSkills).toHaveBeenCalledTimes(callCount);
   });
 
   it("shows missing projection and inventory failures without inventing skills", () => {

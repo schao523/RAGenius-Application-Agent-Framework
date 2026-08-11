@@ -1,6 +1,12 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const uploadArtifactMock = vi.hoisted(() => vi.fn());
+vi.mock("./artifactUploadClient", async (importOriginal) => ({
+  ...(await importOriginal()),
+  uploadArtifact: uploadArtifactMock,
+}));
 
 import {
   default as App,
@@ -752,6 +758,7 @@ describe("buildExecutionResultPreview", () => {
 
 describe("App artifact fetch propagation", () => {
   beforeEach(() => {
+    uploadArtifactMock.mockReset();
     vi.stubGlobal("crypto", {
       ...globalThis.crypto,
       randomUUID: vi.fn(() => "session-1"),
@@ -934,21 +941,20 @@ describe("App artifact fetch propagation", () => {
     });
   });
 
-  it("prepares a draft session before uploading an Agent input and submits only its artifact ref", async () => {
+  it("uploads an Agent artifact through the canonical operation and submits only its artifact ref", async () => {
     const requests = [];
     const preparedInput = {
-      upload: { id: "upload_video", filename: "video.mp4", size_bytes: 11, mime_type: "video/mp4" },
+      status: "ready",
       artifact: {
         artifact_id: "artifact_video", display_name: "video.mp4", artifact_type: "session_upload",
         mime_type: "video/mp4", status: "ready",
         consumption: { default_mode: "file_backed", supported_modes: ["file_backed"] },
       },
-      preparation_status: "ready",
     };
+    uploadArtifactMock.mockResolvedValue(preparedInput);
     vi.stubGlobal("fetch", buildAppFetchMock({
       sessions: [],
       onRequest: (url, options) => requests.push({ url: String(url || ""), options }),
-      executionInputResponse: () => mockJsonResponse(preparedInput),
       artifactResponse: () => mockJsonResponse({ items: [preparedInput.artifact] }),
     }));
 
@@ -956,20 +962,20 @@ describe("App artifact fetch propagation", () => {
     fireEvent.click(await screen.findByRole("button", { name: /run tool or skill/i }));
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
     const file = new File(["video-bytes"], "video.mp4", { type: "video/mp4" });
-    fireEvent.change(screen.getByLabelText("Upload file"), { target: { files: [file] } });
+    fireEvent.change(screen.getAllByLabelText("Upload artifact")[1], { target: { files: [file] } });
     await waitFor(() => expect(screen.getAllByText(/video\.mp4.*file backed/i)).toHaveLength(2));
     fireEvent.change(screen.getByLabelText("Agent Request"), { target: { value: "Publish the selected video." } });
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
 
     await waitFor(() => expect(requests.some((request) => request.url.endsWith("/chat"))).toBe(true));
-    const prepareIndex = requests.findIndex((request) => request.url.endsWith("/prepare"));
-    const uploadIndex = requests.findIndex((request) => request.url.endsWith("/execution-inputs"));
-    expect(prepareIndex).toBeGreaterThanOrEqual(0);
-    expect(uploadIndex).toBeGreaterThan(prepareIndex);
-    const uploadBody = requests[uploadIndex].options.body;
-    expect(uploadBody).toBeInstanceOf(FormData);
-    expect(uploadBody.get("app_id")).toBe("app-1");
-    expect(uploadBody.get("user_id")).toBe("user1");
+    expect(requests.some((request) => request.url.endsWith("/prepare"))).toBe(true);
+    expect(uploadArtifactMock).toHaveBeenCalledWith(expect.objectContaining({
+      appId: "app-1",
+      userId: "user1",
+      sessionId: "session-1",
+      file,
+      analysisMode: "none",
+    }));
     const chatBody = JSON.parse(requests.find((request) => request.url.endsWith("/chat")).options.body);
     expect(chatBody.execution_request.artifact_refs).toEqual([
       { artifact_id: "artifact_video", role: "attachment", reuse_mode: "file_backed" },
@@ -977,33 +983,31 @@ describe("App artifact fetch propagation", () => {
     expect(JSON.stringify(chatBody)).not.toMatch(/C:\\\\|\/mnt\//);
   });
 
-  it("prepares an existing session upload for Agent execution", async () => {
+  it("uses the canonical normal-query upload without rendering a session-file inventory", async () => {
     const requests = [];
-    const upload = { id: "upload_notes", filename: "notes.txt", size_bytes: 5, mime_type: "text/plain" };
-    const artifact = {
-      artifact_id: "artifact_notes", display_name: "notes.txt", artifact_type: "session_upload",
-      mime_type: "text/plain", status: "ready",
-      consumption: { default_mode: "file_backed", supported_modes: ["file_backed"] },
-    };
+    uploadArtifactMock.mockResolvedValue({
+      status: "ready",
+      artifact: {
+        artifact_id: "artifact_notes", display_name: "notes.txt",
+        artifact_type: "session_upload", mime_type: "text/plain", status: "ready",
+      },
+    });
     vi.stubGlobal("fetch", buildAppFetchMock({
       sessions: [{ id: "session-1", title: "Persisted session" }],
-      sessionUploads: [upload],
       onRequest: (url, options) => requests.push({ url: String(url || ""), options }),
-      prepareUploadResponse: () => mockJsonResponse({ upload, artifact, preparation_status: "ready" }),
-      artifactResponse: () => mockJsonResponse({ items: [artifact] }),
+      artifactResponse: () => mockJsonResponse({ items: [] }),
     }));
-
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /run tool or skill/i }));
-    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
-    fireEvent.change(await screen.findByLabelText("Select session file"), { target: { value: "upload_notes" } });
-    fireEvent.click(screen.getByRole("button", { name: "Prepare selected file" }));
-    await waitFor(() => expect(screen.getAllByText(/notes\.txt.*file backed/i)).toHaveLength(2));
-    expect(requests.some((request) => (
-      request.url.includes("/sessions/session-1/uploads/upload_notes/prepare-for-execution")
-      && request.url.includes("app_id=app-1")
-      && request.url.includes("user_id=user1")
-    ))).toBe(true);
+    const file = new File(["notes"], "notes.txt", { type: "text/plain" });
+
+    fireEvent.change(await screen.findByLabelText("Upload artifact"), { target: { files: [file] } });
+
+    await waitFor(() => expect(uploadArtifactMock).toHaveBeenCalledWith(expect.objectContaining({
+      analysisMode: "normal_query", file,
+    })));
+    expect(screen.queryByText("Session Artifact Upload")).toBeNull();
+    expect(screen.queryByText("Session files")).toBeNull();
+    await waitFor(() => expect(requests.filter((request) => request.url.includes("/artifacts?")).length).toBeGreaterThan(1));
   });
 
   it("loads session-scoped Agent Skills and submits the approved immutable reference", async () => {
@@ -1054,6 +1058,100 @@ describe("App artifact fetch propagation", () => {
         approved_fingerprint: "sha256:v1:research",
       });
     });
+  });
+
+  it("refreshes only the active scoped Agent Skill inventory while Composer is open", async () => {
+    const requests = [];
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Persisted session" }],
+      onRequest: (url, options) => requests.push({ url: String(url || ""), options }),
+      agentSkillResponse: () => mockJsonResponse({
+        inventory_revision: "builder-1:9:sha256:refresh",
+        projection_status: "active",
+        items: [],
+      }),
+    }));
+    render(<App />);
+
+    fireEvent(window, new Event("focus"));
+    expect(requests.filter((request) => request.url.includes("/exec/agent-skills?")).length).toBe(0);
+
+    fireEvent.click(await screen.findByRole("button", { name: /run tool or skill/i }));
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    await waitFor(() => expect(
+      requests.filter((request) => request.url.includes("/exec/agent-skills?")).length,
+    ).toBe(2));
+
+    fireEvent.change(screen.getByLabelText("Agent Backend"), {
+      target: { value: "openclaw_cli" },
+    });
+    await waitFor(() => expect(
+      requests.filter((request) => request.url.includes("backend=openclaw_cli")).length,
+    ).toBe(2));
+
+    fireEvent(window, new Event("focus"));
+    await waitFor(() => expect(
+      requests.filter((request) => request.url.includes("backend=openclaw_cli")).length,
+    ).toBe(3));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Agent Skills" }));
+    await waitFor(() => expect(
+      requests.filter((request) => request.url.includes("backend=openclaw_cli")).length,
+    ).toBe(4));
+
+    const inventoryRequests = requests.filter((request) => request.url.includes("/exec/agent-skills?"));
+    expect(inventoryRequests.every((request) => request.url.includes("app_id=app-1"))).toBe(true);
+    expect(inventoryRequests.every((request) => request.url.includes("user_id=user1"))).toBe(true);
+
+    fireEvent.click(within(screen.getByRole("region", { name: "Execution Composer" }))
+      .getByRole("button", { name: "Close" }));
+    const countAfterClose = requests.filter((request) => request.url.includes("/exec/agent-skills?")).length;
+    fireEvent(window, new Event("focus"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests.filter((request) => request.url.includes("/exec/agent-skills?")).length).toBe(countAfterClose);
+  });
+
+  it("preserves selected Agent Skill when refresh returns the same inventory revision", async () => {
+    let codexCalls = 0;
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Persisted session" }],
+      agentSkillResponse: (url) => {
+        const backend = new URL(url).searchParams.get("backend");
+        if (backend !== "codex_cli") {
+          return mockJsonResponse({
+            inventory_revision: "builder-1:10:sha256:same",
+            projection_status: "active",
+            items: [],
+          });
+        }
+        codexCalls += 1;
+        return mockJsonResponse({
+          inventory_revision: "builder-1:10:sha256:same",
+          projection_status: "active",
+          items: codexCalls === 1
+            ? [{
+                agent_skill_id: "agent-stable",
+                approved_fingerprint: "sha256:v1:stable",
+                backend: "codex_cli",
+                display_name: "Stable Skill",
+                provider_skill_name: "stable-skill",
+              }]
+            : [],
+        });
+      },
+    }));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /run tool or skill/i }));
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    await waitFor(() => expect(screen.getByRole("option", { name: "Stable Skill" })).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("Agent Skill"), {
+      target: { value: "agent-stable" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Agent Skills" }));
+
+    await waitFor(() => expect(codexCalls).toBe(2));
+    expect(screen.getByLabelText("Agent Skill")).toHaveValue("agent-stable");
+    expect(screen.getByRole("option", { name: "Stable Skill" })).toBeInTheDocument();
   });
 
   it("prepares a draft session before loading Agent Skills in Composer", async () => {

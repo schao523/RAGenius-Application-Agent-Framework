@@ -8,8 +8,10 @@ import os
 import atexit
 import re
 import shutil
+import threading
 import zipfile
 import yaml
+from functools import wraps
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 
@@ -37,6 +39,16 @@ DEFAULT_APP_CONFIG_SETTINGS = {
         },
     }
 }
+
+
+def _agent_skill_governance_locked(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._agent_skill_governance_lock:
+            return method(self, *args, **kwargs)
+
+    return locked
+
 
 DEFAULT_APP_CONFIG_SCHEMA = {
     "type": "object",
@@ -297,6 +309,7 @@ class DatabaseStore:
         self.instructions_root.mkdir(parents=True, exist_ok=True)
         self.skills_root.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.db_path_value, check_same_thread=False)
+        self._agent_skill_governance_lock = threading.RLock()
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.row_factory = sqlite3.Row
         self._create_tables()
@@ -699,6 +712,7 @@ class DatabaseStore:
                 local_revision INTEGER NOT NULL DEFAULT 0,
                 published_revision INTEGER,
                 published_digest TEXT,
+                published_snapshot_json TEXT,
                 sync_status TEXT NOT NULL DEFAULT 'synchronized',
                 last_attempt_at TEXT,
                 last_success_at TEXT,
@@ -721,6 +735,14 @@ class DatabaseStore:
             cursor.execute("ALTER TABLE documents ADD COLUMN file_path TEXT")
         except sqlite3.OperationalError:
             # Column already exists in existing local DBs.
+            pass
+        try:
+            cursor.execute(
+                "ALTER TABLE agent_skill_projection_state "
+                "ADD COLUMN published_snapshot_json TEXT"
+            )
+        except sqlite3.OperationalError:
+            # Column already exists in current local DBs.
             pass
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_app_id ON documents(app_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_skill_versions_skill_id ON skill_versions(skill_id)")
@@ -1709,6 +1731,7 @@ class DatabaseStore:
             "updated_at": row["updated_at"],
         }
 
+    @_agent_skill_governance_locked
     def create_agent_skill_source(
         self,
         *,
@@ -1776,6 +1799,7 @@ class DatabaseStore:
         ).fetchall()
         return [self._agent_skill_source_from_row(row) for row in rows]
 
+    @_agent_skill_governance_locked
     def update_agent_skill_source(
         self,
         source_id: str,
@@ -1785,10 +1809,15 @@ class DatabaseStore:
         precedence: int | None = None,
         enabled: bool | None = None,
         correlation_id: str | None = None,
+        expected_local_revision: int | None = None,
     ) -> Dict[str, Any]:
         before = self.get_agent_skill_source(source_id)
         if not before:
             raise ValueError("Agent skill source not found")
+        if expected_local_revision is not None:
+            current_revision = int(self.get_agent_skill_projection_state()["local_revision"])
+            if int(expected_local_revision) != current_revision:
+                raise ValueError("AGENT_SKILL_LOCAL_REVISION_STALE")
         after = {
             **before,
             "display_name": display_name.strip() if display_name is not None else before["display_name"],
@@ -1796,6 +1825,9 @@ class DatabaseStore:
             "enabled": bool(enabled) if enabled is not None else before["enabled"],
             "updated_at": self._agent_skill_now(),
         }
+        resulting_revision = int(
+            self.get_agent_skill_projection_state()["local_revision"]
+        )
         with self.conn:
             cursor = self.conn.cursor()
             cursor.execute(
@@ -1813,14 +1845,17 @@ class DatabaseStore:
                 ),
             )
             if any(after[key] != before[key] for key in ("display_name", "precedence", "enabled")):
-                self._mark_agent_skill_projection_pending(cursor)
+                resulting_revision = self._mark_agent_skill_projection_pending(cursor)
             self._record_agent_skill_audit(
                 cursor,
                 actor_id=actor_id,
                 action="agent_skill_source.updated",
                 source_id=source_id,
                 before={key: before[key] for key in ("display_name", "precedence", "enabled")},
-                after={key: after[key] for key in ("display_name", "precedence", "enabled")},
+                after={
+                    **{key: after[key] for key in ("display_name", "precedence", "enabled")},
+                    "local_revision": resulting_revision,
+                },
                 correlation_id=correlation_id,
             )
         return self.get_agent_skill_source(source_id)
@@ -1876,6 +1911,12 @@ class DatabaseStore:
             governance_state = "changed_pending_review"
         item["governance_state"] = governance_state
         item["approval"] = approval
+        item["source"] = {
+            "id": source["id"],
+            "backend": source["backend"],
+            "display_name": source["display_name"],
+            "enabled": source["enabled"],
+        } if source else None
         return item
 
     def get_agent_skill_catalog_item(self, agent_skill_id: str) -> Optional[Dict[str, Any]]:
@@ -1896,6 +1937,69 @@ class DatabaseStore:
             ).fetchall()
         return [self._agent_skill_catalog_from_row(row) for row in rows]
 
+    def list_agent_skill_catalog_view(
+        self, *, view: str, source_id: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        normalized_view = str(view or "active").strip().lower()
+        if normalized_view not in {"active", "source", "disabled"}:
+            raise ValueError("Unsupported Agent skill catalog view")
+        if normalized_view == "source" and not source_id:
+            raise ValueError("Agent skill source is required")
+        items = self.list_agent_skill_catalog(source_id if normalized_view == "source" else None)
+        if normalized_view == "active":
+            items = [item for item in items if item.get("source", {}).get("enabled")]
+        elif normalized_view == "disabled":
+            items = [item for item in items if not item.get("source", {}).get("enabled")]
+        return sorted(
+            items,
+            key=lambda item: (
+                str(item.get("backend") or "").casefold(),
+                str(item.get("display_name") or "").casefold(),
+                str(item.get("provider_skill_reference") or "").casefold(),
+                str(item.get("id") or ""),
+            ),
+        )
+
+    def get_agent_skill_source_impact(self, source_id: str) -> Dict[str, Any]:
+        source = self.get_agent_skill_source(source_id)
+        if not source:
+            raise ValueError("Agent skill source not found")
+        skills = self.list_agent_skill_catalog(source_id)
+        current_approved = sum(
+            1
+            for skill in skills
+            if skill.get("approval", {}).get("state") == "approved"
+            and skill.get("approval", {}).get("approved_fingerprint") == skill.get("content_fingerprint")
+        )
+        skill_ids = [str(skill["id"]) for skill in skills]
+        bindings: list[sqlite3.Row] = []
+        if skill_ids:
+            placeholders = ",".join("?" for _ in skill_ids)
+            bindings = self.conn.execute(
+                f"""
+                SELECT b.*, a.name AS app_name
+                FROM app_agent_skill_bindings b
+                JOIN applications a ON a.id = b.app_id
+                WHERE b.agent_skill_id IN ({placeholders}) AND b.enabled = 1
+                """,
+                tuple(skill_ids),
+            ).fetchall()
+        affected = {
+            (str(binding["app_id"]), str(binding["app_name"]))
+            for binding in bindings
+        }
+        return {
+            "source_id": source_id,
+            "discovered_skill_count": len(skills),
+            "approved_current_fingerprint_count": current_approved,
+            "enabled_binding_count": len(bindings),
+            "affected_apps": [
+                {"id": app_id, "name": name}
+                for app_id, name in sorted(affected, key=lambda item: (item[1].casefold(), item[0]))
+            ],
+        }
+
+    @_agent_skill_governance_locked
     def refresh_agent_skill_catalog(
         self,
         *,
@@ -2018,6 +2122,7 @@ class DatabaseStore:
             )
         return self.list_agent_skill_catalog(source_id)
 
+    @_agent_skill_governance_locked
     def approve_agent_skill(
         self,
         *,
@@ -2032,6 +2137,8 @@ class DatabaseStore:
             raise ValueError("Agent skill not found")
         if skill["content_fingerprint"] != expected_fingerprint:
             raise ValueError("AGENT_SKILL_FINGERPRINT_CHANGED")
+        if skill["governance_state"] == "source_disabled":
+            raise ValueError("Agent skill source is disabled")
         if skill["discovery_status"] != "available":
             raise ValueError("Agent skill is not available")
         approval_id = str(uuid.uuid4())
@@ -2068,6 +2175,7 @@ class DatabaseStore:
             "SELECT * FROM agent_skill_approvals WHERE id = ?", (approval_id,)
         ).fetchone())
 
+    @_agent_skill_governance_locked
     def revoke_agent_skill(
         self,
         *,
@@ -2122,6 +2230,7 @@ class DatabaseStore:
             "updated_at": row["updated_at"],
         }
 
+    @_agent_skill_governance_locked
     def create_app_agent_skill_binding(
         self,
         *,
@@ -2180,6 +2289,7 @@ class DatabaseStore:
         ).fetchall()
         return [self._app_agent_skill_binding_from_row(row) for row in rows]
 
+    @_agent_skill_governance_locked
     def update_app_agent_skill_binding(
         self,
         binding_id: str,
@@ -2191,6 +2301,10 @@ class DatabaseStore:
         before = self.get_app_agent_skill_binding(binding_id)
         if not before:
             raise ValueError("Agent skill binding not found")
+        if enabled:
+            skill = self.get_agent_skill_catalog_item(before["agent_skill_id"])
+            if not skill or skill["governance_state"] != "approved":
+                raise ValueError("Agent skill source is disabled or approval is not current")
         now = self._agent_skill_now()
         with self.conn:
             cursor = self.conn.cursor()
@@ -2213,6 +2327,7 @@ class DatabaseStore:
             )
         return self.get_app_agent_skill_binding(binding_id)
 
+    @_agent_skill_governance_locked
     def delete_app_agent_skill_binding(
         self,
         binding_id: str,
@@ -2253,6 +2368,30 @@ class DatabaseStore:
             for row in rows
         ]
 
+    def record_agent_skill_publication_event(
+        self,
+        *,
+        action: str,
+        actor_id: str,
+        details: Dict[str, Any],
+        correlation_id: str,
+    ) -> None:
+        if action not in {
+            "agent_skill.publication_attempted",
+            "agent_skill.publication_succeeded",
+            "agent_skill.publication_failed",
+        }:
+            raise ValueError("Unsupported Agent skill publication audit action")
+        with self.conn:
+            self._record_agent_skill_audit(
+                self.conn.cursor(),
+                actor_id=actor_id,
+                action=action,
+                after=details,
+                correlation_id=correlation_id,
+            )
+
+    @_agent_skill_governance_locked
     def configure_agent_skill_projection(self, builder_instance_id: str) -> Dict[str, Any]:
         state = self.get_agent_skill_projection_state()
         current = state.get("builder_instance_id")
@@ -2319,32 +2458,177 @@ class DatabaseStore:
 
     def mark_agent_skill_projection_attempt(self) -> None:
         with self.conn:
-            self.conn.execute(
+            cursor = self.conn.execute(
                 "UPDATE agent_skill_projection_state SET last_attempt_at = ? WHERE singleton_id = 1",
                 (self._agent_skill_now(),),
             )
 
-    def mark_agent_skill_projection_synchronized(
-        self, *, builder_instance_id: str, revision: int, digest: str
+    @staticmethod
+    def _normalize_published_agent_skill_snapshot(
+        snapshot: Dict[str, Any],
     ) -> Dict[str, Any]:
+        invalid = ValueError("PUBLISHED_SNAPSHOT_INVALID")
+        if not isinstance(snapshot, dict) or set(snapshot) != {
+            "sources",
+            "skills",
+            "bindings",
+        }:
+            raise invalid
+
+        schemas = {
+            "sources": {
+                "source_id": str,
+                "enabled": bool,
+            },
+            "skills": {
+                "agent_skill_id": str,
+                "source_id": str,
+                "provider_skill_reference": str,
+                "current_fingerprint": str,
+                "approved_fingerprint": (str, type(None)),
+                "approval_state": str,
+            },
+            "bindings": {
+                "app_id": str,
+                "agent_skill_id": str,
+                "enabled": bool,
+            },
+        }
+        normalized: Dict[str, Any] = {}
+        for collection, schema in schemas.items():
+            records = snapshot.get(collection)
+            if not isinstance(records, list):
+                raise invalid
+            checked = []
+            for record in records:
+                if not isinstance(record, dict) or set(record) != set(schema):
+                    raise invalid
+                for field, expected_type in schema.items():
+                    value = record[field]
+                    if not isinstance(value, expected_type):
+                        raise invalid
+                    if isinstance(value, str) and not value:
+                        raise invalid
+                checked.append(dict(record))
+            normalized[collection] = sorted(
+                checked,
+                key=lambda value: json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
+        return normalized
+
+    def get_published_agent_skill_snapshot(self) -> Optional[Dict[str, Any]]:
+        state = self.get_agent_skill_projection_state()
+        serialized = state.get("published_snapshot_json")
+        if serialized is None:
+            return None
+        try:
+            snapshot = json.loads(serialized)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("PUBLISHED_SNAPSHOT_INVALID") from exc
+        return self._normalize_published_agent_skill_snapshot(snapshot)
+
+    @_agent_skill_governance_locked
+    def mark_agent_skill_projection_published(
+        self,
+        *,
+        builder_instance_id: str,
+        revision: int,
+        digest: str,
+        redacted_snapshot: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        snapshot = self._normalize_published_agent_skill_snapshot(redacted_snapshot)
         state = self.get_agent_skill_projection_state()
         if (
             state["builder_instance_id"] != builder_instance_id
-            or state["local_revision"] != revision
+            or revision > int(state["local_revision"])
+            or (
+                state.get("published_revision") is not None
+                and revision < int(state["published_revision"])
+            )
         ):
             raise ValueError("Projection acknowledgment does not match current Builder state")
+        serialized = json.dumps(
+            snapshot,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         now = self._agent_skill_now()
         with self.conn:
-            self.conn.execute(
+            cursor = self.conn.execute(
                 """
                 UPDATE agent_skill_projection_state
-                SET published_revision = ?, published_digest = ?, sync_status = 'synchronized',
+                SET published_revision = ?, published_digest = ?,
+                    published_snapshot_json = ?,
+                    sync_status = CASE WHEN local_revision = ? THEN 'synchronized' ELSE 'pending' END,
                     last_success_at = ?, last_error_code = NULL, last_error_message = NULL
                 WHERE singleton_id = 1
+                  AND (published_revision IS NULL OR published_revision <= ?)
                 """,
-                (revision, digest, now),
+                (revision, digest, serialized, revision, now, revision),
             )
+            if cursor.rowcount != 1:
+                raise ValueError("Projection acknowledgment would regress published state")
         return self.get_agent_skill_projection_state()
+
+    def read_agent_skill_projection_snapshot(
+        self, builder_instance_id: str
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        with self._agent_skill_governance_lock:
+            state = self.configure_agent_skill_projection(builder_instance_id)
+            items = self.list_agent_skill_projection_items()
+            return state, items
+
+    def _current_redacted_agent_skill_snapshot(self) -> Dict[str, Any]:
+        items = self.list_agent_skill_projection_items()
+        sources = {
+            item["source_id"]: {
+                "source_id": item["source_id"],
+                "enabled": bool(item["source_enabled"]),
+            }
+            for item in items
+        }
+        skills = {
+            item["agent_skill_id"]: {
+                "agent_skill_id": item["agent_skill_id"],
+                "source_id": item["source_id"],
+                "provider_skill_reference": item["provider_skill_reference"],
+                "current_fingerprint": item["current_fingerprint"],
+                "approved_fingerprint": item["approved_fingerprint"],
+                "approval_state": item["approval_state"],
+            }
+            for item in items
+        }
+        bindings = [
+            {
+                "app_id": item["app_id"],
+                "agent_skill_id": item["agent_skill_id"],
+                "enabled": bool(item["binding_enabled"]),
+            }
+            for item in items
+        ]
+        return self._normalize_published_agent_skill_snapshot(
+            {
+                "sources": list(sources.values()),
+                "skills": list(skills.values()),
+                "bindings": bindings,
+            }
+        )
+
+    def mark_agent_skill_projection_synchronized(
+        self, *, builder_instance_id: str, revision: int, digest: str
+    ) -> Dict[str, Any]:
+        return self.mark_agent_skill_projection_published(
+            builder_instance_id=builder_instance_id,
+            revision=revision,
+            digest=digest,
+            redacted_snapshot=self._current_redacted_agent_skill_snapshot(),
+        )
 
     def mark_agent_skill_projection_failed(self, *, code: str, message: str) -> Dict[str, Any]:
         with self.conn:

@@ -12,6 +12,8 @@ import InstructionsPanel from "./components/InstructionsPanel";
 import RuntimeInspector from "./components/RuntimeInspector";
 import RuntimePanel from "./components/RuntimePanel";
 import SessionHeader from "./components/SessionHeader";
+import { retryArtifactUpload, uploadArtifact } from "./artifactUploadClient";
+import ArtifactUploadControl from "./components/ArtifactUploadControl";
 
 const DEFAULT_BASE_URL = import.meta.env.VITE_APP_BASE_URL || "http://127.0.0.1:8000";
 const DEFAULT_BUILDER_BASE_URL = "http://127.0.0.1:5000";
@@ -988,6 +990,20 @@ async function fetchJson(url, options = {}) {
   return text ? JSON.parse(text) : {};
 }
 
+function artifactDeleteErrorMessage(error) {
+  const raw = String(error?.message || error || "");
+  try {
+    const payload = JSON.parse(raw);
+    const detail = payload?.detail || payload?.error || {};
+    if (detail?.code === "ARTIFACT_IN_USE") {
+      return "This artifact is in use by an active execution. Wait for it to finish, then retry deletion.";
+    }
+    return String(detail?.message || "Unable to delete the artifact.");
+  } catch {
+    return raw || "Unable to delete the artifact.";
+  }
+}
+
 async function checkUrlReachable(url) {
   try {
     const response = await fetch(url, { method: "GET" });
@@ -1924,12 +1940,12 @@ function ChatPanel({
   approvedContent,
   selectedApprovedContentId,
   sessionLaneState,
-  sessionUploads,
   workflowStatus,
   onSubmitQuery,
   onSubmitStarterQuestion,
   onAdvanceWorkflow,
   onUploadArtifact,
+  onRetryArtifactUpload,
   onApproveLatestAssistantMessage,
   onSelectApprovedContent,
   toolInventory,
@@ -1942,8 +1958,8 @@ function ChatPanel({
   artifactInventoryLoading,
   artifactInventoryError,
   onPrepareExecutionComposer,
+  onRefreshAgentSkills,
   onUploadExecutionInput,
-  onPrepareSessionUpload,
   onRunExecutionComposer,
   selectedExportMessageIds,
   onToggleMessageExportSelection,
@@ -1953,7 +1969,6 @@ function ChatPanel({
 }) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [approving, setApproving] = useState(false);
   const [refreshingExecutionStatus, setRefreshingExecutionStatus] = useState(false);
   const [confirmingExecution, setConfirmingExecution] = useState(false);
@@ -1972,7 +1987,6 @@ function ChatPanel({
   const [inspectorTab, setInspectorTab] = useState("details");
   const [inspectedMessageIndex, setInspectedMessageIndex] = useState(-1);
   const transcriptRef = useRef(null);
-  const uploadInputRef = useRef(null);
 
   const openExecutionComposer = () => {
     setShowExecutionComposer(true);
@@ -2070,25 +2084,6 @@ function ChatPanel({
 
   const send = async () => {
     await submitQuery(query);
-  };
-
-  const uploadArtifact = async (event) => {
-    const file = event?.target?.files?.[0];
-    if (!file || !appId || !onUploadArtifact) {
-      return;
-    }
-    setUploading(true);
-    setError("");
-    try {
-      await onUploadArtifact(file);
-      if (uploadInputRef.current) {
-        uploadInputRef.current.value = "";
-      }
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setUploading(false);
-    }
   };
 
   const approveLatestAssistantMessage = async () => {
@@ -2354,44 +2349,16 @@ function ChatPanel({
             </>
           )}
 
-          <div style={styles.details}>
-            <div style={styles.label}>Session Artifact Upload</div>
-            <div style={styles.row}>
-              <input
-                ref={uploadInputRef}
-                type="file"
-                onChange={uploadArtifact}
-                disabled={!appId || uploading}
-              />
-              <span style={styles.small}>
-                Upload an artifact for this chat session only. It is not ingested into app knowledge.
-              </span>
-            </div>
-            {Array.isArray(sessionUploads) && sessionUploads.length > 0 && (
-              <>
-                <div style={styles.uploadChipRow}>
-                  {sessionUploads.map((upload) => (
-                    <span key={`chip-${upload.id}`} style={styles.uploadChip}>
-                      {upload.filename}
-                    </span>
-                  ))}
-                </div>
-                <details style={{ ...styles.details, marginTop: 10 }}>
-                  <summary style={styles.summary}>Session files</summary>
-                  <div style={styles.uploadList}>
-                    {sessionUploads.map((upload) => (
-                      <div key={upload.id} style={styles.uploadItem}>
-                        <strong>{upload.filename}</strong>
-                        <div style={styles.small}>{upload.id}</div>
-                        <div style={styles.small}>
-                          {upload.mime_type || "application/octet-stream"} | {upload.size_bytes || 0} bytes
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              </>
-            )}
+          <div style={{ ...styles.details, display: "grid", gap: 8 }}>
+            <div style={styles.label}>Upload artifact</div>
+            <ArtifactUploadControl
+              disabled={!appId}
+              onUpload={(file, operationId, onProgress, signal) => onUploadArtifact(file, operationId, onProgress, signal)}
+              onRetry={onRetryArtifactUpload}
+            />
+            <span style={styles.small}>
+              Files are available to this chat and Agent execution. Successful uploads appear in Artifact Library.
+            </span>
           </div>
 
           <div style={styles.composerShell}>
@@ -2437,7 +2404,6 @@ function ChatPanel({
               >
                 {exportingSelection ? "Creating Reuse Artifact..." : `Create Reuse Artifact (${exportSelectionCount})`}
               </button>
-              {uploading && <span style={styles.small}>Uploading artifact...</span>}
             </div>
             {error && <div style={{ ...styles.error, marginTop: 12 }}>{error}</div>}
           </div>
@@ -2453,9 +2419,8 @@ function ChatPanel({
               agentSkillInventoryError={agentSkillInventoryError}
               agentSkillProjectionStatusByBackend={agentSkillProjectionStatusByBackend}
               artifactInventory={artifactInventory}
-              sessionUploads={sessionUploads}
               onUploadExecutionInput={onUploadExecutionInput}
-              onPrepareSessionUpload={onPrepareSessionUpload}
+              onRetryArtifactUpload={onRetryArtifactUpload}
               initialArtifactSuggestion={artifactSuggestionForComposer}
               initialArtifactSuggestions={artifactSuggestionsForComposer}
               initialTargetId={artifactPreferredTargetIdForComposer}
@@ -2464,6 +2429,7 @@ function ChatPanel({
               selectedApprovedContent={
                 approvedContent.find((item) => item.approved_content_id === selectedApprovedContentId) || null
               }
+              onRefreshAgentSkills={onRefreshAgentSkills}
               onSubmit={async (payload) => {
                 await onRunExecutionComposer?.(payload);
                 setArtifactSuggestionForComposer(null);
@@ -2613,7 +2579,6 @@ export default function App() {
     || activeExecutionLane.latest_execution_result?.status
     || "",
   ).toLowerCase();
-  const activeSessionUploads = sessionUploadsBySession[activeThreadKey] || [];
   const activeSelectedExportMessageIds = selectedExportMessageIdsBySession[activeThreadKey] || [];
   const currentSession = sessions.find((session) => session.id === sessionId) || null;
   const activeAgentSkillScopeKeys = ["codex_cli", "openclaw_cli"].map((backend) => [
@@ -2744,14 +2709,21 @@ export default function App() {
       if (agentSkillInventoryRequestSequence.current[scopeKey] !== sequence) {
         return;
       }
-      setExecAgentSkillInventoryByScope((previous) => ({
-        ...previous,
-        [scopeKey]: {
+      setExecAgentSkillInventoryByScope((previous) => {
+        const nextInventory = {
           items: Array.isArray(data?.items) ? data.items : [],
           inventory_revision: data?.inventory_revision ?? null,
           projection_status: String(data?.projection_status || "unavailable"),
-        },
-      }));
+        };
+        const currentInventory = previous[scopeKey];
+        if (
+          nextInventory.inventory_revision !== null
+          && currentInventory?.inventory_revision === nextInventory.inventory_revision
+        ) {
+          return previous;
+        }
+        return { ...previous, [scopeKey]: nextInventory };
+      });
     } catch (error) {
       if (agentSkillInventoryRequestSequence.current[scopeKey] !== sequence) {
         return;
@@ -2817,51 +2789,82 @@ export default function App() {
     }
   };
 
-  const storePreparedSessionUpload = (data) => {
-    const upload = data?.upload;
-    if (!upload?.id) return;
-    setSessionUploadsBySession((previous) => {
-      const current = previous[activeThreadKey] || [];
-      const next = current.some((item) => item.id === upload.id)
-        ? current.map((item) => (item.id === upload.id ? { ...item, ...upload } : item))
-        : [...current, upload];
-      return { ...previous, [activeThreadKey]: next };
-    });
+  const refreshAgentSkills = async ({ backend = "", force = false } = {}) => {
+    if (!selectedAppId || !sessionId || !userId) {
+      return;
+    }
+    await ensureExecutionSessionPrepared();
+    const requestedBackends = ["codex_cli", "openclaw_cli"].includes(backend)
+      ? [backend]
+      : ["codex_cli", "openclaw_cli"];
+    await Promise.all(requestedBackends.map((requestedBackend) => (
+      loadAgentSkillInventory(requestedBackend, selectedAppId, sessionId, userId, { force })
+    )));
   };
 
-  const uploadExecutionInput = async (file) => {
+  const uploadCanonicalArtifact = async (file, operationId, onProgress, analysisMode, signal) => {
     if (!selectedAppId || !sessionId || !userId || !file) {
       throw new Error("An application, session, user, and file are required.");
     }
     await ensureExecutionSessionPrepared();
-    const formData = new FormData();
-    formData.append("app_id", selectedAppId);
-    formData.append("user_id", userId);
-    formData.append("file", file);
-    const data = await fetchJson(`${baseUrl}/sessions/${sessionId}/execution-inputs`, {
-      method: "POST",
-      body: formData,
+    const data = await uploadArtifact({
+      baseUrl,
+      sessionId,
+      appId: selectedAppId,
+      userId,
+      file,
+      operationId,
+      analysisMode,
+      onProgress,
+      signal,
     });
-    storePreparedSessionUpload(data);
+    const analysisResult = data?.analysis_result;
+    if (analysisResult && typeof analysisResult === "object") {
+      setThreadsBySession((prev) => ({
+        ...prev,
+        [activeThreadKey]: [...(prev[activeThreadKey] || []), appendAssistantMessage(analysisResult)],
+      }));
+      setSessionLaneStateBySession((prev) => ({
+        ...prev,
+        [activeThreadKey]: normalizeSessionLaneState(analysisResult.session_lane_state),
+      }));
+      await loadSessions(selectedAppId, userId, includeArchivedSessions);
+    }
     await loadArtifactInventory(selectedAppId, sessionId, userId);
     return data;
   };
 
-  const prepareSessionUpload = async (uploadId) => {
-    const normalizedUploadId = String(uploadId || "").trim();
-    if (!selectedAppId || !sessionId || !userId || !normalizedUploadId) {
-      throw new Error("An application, session, user, and upload are required.");
+  const retryCanonicalArtifact = async (operationId) => {
+    if (!selectedAppId || !sessionId || !userId || !operationId) {
+      throw new Error("An application, session, user, and upload operation are required.");
     }
     await ensureExecutionSessionPrepared();
-    const data = await fetchJson(
-      `${baseUrl}/sessions/${sessionId}/uploads/${encodeURIComponent(normalizedUploadId)}/prepare-for-execution`
-      + `?app_id=${encodeURIComponent(selectedAppId)}&user_id=${encodeURIComponent(userId)}`,
-      { method: "POST" },
-    );
-    storePreparedSessionUpload(data);
+    const data = await retryArtifactUpload({
+      baseUrl,
+      sessionId,
+      appId: selectedAppId,
+      userId,
+      operationId,
+    });
+    const analysisResult = data?.analysis_result;
+    if (analysisResult && typeof analysisResult === "object") {
+      setThreadsBySession((prev) => ({
+        ...prev,
+        [activeThreadKey]: [...(prev[activeThreadKey] || []), appendAssistantMessage(analysisResult)],
+      }));
+      setSessionLaneStateBySession((prev) => ({
+        ...prev,
+        [activeThreadKey]: normalizeSessionLaneState(analysisResult.session_lane_state),
+      }));
+      await loadSessions(selectedAppId, userId, includeArchivedSessions);
+    }
     await loadArtifactInventory(selectedAppId, sessionId, userId);
     return data;
   };
+
+  const uploadExecutionInput = (file, operationId, onProgress, signal) => (
+    uploadCanonicalArtifact(file, operationId, onProgress, "none", signal)
+  );
 
   const loadSessions = async (
     appIdOverride = selectedAppId,
@@ -3173,37 +3176,9 @@ export default function App() {
     await sendQueryToSession(nextSessionId, rawQuery);
   };
 
-  const uploadArtifactToSession = async (file) => {
-    if (!selectedAppId || !sessionId || !userId || !file) {
-      return;
-    }
-    const formData = new FormData();
-    formData.append("app_id", selectedAppId);
-    formData.append("user_id", userId);
-    formData.append("file", file);
-    const data = await fetchJson(`${baseUrl}/sessions/${sessionId}/uploads`, {
-      method: "POST",
-      body: formData,
-    });
-    const upload = data.upload || null;
-    if (upload) {
-      setSessionUploadsBySession((prev) => ({
-        ...prev,
-        [activeThreadKey]: [...(prev[activeThreadKey] || []), upload],
-      }));
-    }
-    if (data && (data.content || data.retrieval_summary || data.turn_execution_plan || data.session_execution_state)) {
-      setThreadsBySession((prev) => ({
-        ...prev,
-        [activeThreadKey]: [...(prev[activeThreadKey] || []), appendAssistantMessage(data)],
-      }));
-      setSessionLaneStateBySession((prev) => ({
-        ...prev,
-        [activeThreadKey]: normalizeSessionLaneState(data.session_lane_state),
-      }));
-    }
-    await loadSessions(selectedAppId, userId, includeArchivedSessions);
-  };
+  const uploadArtifactToSession = (file, operationId, onProgress, signal) => (
+    uploadCanonicalArtifact(file, operationId, onProgress, "normal_query", signal)
+  );
 
   const approveLatestAssistantMessage = async (message) => {
     if (!selectedAppId || !sessionId || !userId || !message?.content) {
@@ -3409,7 +3384,9 @@ export default function App() {
       );
       await loadArtifactInventory(selectedAppId, sessionId, userId);
     } catch (e) {
-      setAppError(String(e.message || e));
+      const message = artifactDeleteErrorMessage(e);
+      setAppError(message);
+      throw new Error(message);
     }
   };
 
@@ -3681,12 +3658,12 @@ export default function App() {
               approvedContent={activeApprovedContent}
               selectedApprovedContentId={activeSelectedApprovedContentId}
               sessionLaneState={activeSessionLaneState}
-              sessionUploads={activeSessionUploads}
               workflowStatus={currentSession?.workflow_status || null}
               onSubmitQuery={(query) => sendQueryToSession(sessionId, query)}
               onSubmitStarterQuestion={sendStarterQuestionInNewSession}
               onAdvanceWorkflow={advanceWorkflowStep}
               onUploadArtifact={uploadArtifactToSession}
+              onRetryArtifactUpload={retryCanonicalArtifact}
               onApproveLatestAssistantMessage={approveLatestAssistantMessage}
               onConfirmExecution={confirmExecutionForSession}
               onSelectApprovedContent={selectApprovedContentForSession}
@@ -3700,8 +3677,8 @@ export default function App() {
               artifactInventoryLoading={execArtifactInventoryLoading}
               artifactInventoryError={execArtifactInventoryError}
               onPrepareExecutionComposer={prepareExecutionComposer}
+              onRefreshAgentSkills={refreshAgentSkills}
               onUploadExecutionInput={uploadExecutionInput}
-              onPrepareSessionUpload={prepareSessionUpload}
               onRunExecutionComposer={runExecutionComposer}
               selectedExportMessageIds={activeSelectedExportMessageIds}
               onToggleMessageExportSelection={toggleMessageExportSelection}

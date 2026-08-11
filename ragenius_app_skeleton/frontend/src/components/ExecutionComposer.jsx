@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import ArtifactUploadControl from "./ArtifactUploadControl";
 
 function normalizeObjectSchema(schema) {
   if (!schema || typeof schema !== "object") {
@@ -404,9 +405,9 @@ export default function ExecutionComposer({
   initialCommandKind,
   initialAgentBackend,
   selectedApprovedContent,
-  sessionUploads = [],
   onUploadExecutionInput,
-  onPrepareSessionUpload,
+  onRetryArtifactUpload,
+  onRefreshAgentSkills,
   onSubmit,
   onClose,
   styles,
@@ -439,9 +440,7 @@ export default function ExecutionComposer({
   );
   const [persistAgentOutput, setPersistAgentOutput] = useState(true);
   const [preparedArtifactsByUploadId, setPreparedArtifactsByUploadId] = useState({});
-  const [preparationStateByUploadId, setPreparationStateByUploadId] = useState({});
-  const [selectedSessionUploadId, setSelectedSessionUploadId] = useState("");
-  const preparationOperationsRef = useRef(new Map());
+  const [uploadBusy, setUploadBusy] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showOptionalFields, setShowOptionalFields] = useState(false);
@@ -462,6 +461,18 @@ export default function ExecutionComposer({
     () => availableAgentSkills.find((item) => item.agent_skill_id === selectedAgentSkillId) || null,
     [availableAgentSkills, selectedAgentSkillId],
   );
+
+  const requestAgentSkillRefresh = (force) => {
+    Promise.resolve(onRefreshAgentSkills?.({ backend: agentBackend, force })).catch((refreshError) => {
+      setError(String(refreshError?.message || refreshError || "Unable to refresh Agent Skills."));
+    });
+  };
+
+  useEffect(() => {
+    const handleWindowFocus = () => requestAgentSkillRefresh(false);
+    window.addEventListener("focus", handleWindowFocus);
+    return () => window.removeEventListener("focus", handleWindowFocus);
+  }, [agentBackend, onRefreshAgentSkills]);
 
   useEffect(() => {
     if (selectedAgentSkillId && !selectedAgentSkill) {
@@ -615,13 +626,6 @@ export default function ExecutionComposer({
     () => selectedAgentArtifacts.map(buildAgentArtifactRef).filter(Boolean),
     [selectedAgentArtifacts],
   );
-  const selectedSessionUpload = useMemo(
-    () => sessionUploads.find((upload) => String(upload?.id || "") === selectedSessionUploadId) || null,
-    [selectedSessionUploadId, sessionUploads],
-  );
-  const agentPreparationBlocked = Object.values(preparationStateByUploadId)
-    .some((state) => ["uploading", "preparing", "failed"].includes(state?.status));
-
   useEffect(() => {
     if (commandKind === "agent") {
       setTargetId("");
@@ -717,91 +721,22 @@ export default function ExecutionComposer({
     setAgentArtifactIds((prev) => prev.filter((item) => String(item || "").trim() !== normalizedId));
   };
 
-  const acceptPreparedInput = (result, requestKey) => {
-    const uploadId = String(result?.upload?.id || "").trim();
-    const rawArtifact = result?.artifact;
-    if (!uploadId || !rawArtifact?.artifact_id) {
-      throw new Error("Execution input preparation returned no artifact.");
-    }
+  const acceptUploadedArtifact = (rawArtifact) => {
+    if (!rawArtifact?.artifact_id) return;
     const artifact = {
       ...rawArtifact,
       artifact_type: rawArtifact.artifact_type || "session_upload",
-      display_name: rawArtifact.display_name || result.upload.filename || rawArtifact.artifact_id,
+      display_name: rawArtifact.display_name || rawArtifact.artifact_id,
       consumption: rawArtifact.consumption || {
         default_mode: "file_backed",
         supported_modes: ["file_backed", "binary_payload", "metadata_only"],
       },
     };
-    setPreparedArtifactsByUploadId((previous) => ({ ...previous, [uploadId]: artifact }));
-    setPreparationStateByUploadId((previous) => {
-      const next = { ...previous };
-      if (requestKey && requestKey !== uploadId) delete next[requestKey];
-      next[uploadId] = { status: "ready", error: "", label: artifact.display_name };
-      return next;
-    });
-    setAgentArtifactIds((previous) => [...new Set([...previous, artifact.artifact_id])]);
-  };
-
-  const prepareUpload = async (uploadId, operation, { startsWithUpload = false, label = "File" } = {}) => {
-    preparationOperationsRef.current.set(uploadId, operation);
-    setPreparationStateByUploadId((previous) => ({
+    setPreparedArtifactsByUploadId((previous) => ({
       ...previous,
-      [uploadId]: { status: startsWithUpload ? "uploading" : "preparing", error: "", label },
+      [artifact.artifact_id]: artifact,
     }));
-    try {
-      if (startsWithUpload) {
-        await Promise.resolve();
-        setPreparationStateByUploadId((previous) => ({
-          ...previous,
-          [uploadId]: { status: "preparing", error: "", label },
-        }));
-      }
-      const result = await operation();
-      acceptPreparedInput(result, uploadId);
-      preparationOperationsRef.current.delete(uploadId);
-    } catch (uploadError) {
-      setPreparationStateByUploadId((previous) => ({
-        ...previous,
-        [uploadId]: {
-          status: "failed",
-          error: String(uploadError?.message || uploadError || "Preparation failed."),
-          label,
-        },
-      }));
-    }
-  };
-
-  const removePreparation = (uploadId) => {
-    preparationOperationsRef.current.delete(uploadId);
-    const artifact = preparedArtifactsByUploadId[uploadId];
-    if (artifact?.artifact_id) removeAgentArtifactSelection(artifact.artifact_id);
-    setPreparedArtifactsByUploadId((previous) => {
-      const next = { ...previous };
-      delete next[uploadId];
-      return next;
-    });
-    setPreparationStateByUploadId((previous) => {
-      const next = { ...previous };
-      delete next[uploadId];
-      return next;
-    });
-  };
-
-  const retryPreparation = (uploadId) => {
-    const operation = preparationOperationsRef.current.get(uploadId);
-    const state = preparationStateByUploadId[uploadId];
-    if (operation) prepareUpload(uploadId, operation, { label: state?.label || "File" });
-  };
-
-  const handleExecutionInputUpload = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const temporaryId = `new:${file.name}`;
-    await prepareUpload(temporaryId, () => onUploadExecutionInput(file), {
-      startsWithUpload: true,
-      label: file.name,
-    });
-    event.target.value = "";
+    setAgentArtifactIds((previous) => [...new Set([...previous, artifact.artifact_id])]);
   };
 
   const renderAgentArtifactSelector = () => {
@@ -812,74 +747,12 @@ export default function ExecutionComposer({
         <div style={styles.small}>
           Selected artifacts are sent as structured artifact refs. OpenClaw stages file-backed artifacts before invoking the agent.
         </div>
-        <div style={{ display: "grid", gap: 8 }}>
-          <label>
-            <div style={styles.label}>Upload file</div>
-            <input aria-label="Upload file" type="file" onChange={handleExecutionInputUpload} />
-          </label>
-          <label>
-            <div style={styles.label}>Select session file</div>
-            <select
-              aria-label="Select session file"
-              style={styles.select}
-              value={selectedSessionUploadId}
-              onChange={(event) => setSelectedSessionUploadId(event.target.value)}
-            >
-              <option value="">Select</option>
-              {sessionUploads.map((upload) => (
-                <option key={upload.id} value={upload.id}>{upload.filename || upload.id}</option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            style={styles.secondaryButton}
-            disabled={!selectedSessionUploadId}
-            onClick={() => prepareUpload(
-              selectedSessionUploadId,
-              () => onPrepareSessionUpload(selectedSessionUploadId),
-              { label: selectedSessionUpload?.filename || "File" },
-            )}
-          >
-            Prepare selected file
-          </button>
-          {selectedSessionUpload ? (
-            <div style={styles.small}>
-              {[
-                selectedSessionUpload.filename,
-                selectedSessionUpload.mime_type,
-                Number.isFinite(Number(selectedSessionUpload.size_bytes))
-                  ? `${Number(selectedSessionUpload.size_bytes).toLocaleString()} bytes`
-                  : "",
-              ].filter(Boolean).join(" | ")}
-            </div>
-          ) : null}
-          <div aria-live="polite" style={styles.small}>
-            {Object.entries(preparationStateByUploadId).map(([uploadId, state]) => (
-              <div key={uploadId} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <span>{state.status === "ready" ? "Ready" : state.error || state.status}</span>
-                {state.status === "failed" ? (
-                  <button
-                    type="button"
-                    style={styles.inlineActionButton || styles.secondaryButton}
-                    onClick={() => retryPreparation(uploadId)}
-                  >
-                    {`Retry ${state.label || "file"}`}
-                  </button>
-                ) : null}
-                {state.status === "failed" ? (
-                  <button
-                    type="button"
-                    style={styles.inlineActionButton || styles.secondaryButton}
-                    onClick={() => removePreparation(uploadId)}
-                  >
-                    {`Remove ${state.label || "file"} preparation`}
-                  </button>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </div>
+        <ArtifactUploadControl
+          onUpload={(file, operationId, onProgress, signal) => onUploadExecutionInput(file, operationId, onProgress, signal)}
+          onRetry={onRetryArtifactUpload}
+          onReady={acceptUploadedArtifact}
+          onStatusChange={(status) => setUploadBusy(["uploading", "preparing"].includes(status))}
+        />
         {selectedAgentArtifacts.length > 0 ? (
           <div style={{ display: "grid", gap: 6 }}>
             <div style={{ fontWeight: 700, color: "#334155" }}>Selected artifacts ({selectedAgentArtifacts.length})</div>
@@ -1408,8 +1281,15 @@ export default function ExecutionComposer({
                 style={styles.select}
                 value={agentBackend}
                 onChange={(e) => {
-                  setAgentBackend(e.target.value);
+                  const nextBackend = e.target.value;
+                  setAgentBackend(nextBackend);
                   setSelectedAgentSkillId("");
+                  Promise.resolve(onRefreshAgentSkills?.({
+                    backend: nextBackend,
+                    force: false,
+                  })).catch((refreshError) => {
+                    setError(String(refreshError?.message || refreshError || "Unable to refresh Agent Skills."));
+                  });
                 }}
                 aria-label="Agent Backend"
               >
@@ -1438,6 +1318,14 @@ export default function ExecutionComposer({
               {agentSkillProjectionStatusByBackend?.[agentBackend] === "unavailable" ? (
                 <div style={styles.small}>Approved skill projection is unavailable. Auto remains available.</div>
               ) : null}
+              <button
+                type="button"
+                style={{ ...styles.secondaryButton, marginTop: 8 }}
+                onClick={() => requestAgentSkillRefresh(true)}
+                disabled={agentSkillInventoryLoading}
+              >
+                Refresh Agent Skills
+              </button>
             </label>
           </>
         ) : (
@@ -1565,7 +1453,7 @@ export default function ExecutionComposer({
           type="button"
           style={styles.button}
           onClick={handleSubmit}
-          disabled={(commandKind !== "agent" && !selected) || submitting || (commandKind === "agent" && agentPreparationBlocked)}
+          disabled={(commandKind !== "agent" && !selected) || submitting || (commandKind === "agent" && uploadBusy)}
         >
           {submitting ? "Running..." : "Run"}
         </button>

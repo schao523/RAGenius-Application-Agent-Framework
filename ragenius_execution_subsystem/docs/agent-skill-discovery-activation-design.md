@@ -366,6 +366,12 @@ count and byte limits prevent an authenticated caller from exhausting storage.
 The previous active projection remains usable if publication validation or the
 database transaction fails.
 
+Builder may batch source, approval, and binding edits as a local draft. Those
+edits have no effect here until Builder publishes one complete projection.
+Execution does not read Builder's draft database and never applies partial
+governance mutations. A failed request, stale revision, digest mismatch, or
+publisher mismatch preserves the prior active pointer.
+
 ## App-facing Inventory API
 
 Register:
@@ -639,7 +645,7 @@ existing error classifier semantics.
 ### Selection tests
 
 - structured reference resolves only for the active app and backend;
-- selection and inventory work with Builder offline after synchronization;
+- selection and inventory work with Builder offline after successful publication;
 - no active projection returns empty inventory while explicit selection returns
   `AGENT_SKILL_PROJECTION_UNAVAILABLE`;
 - stale client fingerprint fails;
@@ -675,9 +681,10 @@ existing error classifier semantics.
 - execute it through ordinary prompt guidance and observe the skill read in the
   contained session trace;
 - mutate a test skill after approval and verify fail-closed behavior;
-- disable an app binding, synchronize, and verify it disappears and cannot
+- disable an app binding in Builder, verify the active inventory is unchanged,
+  publish the reviewed revision, and verify it disappears and cannot
   execute;
-- stop Builder after synchronization and verify inventory and execution still
+- stop Builder after publication and verify inventory and execution still
   work.
 
 ## Rollout

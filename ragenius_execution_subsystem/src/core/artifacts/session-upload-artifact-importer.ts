@@ -143,7 +143,11 @@ export class SessionUploadArtifactImporter {
         sourceUploadId
       });
       if (existing) {
-        if (existing.content_hash !== declaredSha256 || existing.size_bytes !== input.declaredSizeBytes) {
+        if (
+          existing.content_hash !== declaredSha256 ||
+          existing.size_bytes !== input.declaredSizeBytes ||
+          normalizeMimeType(String(existing.mime_type || "")) !== mimeType
+        ) {
           throw importError({
             code: "SESSION_UPLOAD_CONTENT_CONFLICT",
             message: "The session upload id is already associated with different content.",
@@ -204,23 +208,44 @@ export class SessionUploadArtifactImporter {
           });
         }
 
-        const artifact = await this.artifactStore.save(
+        const contentLockKey = [
+          "content",
           appId,
-          "session_upload",
-          input.displayName,
-          { source_upload_id: sourceUploadId },
-          {
+          sessionId,
+          actualSha256,
+          String(sizeBytes),
+          mimeType
+        ].join("\u0000");
+        return await this.withLock(contentLockKey, async () => {
+          const canonical = await this.artifactStore.findReadyByContentIdentity({
+            appId,
             sessionId,
-            displayName: input.displayName,
-            providerOrigin: "session_upload",
-            sourceUploadId,
-            mimeType,
-            contentHash: actualSha256,
-            fileSourcePath: tempPath,
-            moveFileSource: true
+            sha256: actualSha256,
+            sizeBytes,
+            mediaType: mimeType
+          });
+          if (canonical) {
+            return { artifact: canonical, reusedExistingArtifact: true };
           }
-        );
-        return { artifact, reusedExistingArtifact: false };
+
+          const artifact = await this.artifactStore.save(
+            appId,
+            "session_upload",
+            input.displayName,
+            { source_upload_id: sourceUploadId },
+            {
+              sessionId,
+              displayName: input.displayName,
+              providerOrigin: "session_upload",
+              sourceUploadId,
+              mimeType,
+              contentHash: actualSha256,
+              fileSourcePath: tempPath,
+              moveFileSource: true
+            }
+          );
+          return { artifact, reusedExistingArtifact: false };
+        });
       } finally {
         await fs.rm(tempPath, { force: true }).catch(() => undefined);
       }

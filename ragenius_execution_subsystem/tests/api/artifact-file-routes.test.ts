@@ -6,6 +6,83 @@ import test from "node:test";
 
 import { buildApp } from "../../src/app.js";
 import { ArtifactStore } from "../../src/core/tools/providers/artifact-store.js";
+import { InMemoryExecutionStore } from "../../src/core/execution/execution-store.js";
+import { ArtifactReferenceCoordinator } from "../../src/core/artifacts/artifact-reference-coordinator.js";
+
+test("blocks deletion while a synchronous provider holds an artifact lease", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ragenius-artifacts-"));
+  const store = new ArtifactStore(root);
+  const coordinator = new ArtifactReferenceCoordinator();
+  const saved = await store.save("app_001", "session_upload", "source.txt", {}, {
+    sessionId: "session_001",
+    mimeType: "text/plain",
+    fileTextContent: "source"
+  });
+  const artifactScope = {
+    appId: "app_001",
+    sessionId: "session_001",
+    artifactId: String(saved.artifact_id)
+  };
+  const release = coordinator.acquire([artifactScope]);
+  const app = buildApp({ artifactStore: store, artifactReferenceCoordinator: coordinator });
+
+  const response = await app.inject({
+    method: "DELETE",
+    url: `/v1/artifacts/${saved.artifact_id}?app_id=app_001&session_id=session_001`
+  });
+
+  assert.equal(response.statusCode, 409);
+  assert.equal(response.json().error.code, "ARTIFACT_IN_USE");
+  assert.equal((await fs.stat(String(saved.file_path))).isFile(), true);
+  release();
+  await app.close();
+});
+
+test("blocks deletion while an active execution references the artifact", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ragenius-artifacts-"));
+  const store = new ArtifactStore(root);
+  const executionStore = new InMemoryExecutionStore();
+  const saved = await store.save("app_001", "session_upload", "source.txt", {}, {
+    sessionId: "session_001",
+    mimeType: "text/plain",
+    fileTextContent: "source"
+  });
+  await executionStore.save({
+    executionId: "execution_001",
+    request: {
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "session_001",
+      agent_backend: "codex_cli",
+      agent_query: "Use the source.",
+      artifact_refs: [{
+        artifact_id: String(saved.artifact_id),
+        role: "source",
+        reuse_mode: "file_backed"
+      }]
+    },
+    result: {
+      execution_id: "execution_001",
+      status: "pending_confirmation",
+      result_type: "json",
+      result: {},
+      files: [],
+      errors: [],
+      logs_summary: "Awaiting confirmation."
+    }
+  });
+  const app = buildApp({ artifactStore: store, executionStore });
+
+  const response = await app.inject({
+    method: "DELETE",
+    url: `/v1/artifacts/${saved.artifact_id}?app_id=app_001&session_id=session_001`
+  });
+
+  assert.equal(response.statusCode, 409);
+  assert.equal(response.json().error.code, "ARTIFACT_IN_USE");
+  assert.equal((await fs.stat(String(saved.file_path))).isFile(), true);
+  await app.close();
+});
 
 test("serves and deletes only session-scoped contained artifact bytes", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ragenius-artifacts-"));
@@ -37,8 +114,16 @@ test("serves and deletes only session-scoped contained artifact bytes", async ()
     url: `/v1/artifacts/${saved.artifact_id}?app_id=app_001&session_id=session_001`
   });
   assert.equal(deleted.statusCode, 200);
-  assert.equal((await fs.stat(String(saved.path)).catch(() => null)), null);
   assert.equal((await fs.stat(String(saved.file_path)).catch(() => null)), null);
+  const tombstone = JSON.parse(await fs.readFile(String(saved.path), "utf-8"));
+  assert.equal(tombstone.status, "deleted");
+  assert.equal(typeof tombstone.deleted_at, "string");
+  assert.equal(tombstone.file_path, undefined);
+  const deletedPreview = await app.inject({
+    method: "GET",
+    url: `/v1/artifacts/${saved.artifact_id}/preview?app_id=app_001&session_id=session_001`
+  });
+  assert.equal(deletedPreview.statusCode, 404);
   await app.close();
 });
 
