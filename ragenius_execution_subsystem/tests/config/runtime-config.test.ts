@@ -53,6 +53,7 @@ describe("runtime config", () => {
       maxStdoutBytes: 1048576,
       timeoutMs: 15000
     });
+    assert.equal(defaults.agentSkills.codex.limits.maxDepth, 12);
 
     const configured = buildRuntimeConfig(getEnv({
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public",
