@@ -39,4 +39,20 @@ describe("ArtifactUploadControl", () => {
     await waitFor(() => expect(onUpload).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("Ready")).toBeInTheDocument();
   });
+
+  it("cancels an active transfer and clears the local file", async () => {
+    const onUpload = vi.fn((_file, _operationId, _onProgress, signal) => (
+      new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(
+        Object.assign(new Error("cancelled"), { name: "AbortError" }),
+      )))
+    ));
+    render(<ArtifactUploadControl onUpload={onUpload} />);
+    const file = new File(["notes"], "notes.txt", { type: "text/plain" });
+    fireEvent.change(screen.getByLabelText("Upload artifact"), { target: { files: [file] } });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel upload" }));
+
+    await waitFor(() => expect(screen.queryByText(/notes\.txt/)).toBeNull());
+    expect(screen.getByText("Upload cancelled.")).toBeInTheDocument();
+  });
 });

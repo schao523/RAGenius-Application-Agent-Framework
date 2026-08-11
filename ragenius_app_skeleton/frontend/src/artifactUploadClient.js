@@ -20,7 +20,7 @@ function parseResponse(xhr) {
 
 export function uploadArtifact({
   baseUrl, sessionId, appId, userId, file, operationId,
-  analysisMode = "none", onProgress,
+  analysisMode = "none", onProgress, signal,
 }) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -39,8 +39,16 @@ export function uploadArtifact({
         percent: Math.round((event.loaded / event.total) * 100),
       });
     };
+    const abort = () => xhr.abort();
+    if (signal?.aborted) {
+      reject(Object.assign(new Error("Upload cancelled."), { name: "AbortError" }));
+      return;
+    }
+    signal?.addEventListener("abort", abort, { once: true });
     xhr.onerror = () => reject(new Error("Execution storage is unavailable. Retry this upload."));
+    xhr.onabort = () => reject(Object.assign(new Error("Upload cancelled."), { name: "AbortError" }));
     xhr.onload = () => {
+      signal?.removeEventListener("abort", abort);
       try {
         resolve(parseResponse(xhr));
       } catch (error) {

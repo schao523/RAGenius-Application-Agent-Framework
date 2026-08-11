@@ -31,6 +31,11 @@ class FakeXhr {
     this.responseText = JSON.stringify(payload);
     this.onload();
   }
+
+  abort() {
+    this.aborted = true;
+    this.onabort?.();
+  }
 }
 
 describe("artifact upload client", () => {
@@ -62,6 +67,24 @@ describe("artifact upload client", () => {
     expect(xhr.method).toBe("POST");
     expect(xhr.url).toContain("/sessions/session-1/artifacts/uploads");
     expect(progress).toHaveBeenCalledWith({ loaded: 3, total: 5, percent: 60 });
+    globalThis.XMLHttpRequest = previous;
+  });
+
+  it("aborts the byte transfer when its signal is cancelled", async () => {
+    const previous = globalThis.XMLHttpRequest;
+    globalThis.XMLHttpRequest = FakeXhr;
+    const controller = new AbortController();
+    const promise = uploadArtifact({
+      baseUrl: "http://localhost:8000", sessionId: "session-1",
+      appId: "app-1", userId: "user-1", operationId: "upload-op-cancel",
+      file: new File(["notes"], "notes.txt"), signal: controller.signal,
+    });
+    const xhr = FakeXhr.instances.at(-1);
+
+    controller.abort();
+
+    await expect(promise).rejects.toMatchObject({ name: "AbortError" });
+    expect(xhr.aborted).toBe(true);
     globalThis.XMLHttpRequest = previous;
   });
 });

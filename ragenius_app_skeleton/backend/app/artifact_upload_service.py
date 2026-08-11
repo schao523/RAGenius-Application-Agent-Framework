@@ -57,7 +57,7 @@ class ArtifactUploadService:
         filename: str,
         mime_type: str | None,
         source: BinaryIO,
-        analysis: Callable[[dict[str, Any]], None] | None = None,
+        analysis: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
         now: str | None = None,
         retention_hours: int = 24,
     ) -> dict[str, Any]:
@@ -90,7 +90,7 @@ class ArtifactUploadService:
     def retry(
         self, *, app_id: str, session_id: str, user_id: str,
         upload_operation_id: str,
-        analysis: Callable[[dict[str, Any]], None] | None = None,
+        analysis: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
     ) -> dict[str, Any]:
         operation = self.session_repo.get_upload_operation(
             app_id=app_id, session_id=session_id, user_id=user_id,
@@ -108,7 +108,7 @@ class ArtifactUploadService:
         self,
         operation: dict[str, Any],
         *,
-        analysis: Callable[[dict[str, Any]], None] | None,
+        analysis: Callable[[dict[str, Any]], dict[str, Any] | None] | None,
     ) -> dict[str, Any]:
         scope = {
             "app_id": operation["app_id"],
@@ -152,16 +152,18 @@ class ArtifactUploadService:
                 error_code="INVALID_EXECUTION_INPUT_RESPONSE", retryable=True,
             )
             return self._response(failed)
-        if analysis is not None:
-            analysis(operation)
+        analysis_result = analysis(operation) if analysis is not None else None
         ready = self.session_repo.update_upload_operation(
             **scope, status="ready", artifact_id=str(artifact["artifact_id"]),
             artifact=artifact, error_code=None, retryable=False,
         )
         file_path.unlink(missing_ok=True)
-        return self._response(
+        response = self._response(
             ready, reused=bool(result.get("reused_existing_artifact"))
         )
+        if isinstance(analysis_result, dict):
+            response["analysis_result"] = analysis_result
+        return response
 
     def cleanup_expired(self, now: str | None = None) -> int:
         current = now or _format_time(datetime.datetime.now(datetime.timezone.utc))

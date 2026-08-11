@@ -66,6 +66,25 @@ def test_upload_imports_once_and_removes_staging_bytes(tmp_path, monkeypatch):
     assert not Path(operation["file_path"]).exists()
 
 
+def test_upload_returns_analysis_before_removing_staging_bytes(tmp_path, monkeypatch):
+    repo, _, service = make_service(tmp_path, monkeypatch, [ready_response()])
+    observed = {}
+
+    def analyze(operation):
+        staged = Path(operation["file_path"])
+        observed["bytes"] = staged.read_bytes()
+        return {"content": "Upload analyzed.", "retrieval_summary": {"turn_input_type": "session_upload"}}
+
+    result = service.upload(
+        app_id="app-1", session_id="session-1", user_id="user-1",
+        upload_operation_id="upload-op-analysis", filename="notes.txt",
+        mime_type="text/plain", source=io.BytesIO(b"notes"), analysis=analyze,
+    )
+
+    assert observed["bytes"] == b"notes"
+    assert result["analysis_result"]["content"] == "Upload analyzed."
+
+
 def test_failed_import_retries_existing_staging_without_browser_bytes(tmp_path, monkeypatch):
     repo, client, service = make_service(tmp_path, monkeypatch, [
         {"error": {"code": "EXECUTION_SUBSYSTEM_UNAVAILABLE", "message": "offline"}},

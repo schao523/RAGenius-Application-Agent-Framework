@@ -3382,6 +3382,72 @@ def _artifact_upload_service() -> ArtifactUploadService:
     )
 
 
+def _analyze_canonical_upload(
+    operation: Dict[str, Any],
+    *,
+    builder_context: Dict[str, Any],
+    session: Dict[str, Any],
+) -> Dict[str, Any]:
+    filename = str(operation.get("filename") or "upload.bin")
+    mime_type = str(operation.get("normalized_mime_type") or operation.get("mime_type") or "")
+    suffix = Path(filename).suffix.lower()
+    extractable = (
+        mime_type.startswith("text/")
+        or suffix in {".md", ".txt", ".json", ".csv", ".yaml", ".yml", ".pdf"}
+    )
+    analysis_limit = int(os.getenv("RAGENIUS_UPLOAD_ANALYSIS_MAX_BYTES") or "33554432")
+    staged_path = Path(str(operation.get("file_path") or ""))
+    content = b""
+    if extractable and int(operation.get("size_bytes") or 0) <= analysis_limit:
+        content = staged_path.read_bytes()
+    text_content = _extract_session_upload_text(filename, mime_type, content) if content else ""
+    upload_event = {
+        "id": str(operation["upload_operation_id"]),
+        "session_id": str(operation["session_id"]),
+        "filename": filename,
+        "mime_type": mime_type,
+        "size_bytes": int(operation.get("size_bytes") or 0),
+        "sha256": str(operation.get("sha256") or ""),
+        "text_content": text_content,
+        "created_at": operation.get("created_at"),
+    }
+    runtime_state = session_repo.get_runtime_state(str(operation["session_id"]))
+    state: Dict[str, Any] = {
+        "session_id": operation["session_id"],
+        "collection_id": operation["app_id"],
+        "domain": builder_context["adapter_json"].get("domain") or "general",
+        "user_id": operation["user_id"],
+        "planner_mode": builder_context.get("planner_mode", "legacy"),
+        "instruction_understanding_mode": builder_context.get("instruction_understanding_mode", "hybrid_shadow"),
+        "config_version": session["config_version"],
+        "adapter_version": session["adapter_version"],
+        "template_version": session["template_version"],
+        "user_query": _upload_analysis_query(filename),
+        "turn_input_type": "session_upload",
+        "session_upload_event_ids": [upload_event["id"]],
+        "pending_upload_analysis": True,
+        "chat_history": chat_repo.history(str(operation["session_id"])),
+        "session_uploads": [*session_repo.list_uploads(str(operation["session_id"])), upload_event],
+        "config_json": builder_context["config_json"],
+        "adapter_json": builder_context["adapter_json"],
+        "template_registry": builder_context["template_registry"],
+        "workflow_progress": runtime_state.get("workflow_progress", {}),
+        "session_execution_state": runtime_state.get("session_execution_state", {}),
+        "intermediate_outputs": runtime_state.get("intermediate_outputs", []),
+        "assembly_state": runtime_state.get("assembly_state", {}),
+        "session_lane_state": runtime_state.get("session_lane_state", {}),
+    }
+    response = run_chat_pipeline(
+        state,
+        session_repo=session_repo,
+        chat_repo=chat_repo,
+        planner_repo=planner_repo,
+        retrieval_repo=retrieval_repo,
+    )
+    response["session_id"] = operation["session_id"]
+    return response
+
+
 @app.post("/sessions/{session_id}/artifacts/uploads", status_code=201)
 async def upload_canonical_session_artifact(
     session_id: str,
@@ -3391,7 +3457,7 @@ async def upload_canonical_session_artifact(
     analysis_mode: str = Form("none"),
     file: UploadFile = File(...),
 ):
-    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    session = _require_session_scope(session_id, app_id=app_id, user_id=user_id)
     operation_id = str(upload_operation_id or "").strip()
     if not operation_id or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", operation_id):
         raise HTTPException(status_code=422, detail={
@@ -3403,6 +3469,14 @@ async def upload_canonical_session_artifact(
             "code": "INVALID_UPLOAD_ANALYSIS_MODE",
             "message": "Upload analysis mode is invalid.",
         })
+    builder_context = _load_builder_context(app_id) if analysis_mode == "normal_query" else None
+    analysis = None
+    if builder_context is not None:
+        analysis = lambda operation: _analyze_canonical_upload(
+            operation,
+            builder_context=builder_context,
+            session=session,
+        )
     try:
         return await run_in_threadpool(
             _artifact_upload_service().upload,
@@ -3413,6 +3487,7 @@ async def upload_canonical_session_artifact(
             filename=file.filename or "upload.bin",
             mime_type=file.content_type,
             source=file.file,
+            analysis=analysis,
         )
     except ValueError as exc:
         message = str(exc)

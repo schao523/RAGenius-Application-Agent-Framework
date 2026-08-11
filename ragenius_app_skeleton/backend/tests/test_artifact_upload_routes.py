@@ -88,6 +88,32 @@ def test_unified_upload_validates_scope_mode_and_operation_identity(tmp_path, mo
     assert invalid_mode.status_code == 422
 
 
+def test_normal_query_upload_returns_analysis_result(tmp_path, monkeypatch):
+    _, _, client = setup_runtime(tmp_path, monkeypatch)
+    monkeypatch.setattr(app_main, "_load_builder_context", lambda _app_id: {"config_json": {}})
+    monkeypatch.setattr(
+        app_main,
+        "_analyze_canonical_upload",
+        lambda operation, **_kwargs: {
+            "session_id": operation["session_id"],
+            "content": "Upload analyzed.",
+            "retrieval_summary": {"turn_input_type": "session_upload"},
+        },
+    )
+
+    response = client.post(
+        "/sessions/session-1/artifacts/uploads",
+        data={
+            "app_id": "app-1", "user_id": "user-1",
+            "upload_operation_id": "upload-op-analysis", "analysis_mode": "normal_query",
+        },
+        files={"file": ("notes.txt", b"notes", "text/plain")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["analysis_result"]["content"] == "Upload analyzed."
+
+
 def test_delete_preserves_artifact_in_use_conflict(tmp_path, monkeypatch):
     _, _, client = setup_runtime(tmp_path, monkeypatch)
 
