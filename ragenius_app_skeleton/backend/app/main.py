@@ -23,6 +23,7 @@ from .builder_store import get_builder_store
 from .approved_content_service import content_hash_for, resolve_approved_snapshot
 from .approved_content_service import create_approved_snapshot, create_snapshot_from_latest_assistant_message, create_snapshot_from_message_id
 from .chat_repos import ChatRepo, InstructionUnderstandingRepo, RetrievalRepo, SessionRepo
+from .artifact_upload_service import ArtifactUploadService
 from .execution_input_service import ExecutionInputPreparationError, prepare_session_upload
 from .chat_service import run_chat_pipeline
 from .instruction_understanding_service import (
@@ -3028,7 +3029,14 @@ async def delete_session_artifact(
         artifact_id=artifact_id,
     )
     if isinstance(result.get("error"), dict):
-        raise HTTPException(status_code=int(result.get("_http_status") or 502), detail="Artifact could not be deleted.")
+        error = result["error"]
+        raise HTTPException(
+            status_code=int(result.get("_http_status") or 502),
+            detail={
+                "code": str(error.get("code") or "ARTIFACT_DELETE_FAILED"),
+                "message": str(error.get("message") or "Artifact could not be deleted."),
+            },
+        )
     return {"deleted": True, "artifact_id": artifact_id}
 
 
@@ -3364,6 +3372,78 @@ def _public_session_uploads(uploads: List[Dict[str, Any]]) -> List[Dict[str, Any
 
 def _agent_input_max_bytes() -> int:
     return int(os.getenv("RAGENIUS_AGENT_INPUT_MAX_BYTES") or "536870912")
+
+
+def _artifact_upload_service() -> ArtifactUploadService:
+    return ArtifactUploadService(
+        session_repo,
+        execution_client,
+        max_bytes=_agent_input_max_bytes(),
+    )
+
+
+@app.post("/sessions/{session_id}/artifacts/uploads", status_code=201)
+async def upload_canonical_session_artifact(
+    session_id: str,
+    app_id: str = Form(...),
+    user_id: str = Form(...),
+    upload_operation_id: str = Form(...),
+    analysis_mode: str = Form("none"),
+    file: UploadFile = File(...),
+):
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    operation_id = str(upload_operation_id or "").strip()
+    if not operation_id or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", operation_id):
+        raise HTTPException(status_code=422, detail={
+            "code": "INVALID_UPLOAD_OPERATION_ID",
+            "message": "Upload operation id is invalid.",
+        })
+    if analysis_mode not in {"none", "normal_query"}:
+        raise HTTPException(status_code=422, detail={
+            "code": "INVALID_UPLOAD_ANALYSIS_MODE",
+            "message": "Upload analysis mode is invalid.",
+        })
+    try:
+        return await run_in_threadpool(
+            _artifact_upload_service().upload,
+            app_id=app_id,
+            session_id=session_id,
+            user_id=user_id,
+            upload_operation_id=operation_id,
+            filename=file.filename or "upload.bin",
+            mime_type=file.content_type,
+            source=file.file,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status = 413 if "maximum" in message.lower() else 409
+        raise HTTPException(status_code=status, detail={
+            "code": "ARTIFACT_UPLOAD_REJECTED",
+            "message": message,
+        }) from exc
+
+
+@app.post("/sessions/{session_id}/artifacts/uploads/{upload_operation_id}/retry")
+async def retry_canonical_session_artifact(
+    session_id: str,
+    upload_operation_id: str,
+    app_id: str,
+    user_id: str,
+):
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    try:
+        return await run_in_threadpool(
+            _artifact_upload_service().retry,
+            app_id=app_id,
+            session_id=session_id,
+            user_id=user_id,
+            upload_operation_id=upload_operation_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={
+            "code": "UPLOAD_OPERATION_NOT_FOUND",
+            "message": "Upload operation is unavailable.",
+        }) from exc
 
 
 def _prepare_execution_upload(app_id: str, session_id: str, upload_id: str) -> Dict[str, Any]:
