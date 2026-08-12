@@ -207,4 +207,3 @@ Remove only `.tmp/ragenius_instruction_article/` after confirming the final DOCX
 - [ ] **Step 7: Review the final repository diff**
 
 Confirm the deliverable and planning documents are the only intended changes. Run `git diff --check` and verify no unrelated files were modified.
-
