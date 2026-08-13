@@ -55,7 +55,9 @@ export type RespondToInteractionResult = {
 
 interface ActiveProviderSession {
   adapter: InteractiveAgentAdapter;
+  expiryTimers: Map<string, NodeJS.Timeout>;
   handle: ProviderSessionHandle;
+  scope: ExecutionScope;
 }
 
 export class InteractiveAgentSessionManager {
@@ -102,6 +104,7 @@ export class InteractiveAgentSessionManager {
         bufferedEvents.push(event);
         return;
       }
+      if (!this.active.has(input.scope.executionId)) return;
       await this.consumeEvent(input.scope, event);
     };
     const handle = await decision.adapter.start({
@@ -127,7 +130,9 @@ export class InteractiveAgentSessionManager {
     });
     this.active.set(input.scope.executionId, {
       adapter: decision.adapter,
-      handle
+      expiryTimers: new Map(),
+      handle,
+      scope: input.scope
     });
     await this.eventStore.append({
       ...input.scope,
@@ -153,7 +158,7 @@ export class InteractiveAgentSessionManager {
     if (claim.outcome === "replay") return { outcome: "replay" };
     if (claim.outcome === "conflict") return { outcome: "conflict" };
     if (claim.outcome === "expired") {
-      await this.failExecution(
+      await this.failAndTerminate(
         input,
         "AGENT_INTERACTION_EXPIRED",
         "The pending Agent interaction expired before it was resolved."
@@ -180,6 +185,7 @@ export class InteractiveAgentSessionManager {
       now,
       responseSummary: input.responseSummary
     });
+    this.clearInteractionExpiry(input.executionId, input.interactionId);
     await this.eventStore.append({
       ...input,
       interactionId: input.interactionId,
@@ -213,6 +219,10 @@ export class InteractiveAgentSessionManager {
       cancelled = reconciliation.state === "cancelled";
     }
     if (cancelled) {
+      if ((await this.executionStore.get(scope))?.status === "cancelled") {
+        this.clearActive(scope.executionId);
+        return { cancelled: true };
+      }
       await this.updateSessionState(scope, "cancelled");
       await this.eventStore.append({
         ...scope,
@@ -225,7 +235,7 @@ export class InteractiveAgentSessionManager {
         from: ["running", "waiting_for_interaction"],
         result: stateResult(scope.executionId, "cancelled", "Agent execution was cancelled.")
       });
-      this.active.delete(scope.executionId);
+      this.clearActive(scope.executionId);
       return { cancelled: true };
     }
     await this.failExecution(
@@ -236,13 +246,30 @@ export class InteractiveAgentSessionManager {
     return { cancelled: false };
   }
 
+  async shutdown(): Promise<void> {
+    const activeSessions = [...this.active.values()];
+    await Promise.all(activeSessions.map(async (active) => {
+      await this.interactionStore.cancelPending(active.scope, new Date());
+      await this.failExecution(
+        active.scope,
+        "AGENT_EXECUTION_INTERRUPTED",
+        "Interactive Agent execution stopped during service shutdown."
+      );
+      try {
+        await active.adapter.cancel(active.handle);
+      } catch {
+        // Provider cleanup is best effort after the durable execution is failed.
+      }
+    }));
+  }
+
   private async consumeEvent(
     scope: ExecutionScope,
     event: InteractiveProviderEvent
   ): Promise<void> {
     if (event.type === "interaction_requested") {
       if (!event.interaction) {
-        await this.failExecution(
+        await this.failAndTerminate(
           scope,
           "INVALID_PROVIDER_INTERACTION",
           "The provider emitted an interaction event without a typed interaction."
@@ -253,7 +280,7 @@ export class InteractiveAgentSessionManager {
         event.interaction
       );
       if (!parsedInteraction.success) {
-        await this.failExecution(
+        await this.failAndTerminate(
           scope,
           "INVALID_PROVIDER_INTERACTION",
           "The provider interaction exceeded the supported schema bounds."
@@ -270,6 +297,7 @@ export class InteractiveAgentSessionManager {
           ...(option.description ? { description: option.description } : {})
         }))
       });
+      this.scheduleInteractionExpiry(scope, interaction.interactionId, interaction.expiresAt);
       await this.eventStore.append({
         ...scope,
         interactionId: interaction.interactionId,
@@ -312,7 +340,7 @@ export class InteractiveAgentSessionManager {
           result: { ...event.payload }
         }
       });
-      this.active.delete(scope.executionId);
+      this.clearActive(scope.executionId);
     } else if (event.type === "run_cancelled") {
       await this.updateSessionState(scope, "cancelled");
       await this.executionStore.transition({
@@ -320,7 +348,7 @@ export class InteractiveAgentSessionManager {
         from: ["running", "waiting_for_interaction"],
         result: stateResult(scope.executionId, "cancelled", "Agent execution was cancelled.")
       });
-      this.active.delete(scope.executionId);
+      this.clearActive(scope.executionId);
     }
   }
 
@@ -340,7 +368,64 @@ export class InteractiveAgentSessionManager {
         }]
       }
     });
-    this.active.delete(scope.executionId);
+    this.clearActive(scope.executionId);
+  }
+
+  private async failAndTerminate(
+    scope: ExecutionScope,
+    code: string,
+    message: string
+  ): Promise<void> {
+    const active = this.active.get(scope.executionId);
+    await this.interactionStore.cancelPending(scope, new Date());
+    await this.failExecution(scope, code, message);
+    if (!active) return;
+    try {
+      await active.adapter.cancel(active.handle);
+    } catch {
+      // The durable failed state is authoritative when provider cleanup also fails.
+    }
+  }
+
+  private scheduleInteractionExpiry(
+    scope: ExecutionScope,
+    interactionId: string,
+    expiresAt: Date
+  ): void {
+    const active = this.active.get(scope.executionId);
+    if (!active) return;
+    this.clearInteractionExpiry(scope.executionId, interactionId);
+    const timer = setTimeout(() => {
+      void this.expireInteraction(scope, interactionId);
+    }, Math.max(0, expiresAt.getTime() - Date.now()));
+    timer.unref();
+    active.expiryTimers.set(interactionId, timer);
+  }
+
+  private async expireInteraction(scope: ExecutionScope, interactionId: string): Promise<void> {
+    this.clearInteractionExpiry(scope.executionId, interactionId);
+    const interaction = (await this.interactionStore.list(scope)).find(
+      (candidate) => candidate.interactionId === interactionId
+    );
+    if (!interaction || interaction.state !== "pending") return;
+    await this.failAndTerminate(
+      scope,
+      "AGENT_INTERACTION_EXPIRED",
+      "The pending Agent interaction expired before it was resolved."
+    );
+  }
+
+  private clearInteractionExpiry(executionId: string, interactionId: string): void {
+    const active = this.active.get(executionId);
+    const timer = active?.expiryTimers.get(interactionId);
+    if (timer) clearTimeout(timer);
+    active?.expiryTimers.delete(interactionId);
+  }
+
+  private clearActive(executionId: string): void {
+    const active = this.active.get(executionId);
+    for (const timer of active?.expiryTimers.values() ?? []) clearTimeout(timer);
+    this.active.delete(executionId);
   }
 
   private async requireSession(scope: ExecutionScope): Promise<AgentSessionRecord> {

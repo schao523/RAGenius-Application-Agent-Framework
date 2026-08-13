@@ -252,6 +252,34 @@ describe("interactive Agent session manager", () => {
     assert.equal(result.outcome, "expired");
     assert.deepEqual(harness.adapter.responses, []);
     assert.equal((await harness.executionStore.get(scope))?.status, "failed");
+    assert.equal(harness.adapter.cancelled, true);
+  });
+
+  it("expires an unanswered interaction and terminates its provider session", async () => {
+    const harness = await createHarness();
+    await harness.manager.start({
+      policy, providerContext, request, requiredInteractionTypes: ["approval"], scope
+    });
+    await harness.adapter.send(
+      interactionEvent("interaction-expiring", "approval", new Date(Date.now() + 20))
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.equal((await harness.executionStore.get(scope))?.status, "failed");
+    assert.equal(harness.adapter.cancelled, true);
+  });
+
+  it("terminates every active provider session during shutdown", async () => {
+    const harness = await createHarness();
+    await harness.manager.start({
+      policy, providerContext, request, requiredInteractionTypes: [], scope
+    });
+
+    await harness.manager.shutdown();
+
+    assert.equal(harness.adapter.cancelled, true);
+    assert.equal((await harness.executionStore.get(scope))?.status, "failed");
   });
 
   it("does not consume pre-run pending confirmation", async () => {

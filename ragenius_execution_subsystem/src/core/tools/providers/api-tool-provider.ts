@@ -25,6 +25,17 @@ export class MockApiToolProvider implements ApiToolProvider {
 
   constructor(
     config: ProviderRuntimeConfig = {
+      codexAppServer: {
+        enabled: false,
+        command: "codex",
+        initializationTimeoutMs: 15000,
+        interactionTtlMs: 900000,
+        maxDeltaBytes: 16384,
+          maxLineBytes: 1048576,
+          maxStderrBytes: 65536,
+          runRoot: "storage/codex-runs",
+          supportedVersions: ["0.146.0"]
+      },
       codexCli: {
         enabled: false,
         nodeCommand: "node",

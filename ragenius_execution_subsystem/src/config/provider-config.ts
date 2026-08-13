@@ -85,6 +85,18 @@ export interface CodexCliProviderConfig {
   sandboxMode?: "read-only" | "workspace-write";
 }
 
+export interface CodexAppServerProviderConfig {
+  enabled: boolean;
+  command: string;
+  initializationTimeoutMs: number;
+  interactionTtlMs: number;
+  maxDeltaBytes: number;
+  maxLineBytes: number;
+  maxStderrBytes: number;
+  runRoot: string;
+  supportedVersions: string[];
+}
+
 export interface OpenClawCliRuntimeConfig {
   enabled: boolean;
   wslDistro: string;
@@ -103,6 +115,7 @@ export interface ResearchPaperProviderConfig {
 }
 
 export interface ProviderRuntimeConfig {
+  codexAppServer: CodexAppServerProviderConfig;
   codexCli: CodexCliProviderConfig;
   notebooklm: NotebookLmProviderConfig;
   openClaw: OpenClawCliRuntimeConfig;
@@ -201,6 +214,17 @@ export function buildAdapterRuntimeConfig(
 
 export function buildProviderRuntimeConfig(env: AppEnv): ProviderRuntimeConfig {
   return {
+    codexAppServer: {
+      enabled: env.CODEX_APP_SERVER_INTERACTIVE_ENABLED,
+      command: env.CODEX_APP_SERVER_COMMAND,
+      initializationTimeoutMs: env.CODEX_APP_SERVER_INITIALIZATION_TIMEOUT_MS,
+      interactionTtlMs: env.CODEX_APP_SERVER_INTERACTION_TTL_MS,
+      maxDeltaBytes: env.CODEX_APP_SERVER_MAX_DELTA_BYTES,
+      maxLineBytes: env.CODEX_APP_SERVER_MAX_LINE_BYTES,
+      maxStderrBytes: env.CODEX_APP_SERVER_MAX_STDERR_BYTES,
+      runRoot: env.CODEX_RUN_ROOT,
+      supportedVersions: splitCsv(env.CODEX_APP_SERVER_SUPPORTED_VERSIONS)
+    },
     codexCli: {
       enabled: env.CODEX_CLI_ENABLED,
       nodeCommand: env.CODEX_CLI_NODE_COMMAND,

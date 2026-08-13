@@ -49,6 +49,10 @@ describe("runtime config", () => {
     assert.equal(defaults.providers.codexCli.runRetentionHours, 24);
     assert.equal(defaults.providers.codexCli.maxOutputBytes, 16384);
     assert.equal(defaults.providers.codexCli.sandboxMode, "workspace-write");
+    assert.equal(defaults.providers.codexAppServer.enabled, false);
+      assert.equal(defaults.providers.codexAppServer.command, "codex");
+      assert.equal(defaults.providers.codexAppServer.runRoot, "storage/codex-runs");
+    assert.deepEqual(defaults.providers.codexAppServer.supportedVersions, ["0.146.0"]);
     assert.deepEqual(defaults.agentSkills.codex.inventory, {
       maxStderrBytes: 65536,
       maxStdoutBytes: 1048576,

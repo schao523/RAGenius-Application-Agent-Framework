@@ -59,6 +59,17 @@ async function terminatePosixGroup(pid, graceMs) {
   }
 }
 
+export async function terminateSupervisedProcessTree(pid, graceMs = 5_000) {
+  if (!pid) {
+    return;
+  }
+  if (process.platform === "win32") {
+    await terminateWindowsTree(pid, graceMs);
+  } else {
+    await terminatePosixGroup(pid, graceMs);
+  }
+}
+
 export async function runSupervisedProcess(spec) {
   const maxStdoutBytes = Math.max(0, spec.maxStdoutBytes ?? 262_144);
   const maxStderrBytes = Math.max(0, spec.maxStderrBytes ?? 65_536);
@@ -137,11 +148,7 @@ export async function runSupervisedProcess(spec) {
             stderr.append(`\nTermination hook failed: ${error instanceof Error ? error.message : String(error)}`);
           }
           if (child.pid) {
-            if (process.platform === "win32") {
-              await terminateWindowsTree(child.pid, killGraceMs);
-            } else {
-              await terminatePosixGroup(child.pid, killGraceMs);
-            }
+            await terminateSupervisedProcessTree(child.pid, killGraceMs);
           }
         })();
         forceResolveHandle = setTimeout(() => {

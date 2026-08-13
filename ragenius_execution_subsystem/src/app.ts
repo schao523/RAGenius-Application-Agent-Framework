@@ -103,6 +103,8 @@ import {
 } from "./core/interactive/prisma-agent-event-store.js";
 import { InteractiveCapabilityService } from "./core/interactive/interactive-capability-service.js";
 import { InteractiveAgentSessionManager } from "./core/interactive/interactive-agent-session-manager.js";
+import { CodexAppServerAdapter } from "./core/interactive/codex-app-server-adapter.js";
+import { CodexAppServerProcessFactory } from "./core/interactive/codex-app-server-process.js";
 
 export interface McpDiscoveryProviderState {
   discoveredToolCount: number;
@@ -191,10 +193,16 @@ export function createAppServices(
           dependencies.prismaClient as unknown as AgentEventPrismaClient
         )
       : new InMemoryAgentEventStore());
+  const codexAppServerAdapter = new CodexAppServerAdapter(
+    runtimeConfig.providers.codexAppServer,
+    new CodexAppServerProcessFactory(runtimeConfig.providers.codexAppServer)
+  );
   const interactiveSessionManager =
     overrides.interactiveSessionManager ??
     new InteractiveAgentSessionManager({
-      capabilityService: new InteractiveCapabilityService([]),
+      capabilityService: new InteractiveCapabilityService([
+        codexAppServerAdapter
+      ]),
       eventStore: agentEventStore,
       executionStore,
       interactionStore: agentInteractionStore,
@@ -341,6 +349,7 @@ export function createAppServices(
         (await artifactStore.resolveScopedFile(input)).absolute_path,
       notebookLmProfile: runtimeConfig.providers.notebooklm.profile ?? "default",
       executionStore,
+      interactiveSessionManager,
       permissionEngine,
       skillRegistry,
       toolEngine,
@@ -482,6 +491,7 @@ export function buildApp(
 
   app.addHook("onClose", async () => {
     services.agentExecutionQueue.stop();
+    await services.interactiveSessionManager.shutdown();
   });
 
   app.setErrorHandler((error, _request, reply) => {

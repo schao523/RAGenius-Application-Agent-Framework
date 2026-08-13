@@ -188,6 +188,7 @@ export interface RuntimeConfigDiagnostics {
     proxyTargets: string[];
   };
   providers: {
+    codexAppServer: { enabled: boolean };
     codexCli: { enabled: boolean };
     notebooklm: { enabled: boolean };
     openClaw: { enabled: boolean };
@@ -322,6 +323,9 @@ export function inspectRuntimeConfig(
       proxyTargets
     },
     providers: {
+      codexAppServer: {
+        enabled: runtimeConfig.providers.codexAppServer.enabled
+      },
       codexCli: {
         enabled: runtimeConfig.providers.codexCli.enabled
       },
