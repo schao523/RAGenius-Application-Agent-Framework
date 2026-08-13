@@ -441,34 +441,44 @@ tests with one skip on 2026-08-13.
 - Consumes: app backend interaction/event APIs.
 - Produces: generic interaction rendering and response/cancellation actions.
 
-- [ ] **Step 1: Write failing interaction-card tests**
+- [x] **Step 1: Write failing interaction-card tests**
 
 Test allow-once/deny/cancel wording, clarification text limits, selection options, auth handoff with no secret input, expiry, submitting state, duplicate click suppression, stale refresh, and inaccessible provider details.
 
-- [ ] **Step 2: Implement the generic card**
+- [x] **Step 2: Implement the generic card**
 
 Render from normalized `type`, `options`, `allows_free_text`, state, and expiry. Approval cards explain exact one-time scope. Authentication cards provide launch instructions and only Completed/Cancel actions.
 
-- [ ] **Step 3: Integrate polling and event cursor**
+- [x] **Step 3: Integrate polling and event cursor**
 
 While status is queued, running, or waiting, poll scoped status/interactions/events. Use event `after_sequence`; stop on terminal status. Refresh after stale-version conflict instead of retrying the response automatically.
 
-- [ ] **Step 4: Add cancellation UX**
+- [x] **Step 4: Add cancellation UX**
 
 Show Cancel only for active executions. Disable it after submission and display authoritative cancellation/cleanup result.
 
-- [ ] **Step 5: Run frontend tests and build**
+- [x] **Step 5: Run frontend tests and build**
 
 Run: `npm test -- AgentInteractionCard.test.jsx ExecutionLaneStatusCard.test.jsx ExecutionInspector.test.jsx App.test.jsx`
 
 Run: `npm run build`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```text
 git add ragenius_app_skeleton/frontend/src
 git commit -m "feat: add interactive agent UX"
 ```
+
+The execution lane now renders one provider-neutral interaction card for
+approval, clarification, selection, authentication handoff, and user-action
+requests. Responses carry the server-issued version plus a client idempotency
+key; stale conflicts trigger refresh rather than automatic replay. Scoped
+interaction and event polling continues while the execution is active, and
+cancellation uses the authoritative backend result. Authentication never
+renders a credential field. The focused suite passed 73 tests, the complete
+frontend suite passed 151 tests, and the production build passed on
+2026-08-13.
 
 ### Task 9: Recovery, Security, And End-To-End Acceptance
 

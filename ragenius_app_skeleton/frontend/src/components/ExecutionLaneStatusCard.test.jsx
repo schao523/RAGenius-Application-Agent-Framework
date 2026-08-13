@@ -196,4 +196,27 @@ describe("ExecutionLaneStatusCard", () => {
     expect(onLoginNotebookLm).toHaveBeenCalledTimes(1);
     expect(onRetryExecution).toHaveBeenCalledTimes(1);
   });
+
+  it("renders a pending provider-neutral interaction", () => {
+    render(
+      <ExecutionLaneStatusCard
+        selectedApprovedContent={null}
+        sessionLaneState={{ execution_lane: { latest_execution_id: "execution_1" } }}
+        interaction={{
+          interaction_id: "interaction_1",
+          type: "approval",
+          state: "pending",
+          version: 1,
+          prompt: "Allow this operation?",
+          options: [],
+          expires_at: "2099-01-01T00:00:00Z",
+        }}
+        onRespondInteraction={vi.fn()}
+        styles={styles}
+      />,
+    );
+
+    expect(screen.getByText(/allow this operation/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /allow once/i })).toBeInTheDocument();
+  });
 });

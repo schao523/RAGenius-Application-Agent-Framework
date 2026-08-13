@@ -85,6 +85,11 @@ function buildAppFetchMock({
   agentSkillResponse,
   executionInputResponse,
   prepareUploadResponse,
+  sessionLaneState = {},
+  agentInteractionsResponse,
+  agentEventsResponse,
+  agentInteractionSubmitResponse,
+  agentCancelResponse,
   instructionPreview = { compiled_id: "compiled-test" },
   messages = [],
   sessionUploads = [],
@@ -150,12 +155,32 @@ function buildAppFetchMock({
       return mockJsonResponse({
         session_id: "session-1",
         messages,
-        session_lane_state: {},
+        session_lane_state: sessionLaneState,
         workflow_status: null,
         diagnostics: {},
         session_uploads: sessionUploads,
         approved_content: [],
       });
+    }
+    if (normalizedUrl.includes("/executions/") && normalizedUrl.includes("/interactions?") && options.method !== "POST") {
+      return typeof agentInteractionsResponse === "function"
+        ? agentInteractionsResponse(normalizedUrl, options)
+        : mockJsonResponse(agentInteractionsResponse || { items: [], session_lane_state: sessionLaneState });
+    }
+    if (normalizedUrl.includes("/executions/") && normalizedUrl.includes("/events?")) {
+      return typeof agentEventsResponse === "function"
+        ? agentEventsResponse(normalizedUrl, options)
+        : mockJsonResponse(agentEventsResponse || { items: [], next_after_sequence: 0, session_lane_state: sessionLaneState });
+    }
+    if (normalizedUrl.includes("/interactions/") && normalizedUrl.endsWith("/responses") && options.method === "POST") {
+      return typeof agentInteractionSubmitResponse === "function"
+        ? agentInteractionSubmitResponse(normalizedUrl, options)
+        : mockJsonResponse(agentInteractionSubmitResponse || { outcome: "applied", session_lane_state: sessionLaneState });
+    }
+    if (normalizedUrl.includes("/executions/") && normalizedUrl.endsWith("/cancel") && options.method === "POST") {
+      return typeof agentCancelResponse === "function"
+        ? agentCancelResponse(normalizedUrl, options)
+        : mockJsonResponse(agentCancelResponse || { cancelled: true, status: "cancelled", session_lane_state: sessionLaneState });
     }
     if (normalizedUrl.includes("/sessions/") && normalizedUrl.includes("/artifacts?")) {
       if (typeof artifactResponse === "function") {
@@ -176,6 +201,63 @@ function buildAppFetchMock({
     return mockJsonResponse({});
   });
 }
+
+describe("interactive Agent execution", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("loads a pending interaction and submits an idempotent typed response", async () => {
+    const requests = [];
+    const lane = {
+      execution_lane: {
+        latest_execution_id: "execution_1",
+        latest_execution_request_skill_id: "openclaw_cli",
+        latest_status_result: { status: "running" },
+        last_event_sequence: 3,
+      },
+    };
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "response-key-1") });
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "Interactive run" }],
+      messages: [{ id: "msg_1", role: "assistant", content: "Agent is running.", retrieval_summary: {} }],
+      sessionLaneState: lane,
+      agentInteractionsResponse: {
+        execution_id: "execution_1",
+        items: [{
+          interaction_id: "interaction_1",
+          type: "approval",
+          state: "pending",
+          version: 2,
+          sequence: 4,
+          prompt: "Allow this external action?",
+          options: [],
+          expires_at: "2099-08-13T12:00:00Z",
+        }],
+        session_lane_state: lane,
+      },
+      agentEventsResponse: { items: [], next_after_sequence: 3, session_lane_state: lane },
+      onRequest: (url, options) => requests.push([String(url), options]),
+    }));
+
+    render(<App />);
+
+    expect(await screen.findByText(/allow this external action/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /allow once/i }));
+
+    await waitFor(() => {
+      const submitted = requests.find(([url, options]) => url.endsWith("/interactions/interaction_1/responses") && options.method === "POST");
+      expect(submitted).toBeTruthy();
+      expect(JSON.parse(submitted[1].body)).toMatchObject({
+        app_id: "app-1",
+        user_id: "user1",
+        expected_version: 2,
+        idempotency_key: "response-key-1",
+        response: { kind: "approval", decision: "allow_once" },
+      });
+    });
+  });
+});
 
 describe("resolveActiveAppDisplay", () => {
   it("prefers detailed app info only when it matches the selected app", () => {

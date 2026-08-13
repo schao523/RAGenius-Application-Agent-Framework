@@ -1,4 +1,5 @@
 import React from "react";
+import AgentInteractionCard from "./AgentInteractionCard";
 
 function resolveExecutionStatus(executionLaneState) {
   const latestResult = executionLaneState?.latest_execution_result;
@@ -7,6 +8,7 @@ function resolveExecutionStatus(executionLaneState) {
     latestStatus?.status
     || latestResult?.status
     || latestResult?.state
+    || executionLaneState?.latest_execution_status
     || ""
   );
 }
@@ -82,6 +84,12 @@ export default function ExecutionLaneStatusCard({
   onRetryExecution,
   onOpenComposer,
   onOpenInspector,
+  interaction,
+  onRespondInteraction,
+  onCancelInteraction,
+  onRefreshInteraction,
+  interactionSubmitting,
+  interactionError,
   styles,
 }) {
   const contentLane = sessionLaneState?.content_lane || {};
@@ -208,6 +216,15 @@ export default function ExecutionLaneStatusCard({
           Approve a revision, then use the execution composer or run `@exec tool ...` / `@exec skill ...` to start the execution lane.
         </div>
       )}
+      <AgentInteractionCard
+        interaction={interaction}
+        onRespond={onRespondInteraction}
+        onCancel={onCancelInteraction}
+        onRefresh={onRefreshInteraction}
+        submitting={interactionSubmitting}
+        error={interactionError}
+        styles={styles}
+      />
     </section>
   );
 }
