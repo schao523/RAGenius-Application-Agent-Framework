@@ -23,5 +23,8 @@
     "scripts/codex_cli_environment.js",
     "scripts/codex_cli_protocol.js",
     "scripts/agent_process_supervisor.js"
+  ],
+  "exclude": [
+    "tests/fixtures/openclaw-yield-feasibility/**/*"
   ]
 }
