@@ -1,0 +1,483 @@
+# Interactive Agent Execution Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Add a governed, provider-neutral interactive Agent channel with Codex app-server support and capability-gated OpenClaw Gateway support.
+
+**Architecture:** The execution subsystem persists Agent sessions, interactions, and normalized events, then delegates protocol translation to interactive provider adapters. The app proxies scoped interaction APIs and renders a generic interaction card. Builder publishes administrator-reviewed interaction requirements through the existing trusted skill projection.
+
+**Tech Stack:** TypeScript, Fastify, Zod, Prisma/PostgreSQL, Node child processes and WebSocket client, Python/FastAPI, React/Vitest, Flask/SQLite.
+
+## Global Constraints
+
+- Preserve `pending_confirmation` as pre-execution policy confirmation.
+- Add `waiting_for_interaction` and terminal `cancelled`; timeout remains `failed`.
+- Never parse prose or terminal output as authorization.
+- Never accept passwords, OTPs, cookies, or tokens through an interaction.
+- Initial approvals support only `allow_once`, `deny`, and `cancel_execution`.
+- Existing one-shot Codex and OpenClaw providers remain autonomous fallbacks.
+- Interactive requirements fail closed when the selected adapter lacks capability.
+- Preserve complete `{app_id, session_id, execution_id}` scope and service authentication.
+- Preserve corrected OpenClaw per-run WSL staging containment.
+- Use dedicated interactive tests; do not repurpose RAGenius skill execution tests as the primary unit suite.
+
+---
+
+### Task 1: Provider-Neutral Schemas And Persistence
+
+**Files:**
+- Modify: `ragenius_execution_subsystem/prisma/schema.prisma`
+- Create: `ragenius_execution_subsystem/prisma/migrations/20260813_interactive_agent_sessions/migration.sql`
+- Create: `ragenius_execution_subsystem/src/core/interactive/interactive-agent-types.ts`
+- Create: `ragenius_execution_subsystem/src/core/interactive/agent-session-store.ts`
+- Create: `ragenius_execution_subsystem/src/core/interactive/prisma-agent-session-store.ts`
+- Create: `ragenius_execution_subsystem/src/core/interactive/agent-interaction-store.ts`
+- Create: `ragenius_execution_subsystem/src/core/interactive/prisma-agent-interaction-store.ts`
+- Create: `ragenius_execution_subsystem/src/core/interactive/agent-event-store.ts`
+- Create: `ragenius_execution_subsystem/src/core/interactive/prisma-agent-event-store.ts`
+- Test: `ragenius_execution_subsystem/tests/interactive/interactive-stores.test.ts`
+
+**Interfaces:**
+- Produces: `AgentSessionStore`, `AgentInteractionStore`, `AgentEventStore` and the exact record types from `docs/interactive-agent-execution-contract.md`.
+- Consumes: existing execution scope and Prisma client patterns.
+
+- [ ] **Step 1: Write failing in-memory store tests**
+
+Cover one active session per execution, monotonically increasing interaction/event sequences, scoped reads, atomic interaction claim by version, duplicate idempotency replay, expiry, and multiple interactions in one execution.
+
+- [ ] **Step 2: Run the focused tests and confirm missing-module failures**
+
+Run: `npm test -- tests/interactive/interactive-stores.test.ts`
+
+- [ ] **Step 3: Add the shared types and in-memory stores**
+
+Use these core signatures:
+
+```ts
+interface AgentInteractionStore {
+  create(input: CreateAgentInteractionInput): Promise<AgentInteractionRecord>;
+  list(scope: ExecutionScope): Promise<AgentInteractionRecord[]>;
+  claim(input: ClaimAgentInteractionInput): Promise<InteractionClaimResult>;
+  resolve(input: ResolveAgentInteractionInput): Promise<AgentInteractionRecord>;
+  cancelPending(scope: ExecutionScope, now: Date): Promise<number>;
+}
+```
+
+- [ ] **Step 4: Add Prisma tables and migration**
+
+Create `agent_sessions`, `agent_interactions`, and `agent_execution_events` with foreign keys to `executions`, unique execution/sequence constraints, scope indexes, expiry indexes, and cascade deletion. Store provider references in non-public columns and response summaries as JSON.
+
+- [ ] **Step 5: Implement Prisma stores with conditional updates**
+
+Interaction claims must update only records matching pending state, expected version, scope, and unexpired timestamp. Duplicate idempotency keys return the prior resolution rather than contacting a provider twice.
+
+- [ ] **Step 6: Test both in-memory and mocked Prisma behavior**
+
+Run: `npm test -- tests/interactive/interactive-stores.test.ts`
+
+- [ ] **Step 7: Validate Prisma and commit**
+
+Run: `npx prisma validate`
+
+```text
+git add ragenius_execution_subsystem/prisma ragenius_execution_subsystem/src/core/interactive ragenius_execution_subsystem/tests/interactive
+git commit -m "feat: persist interactive agent sessions"
+```
+
+### Task 2: Interactive Session Manager And Capability Preflight
+
+**Files:**
+- Create: `ragenius_execution_subsystem/src/core/interactive/interactive-agent-adapter.ts`
+- Create: `ragenius_execution_subsystem/src/core/interactive/interactive-agent-session-manager.ts`
+- Create: `ragenius_execution_subsystem/src/core/interactive/interactive-capability-service.ts`
+- Modify: `ragenius_execution_subsystem/src/core/execution/execution-engine.ts`
+- Modify: `ragenius_execution_subsystem/src/api/schemas/common-response.schema.ts`
+- Test: `ragenius_execution_subsystem/tests/interactive/interactive-agent-session-manager.test.ts`
+
+**Interfaces:**
+- Consumes: stores from Task 1 and existing `AgentProviderExecutionContext`.
+- Produces: `InteractiveAgentAdapter` with `preflight`, `start`, `respond`, `cancel`, and `reconcile`.
+
+- [ ] **Step 1: Write failing lifecycle and preflight tests**
+
+Test `running -> waiting_for_interaction -> running -> completed`, multiple interactions, unsupported capability failure, cancellation, expired interaction failure, and preservation of pre-run `pending_confirmation`.
+
+- [ ] **Step 2: Run focused tests**
+
+Run: `npm test -- tests/interactive/interactive-agent-session-manager.test.ts`
+
+- [ ] **Step 3: Implement adapter and capability interfaces**
+
+```ts
+interface InteractiveAgentAdapter {
+  readonly backend: AgentBackend;
+  preflight(input: InteractivePreflightInput): Promise<InteractivePreflightResult>;
+  start(input: InteractiveStartInput): Promise<ProviderSessionHandle>;
+  respond(handle: ProviderSessionHandle, claim: ClaimedInteraction): Promise<void>;
+  cancel(handle: ProviderSessionHandle): Promise<ProviderCancellationResult>;
+  reconcile(handle: ProviderSessionHandle): Promise<ProviderReconciliationResult>;
+}
+```
+
+- [ ] **Step 4: Implement session orchestration**
+
+Persist the provider handle before consuming subsequent events, normalize events through one append-only path, create interactions only from typed adapter events, and transition execution status atomically.
+
+- [ ] **Step 5: Extend status normalization**
+
+Add `waiting_for_interaction` and `cancelled` to schemas and active-status recovery logic. Keep timeout and unclean restart behavior consistent with the lifecycle contract.
+
+- [ ] **Step 6: Integrate feature-gated interactive dispatch**
+
+Select interactive dispatch only when requested/required capabilities pass preflight. Autonomous requests continue using the existing `AgentProvider.execute` path.
+
+- [ ] **Step 7: Run tests and commit**
+
+Run: `npm test -- tests/interactive/interactive-agent-session-manager.test.ts tests/execution/agent-execution-queue.test.ts tests/execution/execution-store.test.ts`
+
+```text
+git add ragenius_execution_subsystem/src ragenius_execution_subsystem/tests
+git commit -m "feat: orchestrate interactive agent lifecycle"
+```
+
+### Task 3: Scoped Interaction, Event, And Cancellation APIs
+
+**Files:**
+- Create: `ragenius_execution_subsystem/src/api/schemas/interactive-agent.schema.ts`
+- Create: `ragenius_execution_subsystem/src/api/routes/interactive-agent.routes.ts`
+- Modify: `ragenius_execution_subsystem/src/app.ts`
+- Test: `ragenius_execution_subsystem/tests/api/interactive-agent-routes.test.ts`
+
+**Interfaces:**
+- Consumes: session manager and stores from Tasks 1-2.
+- Produces: the four service endpoints in the interactive execution contract.
+
+- [ ] **Step 1: Write failing route tests**
+
+Cover service authentication, complete scope, event cursor, pending interaction inventory, stale version, duplicate idempotency, wrong response kind, secret-like fields rejection, cancellation, and execution-id enumeration resistance.
+
+- [ ] **Step 2: Run focused route tests**
+
+Run: `npm test -- tests/api/interactive-agent-routes.test.ts`
+
+- [ ] **Step 3: Add Zod request and response schemas**
+
+Set exact length limits: prompt 2,000 characters, option label 200, 20 options, clarification response 8,000, idempotency key 128, and event page 200. Reject unrecognized fields in response payloads.
+
+- [ ] **Step 4: Implement routes and register them**
+
+Use existing service authentication and execution scope lookup before every store or adapter operation. Return normalized conflicts for stale, expired, already-resolved, and unsupported interactions.
+
+- [ ] **Step 5: Run route and scope regression tests**
+
+Run: `npm test -- tests/api/interactive-agent-routes.test.ts tests/execution/execution-scope.test.ts tests/api/execution-routes.test.ts`
+
+- [ ] **Step 6: Commit**
+
+```text
+git add ragenius_execution_subsystem/src/api ragenius_execution_subsystem/src/app.ts ragenius_execution_subsystem/tests/api
+git commit -m "feat: expose scoped agent interaction APIs"
+```
+
+### Task 4: Codex App-Server Adapter
+
+**Files:**
+- Create: `ragenius_execution_subsystem/src/core/interactive/codex-app-server-codec.ts`
+- Create: `ragenius_execution_subsystem/src/core/interactive/codex-app-server-process.ts`
+- Create: `ragenius_execution_subsystem/src/core/interactive/codex-app-server-adapter.ts`
+- Create: `ragenius_execution_subsystem/src/core/interactive/codex-interaction-tool.ts`
+- Modify: `ragenius_execution_subsystem/src/config/runtime-config.ts`
+- Modify: `ragenius_execution_subsystem/src/app.ts`
+- Test: `ragenius_execution_subsystem/tests/interactive/codex-app-server-adapter.test.ts`
+- Test: `ragenius_execution_subsystem/tests/interactive/codex-app-server-live-smoke.test.ts`
+
+**Interfaces:**
+- Consumes: `InteractiveAgentAdapter`.
+- Produces: `CodexAppServerAdapter` and capability profile.
+
+- [ ] **Step 1: Write codec tests with recorded protocol fixtures**
+
+Test initialize, thread/turn ids, event deltas, multiple approval requests, dynamic tool call, malformed JSON, unknown methods, response correlation, and output bounds.
+
+- [ ] **Step 2: Implement newline JSON-RPC codec and process wrapper**
+
+Spawn `codex app-server --stdio` without a shell, retain one process per active execution, and integrate the existing process-tree supervisor and bounded stderr handling.
+
+- [ ] **Step 3: Write failing adapter lifecycle tests**
+
+Mock a full turn containing approval, dynamic selection, completion, cancellation, provider disconnect, and unsupported schema version.
+
+- [ ] **Step 4: Implement start and event normalization**
+
+Send `initialize`, `initialized`, `thread/start`, and `turn/start`. Persist thread/turn refs before resolving subsequent messages. Coalesce message deltas and discard raw reasoning.
+
+- [ ] **Step 5: Implement interactions and cancellation**
+
+Map typed approval requests, expose only allow-once/deny/cancel, register `ragenius_request_input`, and send `turn/interrupt` for cancellation.
+
+- [ ] **Step 6: Add config and preflight**
+
+Add `CODEX_APP_SERVER_INTERACTIVE_ENABLED`, command, supported version range, interaction TTL, and initialization timeout. Default the feature to disabled.
+
+- [ ] **Step 7: Run unit and opt-in live tests**
+
+Run: `npm test -- tests/interactive/codex-app-server-adapter.test.ts`
+
+Opt-in: `CODEX_APP_SERVER_INTERACTIVE_SMOKE=1 npm test -- tests/interactive/codex-app-server-live-smoke.test.ts`
+
+- [ ] **Step 8: Commit**
+
+```text
+git add ragenius_execution_subsystem/src ragenius_execution_subsystem/tests/interactive
+git commit -m "feat: add interactive Codex app-server adapter"
+```
+
+### Task 5: OpenClaw Gateway Adapter
+
+**Files:**
+- Create: `ragenius_execution_subsystem/src/core/interactive/openclaw-gateway-client.ts`
+- Create: `ragenius_execution_subsystem/src/core/interactive/openclaw-gateway-adapter.ts`
+- Create: `ragenius_execution_subsystem/src/core/interactive/openclaw-gateway-events.ts`
+- Modify: `ragenius_execution_subsystem/src/config/runtime-config.ts`
+- Modify: `ragenius_execution_subsystem/src/app.ts`
+- Test: `ragenius_execution_subsystem/tests/interactive/openclaw-gateway-adapter.test.ts`
+- Test: `ragenius_execution_subsystem/tests/interactive/openclaw-gateway-live-smoke.test.ts`
+
+**Interfaces:**
+- Consumes: `InteractiveAgentAdapter`, existing OpenClaw workspace staging, and process-independent WSL path rules.
+- Produces: `OpenClawGatewayAdapter` and capability profile.
+
+- [ ] **Step 1: Write Gateway RPC and event fixture tests**
+
+Cover connection authentication, request ids, canonical session key, run ids, event sequence, gap detection, `agent.wait`, approval requested/resolved, and token redaction.
+
+- [ ] **Step 2: Implement authenticated Gateway client**
+
+Use a subsystem-owned WebSocket connection, explicit request timeouts, bounded messages, reconnect backoff, sequence tracking, and event routing by canonical session key/run id.
+
+- [ ] **Step 3: Implement session start and continuation**
+
+Generate a key from `{app_id, session_id, agent_session_id}` without execution id. Stage and verify each provider run independently even when runs share a session.
+
+- [ ] **Step 4: Implement approval and cancellation mapping**
+
+Advertise approval only when preflight confirms ask policy and `operator.approvals`. Map allow-once/deny and use exact run-scoped `chat.abort`; confirm with `agent.wait`.
+
+- [ ] **Step 5: Implement reconciliation**
+
+Use `sessions.list` and `agent.wait` after reconnect. Treat event gaps as reconciliation triggers, not replay. Do not advertise clarification or selection.
+
+- [ ] **Step 6: Add disabled-by-default configuration**
+
+Add `OPENCLAW_GATEWAY_INTERACTIVE_ENABLED`, WSL distro, URL, credential env reference, supported version range, and RPC timeout. Never log the credential value.
+
+- [ ] **Step 7: Run tests and live smoke**
+
+Run: `npm test -- tests/interactive/openclaw-gateway-adapter.test.ts tests/agents/openclaw-workspace.test.ts`
+
+Opt-in continuation/cancel: `OPENCLAW_GATEWAY_INTERACTIVE_SMOKE=1 npm test -- tests/interactive/openclaw-gateway-live-smoke.test.ts`
+
+Approval smoke remains skipped with a precise reason until administrator ask policy is enabled.
+
+- [ ] **Step 8: Commit**
+
+```text
+git add ragenius_execution_subsystem/src ragenius_execution_subsystem/tests/interactive
+git commit -m "feat: add interactive OpenClaw Gateway adapter"
+```
+
+### Task 6: Builder Interaction Capability Governance
+
+**Files:**
+- Modify: `ragenius_builder/flask_scaffold/agent_skill_publication.py`
+- Modify: `ragenius_builder/flask_scaffold/agent_skill_projection.py`
+- Modify: `ragenius_builder/flask_scaffold/app.py`
+- Modify: `ragenius_execution_subsystem/src/api/schemas/agent-skill.schema.ts`
+- Modify: `ragenius_execution_subsystem/src/core/agent-skills/agent-skill-types.ts`
+- Test: `ragenius_builder/flask_scaffold/tests/test_agent_skill_publication.py`
+- Test: `ragenius_builder/flask_scaffold/tests/test_agent_skill_projection.py`
+- Test: `ragenius_execution_subsystem/tests/agent-skills/agent-skill-projection-store.test.ts`
+
+**Interfaces:**
+- Produces: synchronized `AgentSkillInteractionPolicy` included in reviewed fingerprints and projections.
+
+- [ ] **Step 1: Write failing publication and projection tests**
+
+Test defaults to autonomous/one-shot/not-resumable, administrator-reviewed changes, fingerprint invalidation, projection round trip, and rejection of unsupported values.
+
+- [ ] **Step 2: Implement Builder fields and validation**
+
+Add interaction requirement, supported types, required transport, and recovery class to the existing governance resource rather than creating another catalog.
+
+- [ ] **Step 3: Extend execution projection validation and preflight**
+
+Published requirements may raise capability/risk and must fail closed when the active provider cannot satisfy them.
+
+- [ ] **Step 4: Run Builder and execution tests**
+
+Run Builder: `python -m pytest flask_scaffold/tests/test_agent_skill_publication.py flask_scaffold/tests/test_agent_skill_projection.py`
+
+Run execution: `npm test -- tests/agent-skills/agent-skill-projection-store.test.ts tests/agent-skills/agent-skill-selection-service.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```text
+git add ragenius_builder/flask_scaffold ragenius_execution_subsystem/src ragenius_execution_subsystem/tests/agent-skills
+git commit -m "feat: govern agent interaction capabilities"
+```
+
+### Task 7: App Backend Interaction Proxy And Lane State
+
+**Files:**
+- Modify: `ragenius_app_skeleton/backend/app/execution_subsystem_client.py`
+- Modify: `ragenius_app_skeleton/backend/app/main.py`
+- Modify: `ragenius_app_skeleton/backend/app/chat_repos.py`
+- Test: `ragenius_app_skeleton/backend/tests/test_execution_subsystem_client.py`
+- Test: `ragenius_app_skeleton/backend/tests/test_chat_exec_routing.py`
+- Test: `ragenius_app_skeleton/backend/tests/test_session_execution_state_rehydration.py`
+
+**Interfaces:**
+- Consumes: Task 3 service APIs.
+- Produces: user/session-scoped app APIs and rehydratable interaction lane state.
+
+- [ ] **Step 1: Write failing client and ownership tests**
+
+Cover list interactions/events, respond, cancel, bearer service auth, session-owner rejection, cross-app rejection, duplicate response, and provider handle redaction.
+
+- [ ] **Step 2: Add execution-subsystem client methods**
+
+Implement bounded timeouts for list/respond/cancel. Forward complete scope and service credential; never forward user-supplied provider identifiers.
+
+- [ ] **Step 3: Add scoped app routes**
+
+Use `/sessions/{session_id}/executions/{execution_id}/interactions`, response, events, and cancel routes. Verify authenticated ownership before calling the execution subsystem.
+
+- [ ] **Step 4: Extend execution lane state**
+
+Persist latest normalized interaction id/type/state/version/expiry and last event sequence. Do not persist raw prompts containing provider secrets or use lane state as authorization.
+
+- [ ] **Step 5: Run backend tests and commit**
+
+Run: `python -m pytest backend/tests/test_execution_subsystem_client.py backend/tests/test_chat_exec_routing.py backend/tests/test_session_execution_state_rehydration.py`
+
+```text
+git add ragenius_app_skeleton/backend
+git commit -m "feat: proxy interactive agent sessions"
+```
+
+### Task 8: Execution Composer And Interaction UX
+
+**Files:**
+- Create: `ragenius_app_skeleton/frontend/src/components/AgentInteractionCard.jsx`
+- Create: `ragenius_app_skeleton/frontend/src/components/AgentInteractionCard.test.jsx`
+- Modify: `ragenius_app_skeleton/frontend/src/components/ExecutionLaneStatusCard.jsx`
+- Modify: `ragenius_app_skeleton/frontend/src/components/ExecutionLaneStatusCard.test.jsx`
+- Modify: `ragenius_app_skeleton/frontend/src/components/ExecutionInspector.jsx`
+- Modify: `ragenius_app_skeleton/frontend/src/components/ExecutionInspector.test.jsx`
+- Modify: `ragenius_app_skeleton/frontend/src/App.jsx`
+- Modify: `ragenius_app_skeleton/frontend/src/App.test.jsx`
+
+**Interfaces:**
+- Consumes: app backend interaction/event APIs.
+- Produces: generic interaction rendering and response/cancellation actions.
+
+- [ ] **Step 1: Write failing interaction-card tests**
+
+Test allow-once/deny/cancel wording, clarification text limits, selection options, auth handoff with no secret input, expiry, submitting state, duplicate click suppression, stale refresh, and inaccessible provider details.
+
+- [ ] **Step 2: Implement the generic card**
+
+Render from normalized `type`, `options`, `allows_free_text`, state, and expiry. Approval cards explain exact one-time scope. Authentication cards provide launch instructions and only Completed/Cancel actions.
+
+- [ ] **Step 3: Integrate polling and event cursor**
+
+While status is queued, running, or waiting, poll scoped status/interactions/events. Use event `after_sequence`; stop on terminal status. Refresh after stale-version conflict instead of retrying the response automatically.
+
+- [ ] **Step 4: Add cancellation UX**
+
+Show Cancel only for active executions. Disable it after submission and display authoritative cancellation/cleanup result.
+
+- [ ] **Step 5: Run frontend tests and build**
+
+Run: `npm test -- AgentInteractionCard.test.jsx ExecutionLaneStatusCard.test.jsx ExecutionInspector.test.jsx App.test.jsx`
+
+Run: `npm run build`
+
+- [ ] **Step 6: Commit**
+
+```text
+git add ragenius_app_skeleton/frontend/src
+git commit -m "feat: add interactive agent UX"
+```
+
+### Task 9: Recovery, Security, And End-To-End Acceptance
+
+**Files:**
+- Create: `ragenius_execution_subsystem/tests/interactive/interactive-agent-recovery.test.ts`
+- Create: `ragenius_execution_subsystem/tests/interactive/interactive-agent-security.test.ts`
+- Create: `ragenius_app_skeleton/backend/tests/test_interactive_agent_flow.py`
+- Create: `ragenius_app_skeleton/frontend/src/components/InteractiveAgentFlow.test.jsx`
+- Modify: `ragenius_execution_subsystem/docs/security.md`
+- Modify: `ragenius_execution_subsystem/docs/api-contract.md`
+- Modify: `ragenius_execution_subsystem/.env.example`
+- Modify: `ragenius_execution_subsystem/start-ragenius-execution-subsystem.ps1`
+
+**Interfaces:**
+- Verifies all preceding tasks as one deployable feature behind disabled flags.
+
+- [ ] **Step 1: Add recovery and attack-path tests**
+
+Cover restart with running/waiting records, provider event spoofing, prompt-injection attempts to authorize actions, wrong interaction version, cross-session access, replayed decisions, oversized events, secret-shaped authentication payloads, and cancellation races.
+
+- [ ] **Step 2: Add end-to-end mocked flows**
+
+Test Codex approval then clarification then completion, OpenClaw approval then cancellation, app refresh while waiting, and explicit failure when a selected skill requires unsupported OpenClaw clarification.
+
+- [ ] **Step 3: Update startup and operational documentation**
+
+Document disabled-by-default flags, provider preflight diagnostics, Gateway scope and ask-policy prerequisites, interaction TTL, fallback behavior, and safe rollback by disabling interactive flags.
+
+- [ ] **Step 4: Run subsystem suites**
+
+Execution subsystem:
+
+```text
+npm run build
+npm run lint
+npm run typecheck
+npm test
+npx prisma validate
+```
+
+App backend: `python -m pytest backend/tests`
+
+App frontend: `npm test && npm run build`
+
+Builder: `python -m pytest flask_scaffold/tests`
+
+- [ ] **Step 5: Run live acceptance in increasing risk order**
+
+1. Codex read-only two-turn continuation.
+2. Codex dynamic selection.
+3. Codex disposable workspace allow-once approval.
+4. Codex cancellation.
+5. OpenClaw read-only continuation.
+6. OpenClaw cancellation.
+7. OpenClaw disposable command approval only after an administrator explicitly enables ask policy and confirms the test.
+
+- [ ] **Step 6: Record evidence and commit**
+
+Store redacted execution ids, versions, status transitions, interaction ids, verification results, and limitations in a dated acceptance document.
+
+```text
+git add ragenius_execution_subsystem ragenius_app_skeleton ragenius_builder docs
+git commit -m "test: verify interactive agent execution end to end"
+```
+
+## Rollout Gate
+
+Enable Codex interactive mode first after Tasks 1-4 and 7-9 pass. Enable
+OpenClaw session/cancellation after Task 5 acceptance. Keep OpenClaw approvals
+disabled until the administrator-gated live approval test passes. Keep OpenClaw
+clarification unavailable until a separate managed-tool specification,
+feasibility test, and implementation plan are approved.
