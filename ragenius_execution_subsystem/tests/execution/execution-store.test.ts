@@ -21,6 +21,7 @@ describe("execution store", () => {
     };
     for (const [executionId, status] of [
       ["execution_active", "pending_confirmation"],
+      ["execution_waiting", "waiting_for_interaction"],
       ["execution_complete", "completed"]
     ] as const) {
       await store.save({
@@ -68,6 +69,23 @@ describe("execution store", () => {
         files: [],
         errors: [],
         logs_summary: "Completed."
+      }
+    });
+    await store.transition({
+      scope: {
+        appId: "app_001",
+        sessionId: "sess_001",
+        executionId: "execution_waiting"
+      },
+      from: ["waiting_for_interaction"],
+      result: {
+        execution_id: "execution_waiting",
+        status: "cancelled",
+        result_type: "json",
+        result: {},
+        files: [],
+        errors: [],
+        logs_summary: "Cancelled."
       }
     });
     assert.equal(await store.hasActiveArtifactReference({

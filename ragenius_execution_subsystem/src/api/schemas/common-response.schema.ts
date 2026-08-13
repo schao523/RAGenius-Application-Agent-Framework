@@ -16,7 +16,9 @@ export const executionStatusSchema = z.enum([
   "failed",
   "partial",
   "blocked",
-  "pending_confirmation"
+  "pending_confirmation",
+  "waiting_for_interaction",
+  "cancelled"
 ]);
 
 export const resultTypeSchema = z.enum(["text", "json", "file", "video"]);

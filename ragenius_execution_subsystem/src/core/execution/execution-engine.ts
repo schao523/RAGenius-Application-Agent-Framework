@@ -43,6 +43,8 @@ import { ToolRegistry } from "../tools/tool-registry.js";
 import type { ToolDefinition } from "../tools/tool.types.js";
 import { WorkflowOrchestrator } from "../workflow/workflow-orchestrator.js";
 import type { ToolExecutionProvenance } from "../tools/tool.types.js";
+import type { AgentInteractionType } from "../interactive/interactive-agent-types.js";
+import type { InteractiveAgentSessionManager } from "../interactive/interactive-agent-session-manager.js";
 
 import type { ExecutionContext } from "./execution-context.js";
 import {
@@ -106,6 +108,15 @@ export class ExecutionEngine {
   private readonly agentSkillSelectionService:
     | Pick<AgentSkillSelectionService, "resolve">
     | undefined;
+  private readonly interactiveSessionManager:
+    | Pick<InteractiveAgentSessionManager, "start">
+    | undefined;
+  private readonly interactiveRequirementResolver:
+    | ((input: {
+        request: ExecutionRequest & { request_type: "execute_agent" };
+        selection: ResolvedAgentSkillSelection | null;
+      }) => { requiredInteractionTypes: AgentInteractionType[] } | null)
+    | undefined;
 
   constructor(options?: {
     skillRegistry?: SkillRegistry;
@@ -129,6 +140,11 @@ export class ExecutionEngine {
     }) => Promise<string>;
     notebookLmProfile?: string;
     agentSkillSelectionService?: Pick<AgentSkillSelectionService, "resolve">;
+    interactiveSessionManager?: Pick<InteractiveAgentSessionManager, "start">;
+    interactiveRequirementResolver?: (input: {
+      request: ExecutionRequest & { request_type: "execute_agent" };
+      selection: ResolvedAgentSkillSelection | null;
+    }) => { requiredInteractionTypes: AgentInteractionType[] } | null;
   }) {
     this.skillRegistry = options?.skillRegistry ?? new SkillRegistry();
     this.builderSkillClient = options?.builderSkillClient;
@@ -142,6 +158,8 @@ export class ExecutionEngine {
     this.executionStore = options?.executionStore;
     this.notebookLmProfile = options?.notebookLmProfile?.trim() || "default";
     this.agentSkillSelectionService = options?.agentSkillSelectionService;
+    this.interactiveSessionManager = options?.interactiveSessionManager;
+    this.interactiveRequirementResolver = options?.interactiveRequirementResolver;
     this.confirmationService =
       options?.confirmationService ??
       new ConfirmationService(new InMemoryConfirmationStore(), {
@@ -392,6 +410,65 @@ export class ExecutionEngine {
           resolved_artifacts: resolvedArtifacts,
           expected_outputs: request.expected_outputs ?? []
         };
+        const interactiveRequirement = this.interactiveRequirementResolver?.({
+          request,
+          selection: resolvedSelection
+        }) ?? null;
+        if (interactiveRequirement) {
+          if (!this.interactiveSessionManager || !this.executionStore) {
+            throw new AppError({
+              code: "INTERACTIVE_EXECUTION_NOT_CONFIGURED",
+              message: "Interactive Agent execution is not configured.",
+              errorClass: "validation",
+              httpStatus: 503,
+              recoverable: true,
+              suggestedAction: "Enable a compatible interactive Agent adapter."
+            });
+          }
+          const scope = {
+            appId: request.app_id,
+            executionId,
+            sessionId: request.session_id
+          };
+          const current = await this.executionStore.get(scope);
+          if (!current) {
+            await this.executionStore.save({
+              executionId,
+              request,
+              result: interactiveRunningResult(executionId)
+            });
+          } else if (
+            current.status === "pending_confirmation" &&
+            options?.approvedConfirmation
+          ) {
+            await this.executionStore.transition({
+              scope,
+              from: ["pending_confirmation"],
+              result: interactiveRunningResult(executionId)
+            });
+          }
+          await this.interactiveSessionManager.start({
+            policy: agentPolicy,
+            providerContext,
+            request: policyRequest,
+            requiredInteractionTypes:
+              interactiveRequirement.requiredInteractionTypes,
+            scope
+          });
+          return (
+            (await this.executionStore.get(scope)) ??
+            normalizeFailedResult({
+              executionId,
+              error: {
+                code: "INTERACTIVE_EXECUTION_STATE_MISSING",
+                message: "Interactive execution state was not persisted.",
+                recoverable: true,
+                suggested_action: "Retry the Agent execution."
+              },
+              logsSummary: "Interactive execution state is unavailable."
+            })
+          );
+        }
         agentResult = await provider.execute(
           policyRequest,
           agentPolicy,
@@ -1078,4 +1155,16 @@ export class ExecutionEngine {
       })()
     };
   }
+}
+
+function interactiveRunningResult(executionId: string): NormalizedExecutionResult {
+  return {
+    execution_id: executionId,
+    status: "running",
+    result_type: "json",
+    result: {},
+    files: [],
+    errors: [],
+    logs_summary: "Interactive Agent execution is starting."
+  };
 }

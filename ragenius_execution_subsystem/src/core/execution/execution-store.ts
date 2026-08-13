@@ -169,7 +169,12 @@ export class InMemoryExecutionStore implements ExecutionStore {
     sessionId: string;
     artifactId: string;
   }): Promise<boolean> {
-    const activeStatuses = new Set(["queued", "running", "pending_confirmation"]);
+    const activeStatuses = new Set([
+      "queued",
+      "running",
+      "pending_confirmation",
+      "waiting_for_interaction"
+    ]);
     for (const record of this.records.values()) {
       if (
         record.app_id !== input.appId ||
