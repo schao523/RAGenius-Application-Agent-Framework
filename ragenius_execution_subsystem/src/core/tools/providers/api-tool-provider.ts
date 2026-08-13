@@ -55,6 +55,20 @@ export class MockApiToolProvider implements ApiToolProvider {
         maxStderrBytes: 65536,
         runRetentionHours: 24
       },
+      openClawGateway: {
+        agentId: "main",
+        credentialEnv: "OPENCLAW_GATEWAY_APPROVAL_TOKEN",
+        enabled: false,
+        gatewayUrl: "ws://127.0.0.1:18789",
+        interactionTtlMs: 900000,
+        maxMessageBytes: 1048576,
+        reconnectBaseDelayMs: 250,
+        reconnectMaxAttempts: 5,
+        rpcTimeoutMs: 15000,
+        supportedVersions: ["2026.6.8"],
+        workspaceRoot: "/home/openclaw/.openclaw/workspace",
+        wslDistro: "OpenClawGateway"
+      },
       notebooklm: {
         enabled: false,
         pythonCommand: "python",

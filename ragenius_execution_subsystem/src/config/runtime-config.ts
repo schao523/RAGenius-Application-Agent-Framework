@@ -192,6 +192,11 @@ export interface RuntimeConfigDiagnostics {
     codexCli: { enabled: boolean };
     notebooklm: { enabled: boolean };
     openClaw: { enabled: boolean };
+    openClawGateway: {
+      credentialConfigured: boolean;
+      enabled: boolean;
+      gatewayUrl: string;
+    };
     arxiv: { enabled: boolean };
     openAi: { enabled: boolean };
     semanticScholar: { enabled: boolean; hasApiKey: boolean };
@@ -273,7 +278,7 @@ export function buildRuntimeConfig(
     mcp: buildMcpRuntimeConfig(env, source),
     network: buildNetworkRuntimeConfig(env),
     policy: buildDefaultRuntimePolicyConfig(),
-    providers: buildProviderRuntimeConfig(env),
+    providers: buildProviderRuntimeConfig(env, source),
     serviceAuth: buildServiceAuthRuntimeConfig(env),
     tools: buildToolToggleRuntimeConfig(env)
   };
@@ -331,6 +336,11 @@ export function inspectRuntimeConfig(
       },
       openClaw: {
         enabled: runtimeConfig.providers.openClaw.enabled
+      },
+      openClawGateway: {
+        credentialConfigured: Boolean(runtimeConfig.providers.openClawGateway.credential),
+        enabled: runtimeConfig.providers.openClawGateway.enabled,
+        gatewayUrl: runtimeConfig.providers.openClawGateway.gatewayUrl
       },
       notebooklm: {
         enabled: runtimeConfig.providers.notebooklm.enabled

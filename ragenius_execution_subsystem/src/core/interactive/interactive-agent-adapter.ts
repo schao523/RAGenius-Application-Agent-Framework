@@ -67,6 +67,7 @@ export type InteractiveProviderEvent = {
 };
 
 export interface InteractiveStartInput extends InteractivePreflightInput {
+  agentSessionId: string;
   capabilities: AgentInteractionCapabilities;
   emit(event: InteractiveProviderEvent): Promise<void>;
   protocolVersion: string;

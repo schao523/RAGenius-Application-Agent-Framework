@@ -253,7 +253,7 @@ git commit -m "feat: add interactive Codex app-server adapter"
 - Consumes: `InteractiveAgentAdapter`, existing OpenClaw workspace staging, and process-independent WSL path rules.
 - Produces: `OpenClawGatewayAdapter` and capability profile.
 
-- [ ] **Step 1: Write Gateway RPC and event fixture tests**
+- [x] **Step 1: Write Gateway RPC and event fixture tests**
 
 Cover connection authentication, request ids, canonical session key, run ids,
 sequenced run events, unsequenced approval events, gap detection, `agent.wait`,
@@ -261,15 +261,15 @@ approval requested/resolved, and token redaction. Deduplicate approval events by
 `{approval_id, event_kind}` while retaining normal sequence-gap handling for
 events that carry a Gateway sequence.
 
-- [ ] **Step 2: Implement authenticated Gateway client**
+- [x] **Step 2: Implement authenticated Gateway client**
 
 Use a subsystem-owned WebSocket connection, explicit request timeouts, bounded messages, reconnect backoff, sequence tracking, and event routing by canonical session key/run id.
 
-- [ ] **Step 3: Implement session start and continuation**
+- [x] **Step 3: Implement session start and continuation**
 
 Generate a key from `{app_id, session_id, agent_session_id}` without execution id. Stage and verify each provider run independently even when runs share a session.
 
-- [ ] **Step 4: Implement approval preflight and credential isolation**
+- [x] **Step 4: Implement approval preflight and credential isolation**
 
 Advertise approval only when preflight confirms OpenClaw 2026.6.8, effective
 `security: allowlist`, `ask: on-miss`, `askFallback: deny`, and both
@@ -278,7 +278,7 @@ redact it from diagnostics, and return a precise capability failure for every
 missing prerequisite. Record that `operator.admin` is a provider visibility
 constraint, not permission for RAGenius to expose arbitrary admin operations.
 
-- [ ] **Step 5: Implement approval resolution and cancellation mapping**
+- [x] **Step 5: Implement approval resolution and cancellation mapping**
 
 Map only allow-once/deny. Atomically claim the interaction before calling
 `exec.approval.resolve`; duplicate RAGenius idempotency keys return the stored
@@ -286,20 +286,26 @@ outcome without another provider call. Treat provider `{ok:true}` for a
 duplicate resolution as provider idempotence, not a second transition. Use
 exact run-scoped `chat.abort` for cancellation and confirm with `agent.wait`.
 
-- [ ] **Step 6: Implement expiry and reconciliation**
+- [x] **Step 6: Implement expiry and reconciliation**
 
 Use `sessions.list` and `agent.wait` after reconnect. Treat event gaps as
 reconciliation triggers, not replay. Expire an approval when the provider
 returns `decision: null` or its authoritative expiry passes; do not require an
 `exec.approval.resolved` event. Do not advertise clarification or selection.
 
-- [ ] **Step 7: Add disabled-by-default configuration**
+- [x] **Step 7: Add disabled-by-default configuration**
 
 Add `OPENCLAW_GATEWAY_INTERACTIVE_ENABLED`, WSL distro, URL, external approval
 credential env reference, supported version range, RPC timeout, and interaction
 TTL. Never log the credential value. Preflight must not mutate OpenClaw policy.
 
 - [ ] **Step 8: Run tests and live smoke**
+
+Automated fixtures, the complete execution-subsystem suite, and the opt-in live
+smoke harness are complete. The installed Gateway was confirmed running at
+`2026.6.8`; the real smoke remains pending because this worktree environment
+does not have the external `operator.admin` + `operator.approvals` credential.
+No credential was extracted or created implicitly.
 
 Run: `npm test -- tests/interactive/openclaw-gateway-adapter.test.ts tests/agents/openclaw-workspace.test.ts`
 
@@ -311,7 +317,7 @@ deny without execution, one-second expiry returning `decision: null`, duplicate
 RAGenius response suppression, one resolved event despite provider-idempotent
 duplicate resolve calls, wrong-session filtering, and credential-scope failure.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```text
 git add ragenius_execution_subsystem/src ragenius_execution_subsystem/tests/interactive

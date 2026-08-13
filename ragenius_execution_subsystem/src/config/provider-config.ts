@@ -109,6 +109,22 @@ export interface OpenClawCliRuntimeConfig {
   runRetentionHours: number;
 }
 
+export interface OpenClawGatewayProviderConfig {
+  agentId: string;
+  credential?: string;
+  credentialEnv: string;
+  enabled: boolean;
+  gatewayUrl: string;
+  interactionTtlMs: number;
+  maxMessageBytes: number;
+  reconnectBaseDelayMs: number;
+  reconnectMaxAttempts: number;
+  rpcTimeoutMs: number;
+  supportedVersions: string[];
+  workspaceRoot: string;
+  wslDistro: string;
+}
+
 export interface ResearchPaperProviderConfig {
   arxiv: ArxivProviderConfig;
   semanticScholar: SemanticScholarProviderConfig;
@@ -119,6 +135,7 @@ export interface ProviderRuntimeConfig {
   codexCli: CodexCliProviderConfig;
   notebooklm: NotebookLmProviderConfig;
   openClaw: OpenClawCliRuntimeConfig;
+  openClawGateway: OpenClawGatewayProviderConfig;
   researchPaper: ResearchPaperProviderConfig;
   openAi: OpenAiProviderConfig;
 }
@@ -212,7 +229,10 @@ export function buildAdapterRuntimeConfig(
   };
 }
 
-export function buildProviderRuntimeConfig(env: AppEnv): ProviderRuntimeConfig {
+export function buildProviderRuntimeConfig(
+  env: AppEnv,
+  source: NodeJS.ProcessEnv = process.env
+): ProviderRuntimeConfig {
   return {
     codexAppServer: {
       enabled: env.CODEX_APP_SERVER_INTERACTIVE_ENABLED,
@@ -247,6 +267,23 @@ export function buildProviderRuntimeConfig(env: AppEnv): ProviderRuntimeConfig {
       maxStdoutBytes: env.OPENCLAW_MAX_STDOUT_BYTES,
       maxStderrBytes: env.OPENCLAW_MAX_STDERR_BYTES,
       runRetentionHours: env.OPENCLAW_RUN_RETENTION_HOURS
+    },
+    openClawGateway: {
+      agentId: env.OPENCLAW_AGENT_ID,
+      credentialEnv: env.OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV,
+      ...(source[env.OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV]?.trim()
+        ? { credential: source[env.OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV]!.trim() }
+        : {}),
+      enabled: env.OPENCLAW_GATEWAY_INTERACTIVE_ENABLED,
+      gatewayUrl: env.OPENCLAW_GATEWAY_URL,
+      interactionTtlMs: env.OPENCLAW_GATEWAY_INTERACTION_TTL_MS,
+      maxMessageBytes: env.OPENCLAW_GATEWAY_MAX_MESSAGE_BYTES,
+      reconnectBaseDelayMs: env.OPENCLAW_GATEWAY_RECONNECT_BASE_DELAY_MS,
+      reconnectMaxAttempts: env.OPENCLAW_GATEWAY_RECONNECT_MAX_ATTEMPTS,
+      rpcTimeoutMs: env.OPENCLAW_GATEWAY_RPC_TIMEOUT_MS,
+      supportedVersions: splitCsv(env.OPENCLAW_GATEWAY_SUPPORTED_VERSIONS),
+      workspaceRoot: env.OPENCLAW_WORKSPACE_ROOT,
+      wslDistro: env.OPENCLAW_WSL_DISTRO
     },
     notebooklm: {
       enabled: env.NOTEBOOKLM_ENABLED,

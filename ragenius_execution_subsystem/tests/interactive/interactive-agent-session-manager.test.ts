@@ -10,6 +10,7 @@ import { InMemoryExecutionStore } from "../../src/core/execution/execution-store
 import { InMemoryAgentEventStore } from "../../src/core/interactive/agent-event-store.js";
 import { InMemoryAgentInteractionStore } from "../../src/core/interactive/agent-interaction-store.js";
 import type {
+  ClaimedInteraction,
   InteractiveAgentAdapter,
   InteractiveProviderEvent,
   InteractiveStartInput,
@@ -103,8 +104,11 @@ class FakeAdapter implements InteractiveAgentAdapter {
     };
   }
 
-  async respond(_handle: ProviderSessionHandle, claim: { interactionId: string }) {
+  async respond(_handle: ProviderSessionHandle, claim: ClaimedInteraction) {
     this.responses.push(claim.interactionId);
+    if (claim.responseSummary.decision === "cancel_execution") {
+      await this.emit?.({ type: "run_cancelled", payload: { status: "aborted" } });
+    }
   }
 
   async cancel() {
@@ -166,6 +170,25 @@ describe("interactive Agent session manager", () => {
     assert.equal((await harness.interactionStore.list(scope)).length, 1);
   });
 
+  it("allocates one agent session id before starting the provider", async () => {
+    const harness = await createHarness();
+    let providerAgentSessionId = "";
+    harness.adapter.onStart = (input) => {
+      providerAgentSessionId = input.agentSessionId;
+    };
+
+    const result = await harness.manager.start({
+      policy, providerContext, request, requiredInteractionTypes: [], scope
+    });
+
+    assert.equal(result.started, true);
+    assert.match(providerAgentSessionId, /^agent_session_[a-f0-9]+$/);
+    assert.equal(
+      (await harness.sessionStore.getByExecution(scope))?.agentSessionId,
+      providerAgentSessionId
+    );
+  });
+
   it("runs through multiple interaction cycles and completes", async () => {
     const harness = await createHarness();
     await harness.manager.start({ policy, providerContext, request, requiredInteractionTypes: ["approval", "clarification"], scope });
@@ -204,6 +227,26 @@ describe("interactive Agent session manager", () => {
         "run_completed"
       ]
     );
+  });
+
+  it("does not restore running state after provider-confirmed cancel_execution", async () => {
+    const harness = await createHarness();
+    await harness.manager.start({
+      policy, providerContext, request, requiredInteractionTypes: ["approval"], scope
+    });
+    await harness.adapter.send(interactionEvent("interaction-cancel", "approval"));
+
+    const result = await harness.manager.respond({
+      ...scope,
+      expectedVersion: 1,
+      idempotencyKey: "response-cancel",
+      interactionId: "interaction-cancel",
+      responseSummary: { decision: "cancel_execution", kind: "approval" }
+    });
+
+    assert.equal(result.outcome, "resolved");
+    assert.equal((await harness.executionStore.get(scope))?.status, "cancelled");
+    assert.equal((await harness.sessionStore.getByExecution(scope))?.state, "cancelled");
   });
 
   it("fails closed when the adapter lacks a required capability", async () => {

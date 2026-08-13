@@ -430,6 +430,7 @@ function capabilities() {
 
 function preflightInput() {
   return {
+    agentSessionId: "agent_session_test",
     policy,
     providerContext,
     request,

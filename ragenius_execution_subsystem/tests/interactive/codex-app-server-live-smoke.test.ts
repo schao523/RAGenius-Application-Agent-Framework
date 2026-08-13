@@ -76,6 +76,7 @@ test("Codex app-server completes a bounded read-only turn", {
   assert.equal(preflight.available, true);
   await adapter.start({
     ...preflightInput,
+    agentSessionId: "agent_session_smoke",
     capabilities: preflight.capabilities,
     protocolVersion: preflight.protocolVersion,
     emit: async (event) => {

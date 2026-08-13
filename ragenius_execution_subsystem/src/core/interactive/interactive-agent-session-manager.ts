@@ -98,6 +98,7 @@ export class InteractiveAgentSessionManager {
     }
 
     const bufferedEvents: InteractiveProviderEvent[] = [];
+    const agentSessionId = `agent_session_${randomUUID().replaceAll("-", "")}`;
     let consumeEvents = false;
     const emit = async (event: InteractiveProviderEvent): Promise<void> => {
       if (!consumeEvents) {
@@ -109,13 +110,14 @@ export class InteractiveAgentSessionManager {
     };
     const handle = await decision.adapter.start({
       ...input,
+      agentSessionId,
       capabilities: decision.preflight.capabilities,
       emit,
       protocolVersion: decision.preflight.protocolVersion
     });
     const agentSession = await this.sessionStore.create({
       ...input.scope,
-      agentSessionId: `agent_session_${randomUUID().replaceAll("-", "")}`,
+      agentSessionId,
       backend: input.request.agent_backend,
       capabilitySnapshot: decision.preflight.capabilities,
       continuationMode: decision.preflight.capabilities.sameTurnResume
@@ -193,6 +195,9 @@ export class InteractiveAgentSessionManager {
       payload: { interaction_type: claim.record.type },
       type: "interaction_resolved"
     });
+    if (input.responseSummary.decision === "cancel_execution") {
+      return { outcome: "resolved" };
+    }
     const unresolved = (await this.interactionStore.list(input)).some(
       (interaction) => interaction.state === "pending" || interaction.state === "resolving"
     );

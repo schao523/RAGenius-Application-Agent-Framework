@@ -105,6 +105,8 @@ import { InteractiveCapabilityService } from "./core/interactive/interactive-cap
 import { InteractiveAgentSessionManager } from "./core/interactive/interactive-agent-session-manager.js";
 import { CodexAppServerAdapter } from "./core/interactive/codex-app-server-adapter.js";
 import { CodexAppServerProcessFactory } from "./core/interactive/codex-app-server-process.js";
+import { OpenClawGatewayAdapter } from "./core/interactive/openclaw-gateway-adapter.js";
+import { OpenClawGatewayClient } from "./core/interactive/openclaw-gateway-client.js";
 
 export interface McpDiscoveryProviderState {
   discoveredToolCount: number;
@@ -197,11 +199,27 @@ export function createAppServices(
     runtimeConfig.providers.codexAppServer,
     new CodexAppServerProcessFactory(runtimeConfig.providers.codexAppServer)
   );
+  const openClawGatewayConfig = runtimeConfig.providers.openClawGateway;
+  const openClawGatewayAdapter = new OpenClawGatewayAdapter(
+    openClawGatewayConfig,
+    {
+      connect: async () => new OpenClawGatewayClient({
+        credential: openClawGatewayConfig.credential ?? "",
+        gatewayUrl: openClawGatewayConfig.gatewayUrl,
+        maxMessageBytes: openClawGatewayConfig.maxMessageBytes,
+        reconnectBaseDelayMs: openClawGatewayConfig.reconnectBaseDelayMs,
+        reconnectMaxAttempts: openClawGatewayConfig.reconnectMaxAttempts,
+        rpcTimeoutMs: openClawGatewayConfig.rpcTimeoutMs,
+        scopes: ["operator.admin", "operator.approvals"]
+      }).connect()
+    }
+  );
   const interactiveSessionManager =
     overrides.interactiveSessionManager ??
     new InteractiveAgentSessionManager({
       capabilityService: new InteractiveCapabilityService([
-        codexAppServerAdapter
+        codexAppServerAdapter,
+        openClawGatewayAdapter
       ]),
       eventStore: agentEventStore,
       executionStore,
