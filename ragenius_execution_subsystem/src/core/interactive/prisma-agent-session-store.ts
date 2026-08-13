@@ -32,6 +32,7 @@ export interface AgentSessionRow {
 export interface AgentSessionPrismaClient {
   agentSession: {
     findFirst(args: { where: Record<string, unknown> }): Promise<AgentSessionRow | null>;
+    findMany(args: { where: Record<string, unknown> }): Promise<AgentSessionRow[]>;
     updateMany(args: {
       data: Record<string, unknown>;
       where: Record<string, unknown>;
@@ -85,6 +86,13 @@ export class PrismaAgentSessionStore implements AgentSessionStore {
       where: scopeWhere(scope)
     });
     return row ? toRecord(row) : null;
+  }
+
+  async listNonTerminal(): Promise<AgentSessionRecord[]> {
+    const rows = await this.prisma.agentSession.findMany({
+      where: { state: { in: ["starting", "running", "waiting_for_interaction"] } }
+    });
+    return rows.map(toRecord);
   }
 
   async update(

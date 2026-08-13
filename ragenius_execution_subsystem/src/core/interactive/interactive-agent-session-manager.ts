@@ -62,6 +62,21 @@ interface ActiveProviderSession {
   scope: ExecutionScope;
 }
 
+const MAX_NORMALIZED_PROVIDER_EVENT_BYTES = 65_536;
+const PROVIDER_EVENT_TYPES = new Set<InteractiveProviderEvent["type"]>([
+  "error",
+  "warning",
+  "run_started",
+  "progress",
+  "message_delta",
+  "message_completed",
+  "tool_started",
+  "tool_completed",
+  "interaction_requested",
+  "run_completed",
+  "run_cancelled"
+]);
+
 export class InteractiveAgentSessionManager {
   private readonly capabilityService: InteractiveCapabilityService;
   private readonly eventStore: AgentEventStore;
@@ -270,10 +285,65 @@ export class InteractiveAgentSessionManager {
     }));
   }
 
+  async reconcileInterrupted(): Promise<number> {
+    const interrupted = await this.sessionStore.listNonTerminal();
+    for (const session of interrupted) {
+      const scope: ExecutionScope = {
+        appId: session.appId,
+        executionId: session.executionId,
+        sessionId: session.sessionId
+      };
+      const now = new Date();
+      await this.interactionStore.cancelPending(scope, now);
+      await this.sessionStore.update(
+        { ...scope, agentSessionId: session.agentSessionId },
+        { state: "failed" }
+      );
+      await this.eventStore.append({
+        ...scope,
+        occurredAt: now,
+        payload: {
+          code: "AGENT_EXECUTION_INTERRUPTED",
+          message: "Interactive Agent execution was interrupted by a service restart."
+        },
+        type: "error"
+      });
+      await this.executionStore.transition({
+        scope,
+        from: ["running", "waiting_for_interaction"],
+        result: {
+          ...stateResult(
+            scope.executionId,
+            "failed",
+            "Interactive Agent execution was interrupted by a service restart."
+          ),
+          errors: [{
+            code: "AGENT_EXECUTION_INTERRUPTED",
+            message: "Interactive Agent execution was interrupted by a service restart.",
+            recoverable: true,
+            suggested_action: "Retry the Agent execution. No prior response was replayed."
+          }]
+        }
+      });
+    }
+    return interrupted.length;
+  }
+
   private async consumeEvent(
     scope: ExecutionScope,
     event: InteractiveProviderEvent
   ): Promise<void> {
+    if (
+      !PROVIDER_EVENT_TYPES.has(event.type) ||
+      serializedBytes(event.payload) > MAX_NORMALIZED_PROVIDER_EVENT_BYTES
+    ) {
+      await this.failAndTerminate(
+        scope,
+        "INVALID_PROVIDER_EVENT",
+        "The provider emitted an unsupported or oversized event."
+      );
+      return;
+    }
     if (event.type === "interaction_requested") {
       if (!event.interaction) {
         await this.failAndTerminate(
@@ -450,6 +520,14 @@ export class InteractiveAgentSessionManager {
       { ...scope, agentSessionId: session.agentSessionId },
       { state }
     );
+  }
+}
+
+function serializedBytes(value: Record<string, unknown>): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8");
+  } catch {
+    return Number.POSITIVE_INFINITY;
   }
 }
 

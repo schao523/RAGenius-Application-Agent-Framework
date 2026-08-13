@@ -28,6 +28,7 @@ export interface AgentSessionStore {
   create(input: CreateAgentSessionInput): Promise<AgentSessionRecord>;
   get(scope: AgentSessionScope): Promise<AgentSessionRecord | null>;
   getByExecution(scope: ExecutionScope): Promise<AgentSessionRecord | null>;
+  listNonTerminal(): Promise<AgentSessionRecord[]>;
   update(
     scope: AgentSessionScope,
     input: UpdateAgentSessionInput
@@ -69,6 +70,12 @@ export class InMemoryAgentSessionStore implements AgentSessionStore {
     const id = this.executionIndex.get(scope.executionId);
     const record = id ? this.records.get(id) : undefined;
     return record && matchesScope(record, scope) ? cloneSession(record) : null;
+  }
+
+  async listNonTerminal(): Promise<AgentSessionRecord[]> {
+    return [...this.records.values()]
+      .filter((record) => ["starting", "running", "waiting_for_interaction"].includes(record.state))
+      .map(cloneSession);
   }
 
   async update(

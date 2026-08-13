@@ -495,6 +495,7 @@ export function buildApp(
   app.addHook("onReady", async () => {
     await services.sessionUploadArtifactImporter.cleanupExpiredTemporaryFiles();
     await services.agentExecutionQueue.reconcileInterrupted();
+    await services.interactiveSessionManager.reconcileInterrupted();
     services.agentExecutionQueue.start();
     const enabledServers = services.runtimeConfig.mcp.servers.filter(
       (server) => server.enabled

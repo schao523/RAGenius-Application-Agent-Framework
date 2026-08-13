@@ -495,15 +495,15 @@ frontend suite passed 151 tests, and the production build passed on
 **Interfaces:**
 - Verifies all preceding tasks as one deployable feature behind disabled flags.
 
-- [ ] **Step 1: Add recovery and attack-path tests**
+- [x] **Step 1: Add recovery and attack-path tests**
 
 Cover restart with running/waiting records, provider event spoofing, prompt-injection attempts to authorize actions, wrong interaction version, cross-session access, replayed decisions, oversized events, secret-shaped authentication payloads, and cancellation races.
 
-- [ ] **Step 2: Add end-to-end mocked flows**
+- [x] **Step 2: Add end-to-end mocked flows**
 
 Test Codex approval then clarification then completion, OpenClaw approval then cancellation, app refresh while waiting, and explicit failure when a selected skill requires unsupported OpenClaw clarification.
 
-- [ ] **Step 3: Update startup and operational documentation**
+- [x] **Step 3: Update startup and operational documentation**
 
 Document disabled-by-default flags, provider preflight diagnostics, the
 OpenClaw external scope constraint, interaction TTL, fallback behavior, and
@@ -513,7 +513,7 @@ safe rollback. Define two explicit operational profiles: normal one-shot uses
 are administrator actions outside RAGenius and require a Gateway restart plus
 effective-policy verification.
 
-- [ ] **Step 4: Run subsystem suites**
+- [x] **Step 4: Run subsystem suites**
 
 Execution subsystem:
 
@@ -531,7 +531,7 @@ App frontend: `npm test && npm run build`
 
 Builder: `python -m pytest flask_scaffold/tests`
 
-- [ ] **Step 5: Run live acceptance in increasing risk order**
+- [x] **Step 5: Run live acceptance in increasing risk order**
 
 1. Codex read-only two-turn continuation.
 2. Codex dynamic selection.
@@ -545,7 +545,15 @@ Builder: `python -m pytest flask_scaffold/tests`
 8. Restore the normal one-shot profile after acceptance until the interactive
    adapter is enabled for users, then verify current one-shot smoke behavior.
 
-- [ ] **Step 6: Record evidence and commit**
+Task 9 acceptance combined fresh Codex initialization/read-only evidence with
+the earlier same-branch Codex interaction and OpenClaw approval/cancellation
+matrix. The fresh OpenClaw rerun was blocked before run creation by external
+Gateway credential drift; no policy or credential was changed. OpenClaw
+interactive mode therefore remains disabled pending administrator credential
+provisioning and a repeated live completion/cancellation smoke. See
+`ragenius_execution_subsystem/docs/interactive-agent-acceptance-results-2026-08-13.md`.
+
+- [x] **Step 6: Record evidence and commit**
 
 Store redacted execution ids, versions, status transitions, interaction ids, verification results, and limitations in a dated acceptance document.
 

@@ -26,6 +26,29 @@ if (-not (Test-Path ".env")) {
 
 Import-DotEnv (Join-Path $Root ".env")
 
+function Test-Enabled([string]$Value) {
+    return @("1", "true", "yes", "on") -contains ([string]$Value).Trim().ToLowerInvariant()
+}
+
+$codexInteractive = Test-Enabled $env:CODEX_APP_SERVER_INTERACTIVE_ENABLED
+$openClawInteractive = Test-Enabled $env:OPENCLAW_GATEWAY_INTERACTIVE_ENABLED
+if ($openClawInteractive) {
+    $credentialName = if ($env:OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV) {
+        $env:OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV
+    } else {
+        "OPENCLAW_GATEWAY_APPROVAL_TOKEN"
+    }
+    $credentialValue = [Environment]::GetEnvironmentVariable($credentialName, "Process")
+    if ([string]::IsNullOrWhiteSpace($credentialValue)) {
+        throw "OpenClaw interactive mode requires the protected credential named by OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV ($credentialName)."
+    }
+}
+
+Write-Host "Interactive Agent transports: Codex=$codexInteractive OpenClaw=$openClawInteractive"
+if ($openClawInteractive) {
+    Write-Host "OpenClaw policy is not changed by this script. Verify the administrator-selected effective profile before accepting traffic."
+}
+
 $Port = if ($env:PORT) { [int]$env:PORT } else { 3001 }
 $portClient = New-Object System.Net.Sockets.TcpClient
 $connectResult = $portClient.BeginConnect("127.0.0.1", $Port, $null, $null)
