@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { ExecuteAgentRequest } from "../../api/schemas/execution-request.schema.js";
 import type { NormalizedExecutionResult } from "../../api/schemas/common-response.schema.js";
+import { providerInteractionRequestSchema } from "../../api/schemas/interactive-agent.schema.js";
 import type { AgentPolicyDecision } from "../agents/agent-policy.js";
 import type { AgentProviderExecutionContext } from "../agents/agent-provider-context.js";
 import type { ExecutionStore } from "../execution/execution-store.js";
@@ -248,10 +249,26 @@ export class InteractiveAgentSessionManager {
         );
         return;
       }
+      const parsedInteraction = providerInteractionRequestSchema.safeParse(
+        event.interaction
+      );
+      if (!parsedInteraction.success) {
+        await this.failExecution(
+          scope,
+          "INVALID_PROVIDER_INTERACTION",
+          "The provider interaction exceeded the supported schema bounds."
+        );
+        return;
+      }
       const interaction = await this.interactionStore.create({
         ...scope,
         agentSessionId: (await this.requireSession(scope)).agentSessionId,
-        ...event.interaction
+        ...parsedInteraction.data,
+        options: parsedInteraction.data.options.map((option) => ({
+          id: option.id,
+          label: option.label,
+          ...(option.description ? { description: option.description } : {})
+        }))
       });
       await this.eventStore.append({
         ...scope,

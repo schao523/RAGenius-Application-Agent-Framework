@@ -264,6 +264,28 @@ describe("interactive Agent session manager", () => {
     assert.equal(await harness.sessionStore.getByExecution(scope), null);
   });
 
+  it("fails closed on an oversized provider interaction", async () => {
+    const harness = await createHarness();
+    await harness.manager.start({
+      policy,
+      providerContext,
+      request,
+      requiredInteractionTypes: ["clarification"],
+      scope
+    });
+
+    await harness.adapter.send({
+      ...interactionEvent("interaction-oversized", "clarification"),
+      interaction: {
+        ...interactionEvent("interaction-oversized", "clarification").interaction!,
+        prompt: "x".repeat(2001)
+      }
+    });
+
+    assert.equal((await harness.executionStore.get(scope))?.status, "failed");
+    assert.equal((await harness.interactionStore.list(scope)).length, 0);
+  });
+
   it("dispatches through the interactive manager only when explicitly selected", async () => {
     const executionStore = new InMemoryExecutionStore();
     const sessionStore = new InMemoryAgentSessionStore();
