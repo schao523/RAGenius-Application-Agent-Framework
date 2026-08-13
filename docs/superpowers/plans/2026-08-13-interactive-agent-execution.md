@@ -20,6 +20,12 @@
 - Preserve complete `{app_id, session_id, execution_id}` scope and service authentication.
 - Preserve corrected OpenClaw per-run WSL staging containment.
 - Use dedicated interactive tests; do not repurpose RAGenius skill execution tests as the primary unit suite.
+- OpenClaw 2026.6.8 external approval mediation requires effective
+  `security: allowlist`, `ask: on-miss`, `askFallback: deny`, and a protected
+  credential with both `operator.admin` and `operator.approvals`.
+- Keep normal one-shot operation on `security: full` until the interactive
+  OpenClaw adapter passes acceptance; use a deliberate temporary approval-test
+  profile during development.
 
 ---
 
@@ -249,7 +255,11 @@ git commit -m "feat: add interactive Codex app-server adapter"
 
 - [ ] **Step 1: Write Gateway RPC and event fixture tests**
 
-Cover connection authentication, request ids, canonical session key, run ids, event sequence, gap detection, `agent.wait`, approval requested/resolved, and token redaction.
+Cover connection authentication, request ids, canonical session key, run ids,
+sequenced run events, unsequenced approval events, gap detection, `agent.wait`,
+approval requested/resolved, and token redaction. Deduplicate approval events by
+`{approval_id, event_kind}` while retaining normal sequence-gap handling for
+events that carry a Gateway sequence.
 
 - [ ] **Step 2: Implement authenticated Gateway client**
 
@@ -259,27 +269,49 @@ Use a subsystem-owned WebSocket connection, explicit request timeouts, bounded m
 
 Generate a key from `{app_id, session_id, agent_session_id}` without execution id. Stage and verify each provider run independently even when runs share a session.
 
-- [ ] **Step 4: Implement approval and cancellation mapping**
+- [ ] **Step 4: Implement approval preflight and credential isolation**
 
-Advertise approval only when preflight confirms ask policy and `operator.approvals`. Map allow-once/deny and use exact run-scoped `chat.abort`; confirm with `agent.wait`.
+Advertise approval only when preflight confirms OpenClaw 2026.6.8, effective
+`security: allowlist`, `ask: on-miss`, `askFallback: deny`, and both
+`operator.admin` and `operator.approvals`. Keep the credential server-side,
+redact it from diagnostics, and return a precise capability failure for every
+missing prerequisite. Record that `operator.admin` is a provider visibility
+constraint, not permission for RAGenius to expose arbitrary admin operations.
 
-- [ ] **Step 5: Implement reconciliation**
+- [ ] **Step 5: Implement approval resolution and cancellation mapping**
 
-Use `sessions.list` and `agent.wait` after reconnect. Treat event gaps as reconciliation triggers, not replay. Do not advertise clarification or selection.
+Map only allow-once/deny. Atomically claim the interaction before calling
+`exec.approval.resolve`; duplicate RAGenius idempotency keys return the stored
+outcome without another provider call. Treat provider `{ok:true}` for a
+duplicate resolution as provider idempotence, not a second transition. Use
+exact run-scoped `chat.abort` for cancellation and confirm with `agent.wait`.
 
-- [ ] **Step 6: Add disabled-by-default configuration**
+- [ ] **Step 6: Implement expiry and reconciliation**
 
-Add `OPENCLAW_GATEWAY_INTERACTIVE_ENABLED`, WSL distro, URL, credential env reference, supported version range, and RPC timeout. Never log the credential value.
+Use `sessions.list` and `agent.wait` after reconnect. Treat event gaps as
+reconciliation triggers, not replay. Expire an approval when the provider
+returns `decision: null` or its authoritative expiry passes; do not require an
+`exec.approval.resolved` event. Do not advertise clarification or selection.
 
-- [ ] **Step 7: Run tests and live smoke**
+- [ ] **Step 7: Add disabled-by-default configuration**
+
+Add `OPENCLAW_GATEWAY_INTERACTIVE_ENABLED`, WSL distro, URL, external approval
+credential env reference, supported version range, RPC timeout, and interaction
+TTL. Never log the credential value. Preflight must not mutate OpenClaw policy.
+
+- [ ] **Step 8: Run tests and live smoke**
 
 Run: `npm test -- tests/interactive/openclaw-gateway-adapter.test.ts tests/agents/openclaw-workspace.test.ts`
 
 Opt-in continuation/cancel: `OPENCLAW_GATEWAY_INTERACTIVE_SMOKE=1 npm test -- tests/interactive/openclaw-gateway-live-smoke.test.ts`
 
-Approval smoke remains skipped with a precise reason until administrator ask policy is enabled.
+Approval smoke runs only under the administrator-enabled temporary
+`allowlist/on-miss/deny` profile. It covers allow-once execution exactly once,
+deny without execution, one-second expiry returning `decision: null`, duplicate
+RAGenius response suppression, one resolved event despite provider-idempotent
+duplicate resolve calls, wrong-session filtering, and credential-scope failure.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```text
 git add ragenius_execution_subsystem/src ragenius_execution_subsystem/tests/interactive
@@ -435,7 +467,13 @@ Test Codex approval then clarification then completion, OpenClaw approval then c
 
 - [ ] **Step 3: Update startup and operational documentation**
 
-Document disabled-by-default flags, provider preflight diagnostics, Gateway scope and ask-policy prerequisites, interaction TTL, fallback behavior, and safe rollback by disabling interactive flags.
+Document disabled-by-default flags, provider preflight diagnostics, the
+OpenClaw external scope constraint, interaction TTL, fallback behavior, and
+safe rollback. Define two explicit operational profiles: normal one-shot uses
+`security: full`; interactive approval acceptance temporarily uses
+`security: allowlist`, `ask: on-miss`, and `askFallback: deny`. Profile changes
+are administrator actions outside RAGenius and require a Gateway restart plus
+effective-policy verification.
 
 - [ ] **Step 4: Run subsystem suites**
 
@@ -463,7 +501,11 @@ Builder: `python -m pytest flask_scaffold/tests`
 4. Codex cancellation.
 5. OpenClaw read-only continuation.
 6. OpenClaw cancellation.
-7. OpenClaw disposable command approval only after an administrator explicitly enables ask policy and confirms the test.
+7. OpenClaw disposable command allow-once, deny, and expiry only after an
+   administrator activates the temporary approval-test profile and verifies
+   the external credential scopes.
+8. Restore the normal one-shot profile after acceptance until the interactive
+   adapter is enabled for users, then verify current one-shot smoke behavior.
 
 - [ ] **Step 6: Record evidence and commit**
 
@@ -474,10 +516,77 @@ git add ragenius_execution_subsystem ragenius_app_skeleton ragenius_builder docs
 git commit -m "test: verify interactive agent execution end to end"
 ```
 
+### Task 10: Disposable OpenClaw Request-Input Protocol Feasibility
+
+This task starts only after Tasks 1-9 establish the base interactive execution
+channel. It remains experimental and separate from the production OpenClaw
+Gateway adapter.
+
+**Files:**
+- Modify: `ragenius_execution_subsystem/tests/fixtures/openclaw-yield-feasibility/`
+- Create: `ragenius_execution_subsystem/tests/interactive/openclaw-request-input-feasibility.test.ts`
+- Modify: `ragenius_execution_subsystem/docs/openclaw-ragenius-request-input-feasibility-spec.md`
+- Modify: `ragenius_execution_subsystem/docs/interactive-agent-feasibility-results-2026-08-13.md`
+
+**Interfaces:**
+- Consumes: the scoped interaction persistence and APIs from Tasks 1-3 and the
+  OpenClaw Gateway transport from Task 5.
+- Produces: feasibility evidence only. It must not enable or advertise
+  OpenClaw `clarification` or `selection` capabilities.
+
+- [ ] **Step 1: Implement disposable typed request persistence**
+
+Register a reviewed local `ragenius_request_input` test tool and plugin-owned
+Gateway methods. Persist bounded typed requests with trusted session/run/tool
+identity, expiry, binding nonce hash, and no secret or authorization fields.
+Keep the plugin outside administrator-approved production plugin directories.
+
+- [ ] **Step 2: Verify single-use resolution and idempotency**
+
+Resolve valid selection and free-text requests through the scoped execution
+API. Prove that replaying the same idempotency key returns the original outcome
+without another continuation run, while a second logical resolution fails
+closed.
+
+- [ ] **Step 3: Verify cancellation and expiry**
+
+Cancel the exact pending interaction and let another request expire. Confirm no
+late response can continue either request, no answer is inferred, and pending
+state is removed or terminally marked.
+
+- [ ] **Step 4: Verify Gateway/plugin restart behavior**
+
+Restart while a request is pending. Reconcile durable state if independently
+supported; otherwise prove explicit fail-closed interruption. Never synthesize
+or replay a user response after restart.
+
+- [ ] **Step 5: Verify concurrent isolation and repeated yield**
+
+Run two scoped sessions concurrently and two sequential requests in one
+plugin-owned sub-agent session. Responses must continue only the matching
+session and request, using one stable session key with distinct provider run
+ids for each `same_session_new_turn` continuation.
+
+- [ ] **Step 6: Run the complete feasibility matrix and clean up**
+
+Execute RI-01 through RI-23 from the feasibility specification. Record bounded
+redacted evidence, delete disposable sessions and plugin state, uninstall the
+test plugin, restart the Gateway, and verify the normal execution policy and
+Gateway health.
+
+- [ ] **Step 7: Apply the capability gate**
+
+If every required gate passes, write a separate production plugin contract,
+design, and implementation plan for approval. If any required gate fails,
+retain OpenClaw clarification and selection as unsupported. Do not combine the
+experimental plugin with the base interactive implementation in either case.
+
 ## Rollout Gate
 
 Enable Codex interactive mode first after Tasks 1-4 and 7-9 pass. Enable
 OpenClaw session/cancellation after Task 5 acceptance. Keep OpenClaw approvals
-disabled until the administrator-gated live approval test passes. Keep OpenClaw
-clarification unavailable until a separate managed-tool specification,
-feasibility test, and implementation plan are approved.
+disabled until Task 5 reproduces the completed administrator-gated live
+approval evidence through the production adapter. Keep normal OpenClaw policy
+at `security: full` until that gate passes. Keep OpenClaw clarification
+unavailable until a separate managed-tool specification, feasibility test, and
+production implementation plan are approved after Task 10 passes.

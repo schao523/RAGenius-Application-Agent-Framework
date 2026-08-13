@@ -1,0 +1,15 @@
+{
+  "name": "openclaw-plugin-ragenius-yield-feasibility",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "typebox": "^1.1.38"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.6.8"
+  },
+  "openclaw": {
+    "extensions": ["./src/index.ts"]
+  }
+}

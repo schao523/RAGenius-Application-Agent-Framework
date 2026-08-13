@@ -13,9 +13,10 @@ one-shot WSL CLI provider.
 OpenClaw `2026.6.8` Gateway passed live tests for health, Agent submission,
 stable session continuation, session lookup, `chat.abort`, and `agent.wait`.
 Installed runtime code exposes sequenced events and execution-approval request,
-resolution, and decision methods. The current local effective policy has
-`ask: off`, so a live approval round trip remains an administrator-gated
-acceptance test.
+resolution, and decision methods. On 2026-08-13 live approval tests passed with
+`security: allowlist`, `ask: on-miss`, and `askFallback: deny` for allow-once,
+deny, and expiry. External event visibility required both `operator.admin` and
+`operator.approvals`; approval events carried no Gateway sequence number.
 
 ## Components
 
@@ -41,8 +42,15 @@ Required scopes are least privilege:
 
 - normal Agent runs: provider-documented read/write scopes needed for `agent`,
   `agent.wait`, sessions, and cancellation;
-- approval mediation: `operator.approvals` in addition to normal execution
-  scopes.
+- approval mediation by an external adapter on OpenClaw 2026.6.8:
+  `operator.admin` and `operator.approvals`. The approval-only scope is visible
+  across requests only to OpenClaw's process-internal approval runtime.
+
+The required external approval credential is broader than the desired least
+privilege. Preflight must reject a credential missing either scope, keep it
+server-side, and surface this version-specific risk to administrators. A future
+OpenClaw version that permits an external approval-only credential should be
+preferred after a compatibility retest.
 
 The adapter must reject a configuration that exposes a non-loopback insecure
 Gateway. It must not modify Gateway binding, token, device pairing, or approval
@@ -80,15 +88,24 @@ MVP decisions map as follows:
 
 `allow-always` is never projected. A resolved or expired provider approval is
 reconciled as a stale interaction and cannot be retried with another decision.
+OpenClaw accepts duplicate resolve calls idempotently with `{ok:true}` but emits
+only one resolved event, so RAGenius must enforce single-use state before making
+the provider call. Expiry returns `decision: null` and may not emit a resolved
+event.
 
 Live approval capability is advertised only when preflight confirms an
-administrator-enabled ask policy and `operator.approvals` scope.
+effective `security: allowlist`, `ask: on-miss`, `askFallback: deny`, and both
+required external-client scopes.
 
 ## Clarification Limitation
 
-No typed Agent-generated clarification event was observed. `/btw` is
-user-initiated and does not satisfy the interaction contract. Therefore the
-initial adapter capability excludes `clarification` and `selection`.
+No typed Agent-generated clarification event was observed. A 2026-08-13 live
+probe asked the Agent to use a native structured Alpha/Beta input mechanism.
+The run completed with ordinary `UNSUPPORTED:` assistant text, exposed no
+clarification-related tool in its tool inventory, and emitted no correlated
+input request or paused state. `/btw` is user-initiated and does not satisfy the
+interaction contract. Therefore the initial adapter capability excludes
+`clarification` and `selection`.
 
 A later milestone may install an administrator-managed RAGenius OpenClaw tool
 or plugin that emits a correlated Gateway event and waits for a response. That
@@ -97,10 +114,12 @@ adapter advertises those capabilities.
 
 ## Events And Gaps
 
-Gateway events are normalized and deduplicated by event sequence and provider
-identifier. The adapter persists the latest sequence. A sequence gap forces
-reconnect and reconciliation; it does not synthesize missing tool or approval
-events.
+Gateway events are normalized and deduplicated by event sequence when present
+and provider identifier otherwise. Approval requested/resolved events in
+OpenClaw 2026.6.8 have no Gateway sequence and must be deduplicated by approval
+id plus event kind. The adapter persists the latest available sequence. A
+sequence gap forces reconnect and reconciliation; it does not synthesize
+missing tool or approval events.
 
 `sessions.list`, the canonical session record, and `agent.wait` are the
 authoritative recovery sources. Event replay remains `none` until an explicit

@@ -135,8 +135,12 @@ The initial verified profiles are:
 - Codex app-server: approvals, clarification/selection through the managed
   RAGenius dynamic tool, same-turn resume, cancellation, session continuation.
 - OpenClaw Gateway: execution approvals when administrator-enabled, session
-  continuation, cancellation, and reconciliation. Clarification is unavailable
-  until a managed OpenClaw interaction tool is implemented and verified.
+  continuation, cancellation, and reconciliation. On OpenClaw 2026.6.8 an
+  external approval adapter requires both `operator.admin` and
+  `operator.approvals`; `operator.approvals` alone has cross-request visibility
+  only for OpenClaw's process-internal approval runtime. Clarification is
+  unavailable until a managed OpenClaw interaction tool is implemented and
+  verified.
 
 ## Interaction Record
 
@@ -198,6 +202,11 @@ Responses are single-use and idempotent. A duplicate idempotency key returns
 the original normalized outcome. A stale version, expired record, mismatched
 type, or wrong scope fails closed without contacting the provider.
 
+The execution subsystem enforces single-use state before provider contact. A
+provider may accept a duplicate resolution idempotently; that behavior does not
+permit a second RAGenius response or another provider call. Provider resolution
+acknowledgement and normalized interaction resolution are separate records.
+
 `allow_once` authorizes only the exact provider request bound by
 `policy_binding_hash`. `allow-always`, allowlist mutation, provider policy
 amendments, and session-wide approval are excluded from the initial release.
@@ -247,6 +256,11 @@ redacted, and deduplicated by provider event reference where available. Raw
 reasoning, secrets, credential paths, and unbounded command output are not
 public event payloads.
 
+Provider events without a transport sequence still receive a RAGenius event
+sequence. OpenClaw approval events are deduplicated by the compound provider
+reference `{approval_id, event_kind}` because OpenClaw 2026.6.8 does not attach
+a Gateway sequence to those events.
+
 Polling with `after_sequence` is required initially. SSE may be added without
 changing event semantics. Event delivery is not the source of truth; after a
 gap or reconnect, RAGenius reconciles provider status and persisted session
@@ -276,8 +290,14 @@ Before starting an interactive transport, the execution subsystem validates:
 - adapter capability profile;
 - selected skill interaction requirements;
 - required binaries, platform, workspace, and staged artifacts;
-- Gateway scope requirements such as `operator.approvals`;
+- Gateway scope requirements. OpenClaw 2026.6.8 external approval mediation
+  requires both `operator.admin` and `operator.approvals`;
 - administrator-enabled provider approval behavior where required.
+
+OpenClaw approval preflight also requires effective `security: allowlist`,
+`ask: on-miss`, and `askFallback: deny`. `ask: on-miss` with
+`security: full` is not approval-capable because no command produces an
+allowlist miss.
 
 Preflight is read-only and must not refresh credentials, change approval
 configuration, install software, or mutate provider policy without a separate
@@ -309,6 +329,10 @@ runtime policy. Existing approval and app binding remain mandatory.
 - The adapter attempts bounded cleanup, then reconciles provider state.
 - On reconnect, the adapter uses provider lookup/wait APIs; it does not assume
   missed events will replay.
+- OpenClaw expiry may return `decision: null` without emitting an
+  `exec.approval.resolved` event. The adapter expires the local interaction from
+  the provider response or elapsed authoritative expiry, not from a required
+  resolved event.
 - A provider still running after bounded cancellation produces failed cleanup
   diagnostics and must not be reported as successfully cancelled.
 

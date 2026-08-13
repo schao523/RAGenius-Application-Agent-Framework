@@ -1,0 +1,17 @@
+{
+  "id": "ragenius-yield-feasibility",
+  "name": "RAGenius Yield Feasibility",
+  "description": "Disposable same-session continuation feasibility probe.",
+  "version": "0.1.0",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": []
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
