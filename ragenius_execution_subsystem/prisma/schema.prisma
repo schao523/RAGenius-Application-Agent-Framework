@@ -30,6 +30,9 @@ model Execution {
   workflowSteps WorkflowStep[]
   toolCalls     ToolCall[]
   logs          ExecutionLog[]
+  agentSession  AgentSession?
+  agentInteractions AgentInteraction[]
+  agentExecutionEvents AgentExecutionEvent[]
 
   @@index([appId], map: "idx_executions_app_id")
   @@index([sessionId], map: "idx_executions_session_id")
@@ -38,6 +41,86 @@ model Execution {
   @@index([status], map: "idx_executions_status")
   @@index([createdAt], map: "idx_executions_created_at")
   @@map("executions")
+}
+
+model AgentSession {
+  id                 String   @id
+  executionId        String   @unique @map("execution_id")
+  appId              String   @map("app_id")
+  sessionId          String   @map("session_id")
+  backend            String
+  transport          String
+  state              String
+  providerSessionRef String   @map("provider_session_ref")
+  providerRunRef     String?  @map("provider_run_ref")
+  providerTurnRef    String?  @map("provider_turn_ref")
+  continuationMode   String   @map("continuation_mode")
+  protocolVersion    String   @map("protocol_version")
+  capabilitySnapshot Json     @map("capability_snapshot")
+  lastInteractionSeq Int      @default(0) @map("last_interaction_seq")
+  lastEventSeq       Int      @default(0) @map("last_event_seq")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  execution    Execution          @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  interactions AgentInteraction[]
+
+  @@index([appId, sessionId], map: "idx_agent_sessions_app_session")
+  @@index([state], map: "idx_agent_sessions_state")
+  @@map("agent_sessions")
+}
+
+model AgentInteraction {
+  id                     String    @id
+  executionId            String    @map("execution_id")
+  agentSessionId         String    @map("agent_session_id")
+  appId                  String    @map("app_id")
+  sessionId              String    @map("session_id")
+  sequence               Int
+  type                   String
+  state                  String
+  prompt                 String
+  options                Json
+  allowsFreeText         Boolean   @map("allows_free_text")
+  secretInput            Boolean   @default(false) @map("secret_input")
+  providerCorrelationRef String    @map("provider_correlation_ref")
+  policyBindingHash      String    @map("policy_binding_hash")
+  version                Int       @default(1)
+  expiresAt              DateTime  @map("expires_at")
+  resolvedAt             DateTime? @map("resolved_at")
+  responseSummary        Json?     @map("response_summary")
+  idempotencyKey         String?   @map("idempotency_key")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  execution    Execution    @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  agentSession AgentSession @relation(fields: [agentSessionId], references: [id], onDelete: Cascade)
+
+  @@unique([executionId, sequence], map: "agent_interactions_execution_sequence_key")
+  @@unique([executionId, providerCorrelationRef], map: "agent_interactions_execution_provider_ref_key")
+  @@index([appId, sessionId, executionId], map: "idx_agent_interactions_scope")
+  @@index([state, expiresAt], map: "idx_agent_interactions_state_expiry")
+  @@map("agent_interactions")
+}
+
+model AgentExecutionEvent {
+  id               String   @id @default(uuid())
+  executionId      String   @map("execution_id")
+  appId            String   @map("app_id")
+  sessionId        String   @map("session_id")
+  sequence         Int
+  type             String
+  providerEventRef String?  @map("provider_event_ref")
+  interactionId    String?  @map("interaction_id")
+  payload          Json
+  occurredAt       DateTime @map("occurred_at")
+
+  execution Execution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@unique([executionId, sequence], map: "agent_execution_events_execution_sequence_key")
+  @@unique([executionId, providerEventRef], map: "agent_execution_events_execution_provider_ref_key")
+  @@index([appId, sessionId, executionId], map: "idx_agent_execution_events_scope")
+  @@map("agent_execution_events")
 }
 
 model ExecutionConfirmation {
