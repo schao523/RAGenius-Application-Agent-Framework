@@ -392,23 +392,23 @@ git commit -m "feat: govern agent interaction capabilities"
 - Consumes: Task 3 service APIs.
 - Produces: user/session-scoped app APIs and rehydratable interaction lane state.
 
-- [ ] **Step 1: Write failing client and ownership tests**
+- [x] **Step 1: Write failing client and ownership tests**
 
 Cover list interactions/events, respond, cancel, bearer service auth, session-owner rejection, cross-app rejection, duplicate response, and provider handle redaction.
 
-- [ ] **Step 2: Add execution-subsystem client methods**
+- [x] **Step 2: Add execution-subsystem client methods**
 
 Implement bounded timeouts for list/respond/cancel. Forward complete scope and service credential; never forward user-supplied provider identifiers.
 
-- [ ] **Step 3: Add scoped app routes**
+- [x] **Step 3: Add scoped app routes**
 
 Use `/sessions/{session_id}/executions/{execution_id}/interactions`, response, events, and cancel routes. Verify authenticated ownership before calling the execution subsystem.
 
-- [ ] **Step 4: Extend execution lane state**
+- [x] **Step 4: Extend execution lane state**
 
 Persist latest normalized interaction id/type/state/version/expiry and last event sequence. Do not persist raw prompts containing provider secrets or use lane state as authorization.
 
-- [ ] **Step 5: Run backend tests and commit**
+- [x] **Step 5: Run backend tests and commit**
 
 Run: `python -m pytest backend/tests/test_execution_subsystem_client.py backend/tests/test_chat_exec_routing.py backend/tests/test_session_execution_state_rehydration.py`
 
@@ -416,6 +416,14 @@ Run: `python -m pytest backend/tests/test_execution_subsystem_client.py backend/
 git add ragenius_app_skeleton/backend
 git commit -m "feat: proxy interactive agent sessions"
 ```
+
+The app now proxies interaction listing, normalized event pagination,
+idempotent responses, and cancellation only after validating the app/user
+session owner. Downstream conflict and availability status is preserved,
+provider-handle fields are rejected or redacted, and the durable lane stores
+only the latest normalized interaction metadata plus the event cursor. The
+focused Task 7 suite passed 69 tests and the full app backend suite passed 123
+tests with one skip on 2026-08-13.
 
 ### Task 8: Execution Composer And Interaction UX
 

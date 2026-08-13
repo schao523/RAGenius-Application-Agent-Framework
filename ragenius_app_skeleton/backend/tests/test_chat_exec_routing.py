@@ -38,6 +38,17 @@ def _install_temp_repos(monkeypatch):
     return session_repo, chat_repo
 
 
+def _create_scoped_session(session_repo):
+    session_repo.get_or_create(
+        "session-1",
+        collection_id="app-1",
+        user_id="user-1",
+        config_version=1,
+        adapter_version=1,
+        template_version=1,
+    )
+
+
 def test_parse_exec_openclaw_turn():
     decision = parse_exec_turn('@exec openclaw "Reply with OK."')
 
@@ -45,6 +56,170 @@ def test_parse_exec_openclaw_turn():
     assert decision.command == "openclaw"
     assert decision.agent_backend == "openclaw_cli"
     assert decision.agent_query == "Reply with OK."
+
+
+def test_interactive_agent_routes_enforce_scope_redact_provider_handles_and_persist_lane(monkeypatch):
+    session_repo, _ = _install_temp_repos(monkeypatch)
+    _create_scoped_session(session_repo)
+    calls = []
+
+    class FakeExecutionClient:
+        def get_agent_interactions(self, execution_id, **scope):
+            calls.append(("interactions", execution_id, scope))
+            return {
+                "execution_id": execution_id,
+                "provider_session_key": "must-not-leak",
+                "items": [{
+                    "interaction_id": "interaction_1",
+                    "type": "approval",
+                    "state": "pending",
+                    "version": 2,
+                    "sequence": 4,
+                    "expires_at": "2026-08-13T12:00:00Z",
+                    "prompt": "Approve this action?",
+                    "provider_turn_ref": "must-not-leak",
+                }],
+            }
+
+        def get_agent_events(self, execution_id, **scope):
+            calls.append(("events", execution_id, scope))
+            return {
+                "execution_id": execution_id,
+                "next_after_sequence": 9,
+                "items": [{
+                    "sequence": 9,
+                    "type": "interaction_requested",
+                    "interaction_id": "interaction_1",
+                    "payload": {"state": "pending", "provider_run_id": "must-not-leak"},
+                }],
+            }
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+
+    interactions = client.get(
+        "/sessions/session-1/executions/execution_1/interactions",
+        params={"app_id": "app-1", "user_id": "user-1"},
+    )
+    events = client.get(
+        "/sessions/session-1/executions/execution_1/events",
+        params={"app_id": "app-1", "user_id": "user-1", "after_sequence": 3, "limit": 10},
+    )
+
+    assert interactions.status_code == 200
+    assert events.status_code == 200
+    assert "provider_session_key" not in interactions.json()
+    assert "provider_turn_ref" not in interactions.json()["items"][0]
+    assert "provider_run_id" not in events.json()["items"][0]["payload"]
+    assert calls == [
+        ("interactions", "execution_1", {"app_id": "app-1", "session_id": "session-1"}),
+        ("events", "execution_1", {
+            "app_id": "app-1",
+            "session_id": "session-1",
+            "after_sequence": 3,
+            "limit": 10,
+        }),
+    ]
+    lane = session_repo.get_runtime_state("session-1")["session_lane_state"]["execution_lane"]
+    assert lane["latest_interaction_id"] == "interaction_1"
+    assert lane["latest_interaction_type"] == "approval"
+    assert lane["latest_interaction_state"] == "pending"
+    assert lane["latest_interaction_version"] == 2
+    assert lane["latest_interaction_expires_at"] == "2026-08-13T12:00:00Z"
+    assert lane["last_event_sequence"] == 9
+    assert "prompt" not in lane
+    assert not any("provider" in key for key in lane)
+
+
+def test_interactive_agent_response_cancel_and_cross_owner_rejection(monkeypatch):
+    session_repo, _ = _install_temp_repos(monkeypatch)
+    _create_scoped_session(session_repo)
+    calls = []
+
+    class FakeExecutionClient:
+        def respond_agent_interaction(self, execution_id, interaction_id, **values):
+            calls.append(("respond", execution_id, interaction_id, values))
+            return {"execution_id": execution_id, "interaction_id": interaction_id, "outcome": "applied"}
+
+        def cancel_agent_execution(self, execution_id, **scope):
+            calls.append(("cancel", execution_id, scope))
+            return {"execution_id": execution_id, "cancelled": True, "status": "cancelled"}
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+    response_body = {
+        "app_id": "app-1",
+        "user_id": "user-1",
+        "expected_version": 2,
+        "idempotency_key": "response_1",
+        "response": {"kind": "approval", "decision": "allow_once"},
+    }
+
+    denied = client.post(
+        "/sessions/session-1/executions/execution_1/interactions/interaction_1/responses",
+        json={**response_body, "user_id": "user-2"},
+    )
+    applied = client.post(
+        "/sessions/session-1/executions/execution_1/interactions/interaction_1/responses",
+        json=response_body,
+    )
+    cancelled = client.post(
+        "/sessions/session-1/executions/execution_1/cancel",
+        json={"app_id": "app-1", "user_id": "user-1"},
+    )
+
+    assert denied.status_code == 404
+    assert applied.status_code == 200
+    assert cancelled.status_code == 200
+    assert calls[0] == ("respond", "execution_1", "interaction_1", {
+        "app_id": "app-1",
+        "session_id": "session-1",
+        "expected_version": 2,
+        "idempotency_key": "response_1",
+        "response": {"kind": "approval", "decision": "allow_once"},
+    })
+    assert calls[1] == ("cancel", "execution_1", {"app_id": "app-1", "session_id": "session-1"})
+    lane = session_repo.get_runtime_state("session-1")["session_lane_state"]["execution_lane"]
+    assert lane["latest_execution_id"] == "execution_1"
+    assert lane["latest_interaction_state"] == "responded"
+    assert lane["latest_execution_status"] == "cancelled"
+
+
+def test_interactive_agent_response_preserves_conflict_and_rejects_provider_identifiers(monkeypatch):
+    session_repo, _ = _install_temp_repos(monkeypatch)
+    _create_scoped_session(session_repo)
+    calls = []
+
+    class FakeExecutionClient:
+        def respond_agent_interaction(self, execution_id, interaction_id, **values):
+            calls.append((execution_id, interaction_id, values))
+            return {
+                "error": {"code": "INTERACTION_VERSION_STALE", "message": "Refresh interaction."},
+                "_http_status": 409,
+            }
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+    base = {
+        "app_id": "app-1",
+        "user_id": "user-1",
+        "expected_version": 2,
+        "idempotency_key": "response_1",
+    }
+
+    unsafe = client.post(
+        "/sessions/session-1/executions/execution_1/interactions/interaction_1/responses",
+        json={**base, "response": {"kind": "approval", "decision": "allow_once", "provider_run_id": "x"}},
+    )
+    stale = client.post(
+        "/sessions/session-1/executions/execution_1/interactions/interaction_1/responses",
+        json={**base, "response": {"kind": "approval", "decision": "allow_once"}},
+    )
+
+    assert unsafe.status_code == 422
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "INTERACTION_VERSION_STALE"
+    assert len(calls) == 1
 
 
 def test_parse_exec_async_openclaw_turn():

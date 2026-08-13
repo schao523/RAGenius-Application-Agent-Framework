@@ -161,6 +161,14 @@ class SessionExecutionConfirmRequest(BaseModel):
     user_id: str
 
 
+class SessionAgentInteractionResponseRequest(BaseModel):
+    app_id: str
+    user_id: str
+    expected_version: int
+    idempotency_key: str
+    response: dict[str, Any]
+
+
 class ApprovedContentCreateRequest(BaseModel):
     app_id: str
     user_id: str
@@ -254,6 +262,80 @@ def _record_confirmation_lane_state(
     status = str(result_payload.get("status") or "").strip().lower()
     if status in {"completed", "failed", "blocked", "partial"}:
         execution_lane["latest_confirmation_state"] = status
+
+
+_PROTECTED_PROVIDER_FIELDS = {
+    "provider_handle",
+    "provider_run_id",
+    "provider_session_id",
+    "provider_session_key",
+    "provider_thread_id",
+    "provider_turn_id",
+    "run_id",
+    "session_key",
+    "thread_id",
+    "turn_id",
+}
+
+
+def _redact_provider_handles(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_redact_provider_handles(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: _redact_provider_handles(item)
+        for key, item in value.items()
+        if str(key).strip().lower() not in _PROTECTED_PROVIDER_FIELDS
+        and not str(key).strip().lower().startswith("provider_")
+    }
+
+
+def _contains_provider_handles(value: Any) -> bool:
+    if isinstance(value, list):
+        return any(_contains_provider_handles(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    for key, item in value.items():
+        normalized = str(key).strip().lower()
+        if normalized in _PROTECTED_PROVIDER_FIELDS or normalized.startswith("provider_"):
+            return True
+        if _contains_provider_handles(item):
+            return True
+    return False
+
+
+def _require_successful_execution_proxy(result: Dict[str, Any]) -> None:
+    status = result.get("_http_status")
+    if isinstance(status, int) and status >= 400:
+        raise HTTPException(status_code=status, detail=result.get("error") or "Execution request failed.")
+    if result.get("_transport_error"):
+        code = str((result.get("error") or {}).get("code") or "")
+        status_code = 504 if code == "EXECUTION_SUBSYSTEM_TIMEOUT" else 503
+        raise HTTPException(status_code=status_code, detail=result.get("error") or "Execution subsystem unavailable.")
+
+
+def _record_interaction_lane_state(
+    lane_state: Dict[str, Any],
+    *,
+    interactions_payload: Dict[str, Any] | None = None,
+    events_payload: Dict[str, Any] | None = None,
+) -> None:
+    execution_lane = lane_state.setdefault("execution_lane", {})
+    interactions = (interactions_payload or {}).get("items", [])
+    if isinstance(interactions, list):
+        normalized = [item for item in interactions if isinstance(item, dict)]
+        if normalized:
+            latest = max(normalized, key=lambda item: int(item.get("sequence") or 0))
+            execution_lane["latest_interaction_id"] = latest.get("interaction_id")
+            execution_lane["latest_interaction_type"] = latest.get("type")
+            execution_lane["latest_interaction_state"] = latest.get("state")
+            execution_lane["latest_interaction_version"] = latest.get("version")
+            execution_lane["latest_interaction_expires_at"] = latest.get("expires_at")
+    if isinstance(events_payload, dict):
+        cursor = events_payload.get("next_after_sequence")
+        if isinstance(cursor, int) and cursor >= 0:
+            execution_lane["last_event_sequence"] = cursor
 
 
 def _runtime_tool_inventory_items() -> list[dict[str, Any]]:
@@ -3975,6 +4057,121 @@ async def confirm_session_execution(session_id: str, execution_id: str, payload:
             "status_result": result,
         },
     }
+
+
+@app.get("/sessions/{session_id}/executions/{execution_id}/interactions")
+async def list_session_agent_interactions(
+    session_id: str,
+    execution_id: str,
+    app_id: str,
+    user_id: str,
+):
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    result = await run_in_threadpool(
+        execution_client.get_agent_interactions,
+        execution_id,
+        app_id=app_id,
+        session_id=session_id,
+    )
+    _require_successful_execution_proxy(result)
+    public_result = _redact_provider_handles(result)
+    runtime_state = session_repo.get_runtime_state(session_id)
+    lane_state = _session_lane_state(runtime_state)
+    lane_state["execution_lane"]["latest_execution_id"] = execution_id
+    _record_interaction_lane_state(lane_state, interactions_payload=public_result)
+    runtime_state["session_lane_state"] = lane_state
+    session_repo.set_runtime_state(session_id, runtime_state)
+    return {**public_result, "session_lane_state": lane_state}
+
+
+@app.get("/sessions/{session_id}/executions/{execution_id}/events")
+async def list_session_agent_events(
+    session_id: str,
+    execution_id: str,
+    app_id: str,
+    user_id: str,
+    after_sequence: int = 0,
+    limit: int = 100,
+):
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    result = await run_in_threadpool(
+        execution_client.get_agent_events,
+        execution_id,
+        app_id=app_id,
+        session_id=session_id,
+        after_sequence=after_sequence,
+        limit=limit,
+    )
+    _require_successful_execution_proxy(result)
+    public_result = _redact_provider_handles(result)
+    runtime_state = session_repo.get_runtime_state(session_id)
+    lane_state = _session_lane_state(runtime_state)
+    lane_state["execution_lane"]["latest_execution_id"] = execution_id
+    _record_interaction_lane_state(lane_state, events_payload=public_result)
+    runtime_state["session_lane_state"] = lane_state
+    session_repo.set_runtime_state(session_id, runtime_state)
+    return {**public_result, "session_lane_state": lane_state}
+
+
+@app.post("/sessions/{session_id}/executions/{execution_id}/interactions/{interaction_id}/responses")
+async def respond_session_agent_interaction(
+    session_id: str,
+    execution_id: str,
+    interaction_id: str,
+    payload: SessionAgentInteractionResponseRequest,
+):
+    _require_session_scope(session_id, app_id=payload.app_id, user_id=payload.user_id)
+    if _contains_provider_handles(payload.response):
+        raise HTTPException(status_code=422, detail="Provider identifiers are not accepted.")
+    result = await run_in_threadpool(
+        execution_client.respond_agent_interaction,
+        execution_id,
+        interaction_id,
+        app_id=payload.app_id,
+        session_id=session_id,
+        expected_version=payload.expected_version,
+        idempotency_key=payload.idempotency_key,
+        response=payload.response,
+    )
+    _require_successful_execution_proxy(result)
+    public_result = _redact_provider_handles(result)
+    runtime_state = session_repo.get_runtime_state(session_id)
+    lane_state = _session_lane_state(runtime_state)
+    execution_lane = lane_state["execution_lane"]
+    execution_lane["latest_execution_id"] = execution_id
+    execution_lane["latest_interaction_id"] = interaction_id
+    execution_lane["latest_interaction_state"] = (
+        "responded" if public_result.get("outcome") in {"applied", "duplicate"}
+        else str(public_result.get("outcome") or "unknown")
+    )
+    runtime_state["session_lane_state"] = lane_state
+    session_repo.set_runtime_state(session_id, runtime_state)
+    return {**public_result, "session_lane_state": lane_state}
+
+
+@app.post("/sessions/{session_id}/executions/{execution_id}/cancel")
+async def cancel_session_agent_execution(
+    session_id: str,
+    execution_id: str,
+    payload: IntegrationActionRequest,
+):
+    _require_session_scope(session_id, app_id=payload.app_id, user_id=payload.user_id)
+    result = await run_in_threadpool(
+        execution_client.cancel_agent_execution,
+        execution_id,
+        app_id=payload.app_id,
+        session_id=session_id,
+    )
+    _require_successful_execution_proxy(result)
+    public_result = _redact_provider_handles(result)
+    runtime_state = session_repo.get_runtime_state(session_id)
+    lane_state = _session_lane_state(runtime_state)
+    execution_lane = lane_state["execution_lane"]
+    execution_lane["latest_execution_id"] = execution_id
+    execution_lane["latest_execution_status"] = str(public_result.get("status") or "unknown")
+    runtime_state["session_lane_state"] = lane_state
+    session_repo.set_runtime_state(session_id, runtime_state)
+    return {**public_result, "session_lane_state": lane_state}
 
 
 @app.get("/apps/{app_id}/sessions")
