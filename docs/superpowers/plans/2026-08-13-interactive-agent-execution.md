@@ -299,13 +299,14 @@ Add `OPENCLAW_GATEWAY_INTERACTIVE_ENABLED`, WSL distro, URL, external approval
 credential env reference, supported version range, RPC timeout, and interaction
 TTL. Never log the credential value. Preflight must not mutate OpenClaw policy.
 
-- [ ] **Step 8: Run tests and live smoke**
+- [x] **Step 8: Run tests and live smoke**
 
-Automated fixtures, the complete execution-subsystem suite, and the opt-in live
-smoke harness are complete. The installed Gateway was confirmed running at
-`2026.6.8`; the real smoke remains pending because this worktree environment
-does not have the external `operator.admin` + `operator.approvals` credential.
-No credential was extracted or created implicitly.
+Automated fixtures and the opt-in live smoke harness are complete. The
+installed Gateway was confirmed at `2026.6.8`. On 2026-08-13, the live
+continuation/cancellation smoke and the administrator-gated approval matrix
+passed using a server-side credential with `operator.admin` and
+`operator.approvals`. The credential value was not logged or persisted in
+the repository.
 
 Run: `npm test -- tests/interactive/openclaw-gateway-adapter.test.ts tests/agents/openclaw-workspace.test.ts`
 
@@ -316,6 +317,10 @@ Approval smoke runs only under the administrator-enabled temporary
 deny without execution, one-second expiry returning `decision: null`, duplicate
 RAGenius response suppression, one resolved event despite provider-idempotent
 duplicate resolve calls, wrong-session filtering, and credential-scope failure.
+The test also exposed and fixed OpenClaw's approval-event normalization from
+the submitted RAGenius key to `agent:<agent_id>:<RAGenius key>`. After the
+matrix, policy restoration to `full/on-miss/deny` was verified and a harmless
+one-shot exec returned `RAGENIUS_NORMAL_PROFILE_OK`.
 
 - [x] **Step 9: Commit**
 

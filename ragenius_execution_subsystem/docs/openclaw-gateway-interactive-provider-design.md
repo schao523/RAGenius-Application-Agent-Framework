@@ -72,6 +72,12 @@ policy.
 The current execution-id-derived session key remains valid only for the
 one-shot fallback and must not be reused by the interactive adapter.
 
+OpenClaw accepts the RAGenius key in `agent.sessionKey` but 2026.6.8 stores
+and emits approval events using `agent:<agent_id>:<RAGenius key>`. The
+adapter indexes only these two exact aliases for the configured agent. It must
+not use suffix matching or accept another agent's prefix, and removing a run
+must remove both aliases.
+
 ## Approval Mapping
 
 `exec.approval.requested` becomes an `approval` interaction containing a

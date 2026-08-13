@@ -236,7 +236,9 @@ export class OpenClawGatewayAdapter implements InteractiveAgentAdapter {
       workspaceRoot: prepared.workspaceRoot
     };
     this.activeByRun.set(runId, state);
-    this.activeBySession.set(sessionKey, state);
+    for (const key of providerSessionAliases(sessionKey, this.config.agentId)) {
+      this.activeBySession.set(key, state);
+    }
     return {
       providerRunRef: runId,
       providerSessionRef: sessionKey,
@@ -561,7 +563,9 @@ export class OpenClawGatewayAdapter implements InteractiveAgentAdapter {
 
   private removeActive(state: OpenClawProtectedHandle): void {
     this.activeByRun.delete(state.runId);
-    this.activeBySession.delete(state.sessionKey);
+    for (const key of providerSessionAliases(state.sessionKey, this.config.agentId)) {
+      this.activeBySession.delete(key);
+    }
   }
 
   private safeMessage(error: unknown): string {
@@ -610,7 +614,14 @@ function reconciledState(status: string, fallback: AgentSessionState): AgentSess
 }
 
 function providerWaitStatus(value: unknown): string {
-  const stopReason = stringField(value, "stopReason");
   const error = stringField(value, "error");
-  return stopReason || error || stringField(value, "status");
+  if (error === "aborted" || error === "cancelled") return error;
+  return stringField(value, "stopReason") || error || stringField(value, "status");
+}
+
+function providerSessionAliases(sessionKey: string, agentId: string): string[] {
+  const canonicalPrefix = `agent:${agentId}:`;
+  return sessionKey.startsWith(canonicalPrefix)
+    ? [sessionKey, sessionKey.slice(canonicalPrefix.length)]
+    : [sessionKey, `${canonicalPrefix}${sessionKey}`];
 }

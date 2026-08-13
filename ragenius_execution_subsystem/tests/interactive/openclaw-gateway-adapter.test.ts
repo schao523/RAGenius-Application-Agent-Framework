@@ -64,6 +64,9 @@ class FakeGatewayConnection implements OpenClawGatewayConnection {
     scopes: ["operator.admin", "operator.approvals"]
   };
   execPolicy = { security: "allowlist", ask: "on-miss", askFallback: "deny" };
+  waitResponse: Record<string, unknown> = {
+    runId: "run-001", status: "error", error: "aborted", stopReason: "aborted"
+  };
   private eventHandler?: (event: Record<string, unknown>) => Promise<void>;
   private gapHandler?: (gap: { actual: number; expected: number }) => Promise<void>;
   private closeHandler?: (error?: Error) => Promise<void>;
@@ -79,7 +82,7 @@ class FakeGatewayConnection implements OpenClawGatewayConnection {
     if (method === "exec.approval.resolve") return { ok: true };
     if (method === "chat.abort") return { ok: true };
     if (method === "agent.wait") {
-      return { runId: "run-001", status: "error", error: "aborted", stopReason: "aborted" };
+      return this.waitResponse;
     }
     if (method === "sessions.list") return { sessions: [] };
     throw new Error(`Unexpected Gateway method: ${method}`);
@@ -149,11 +152,11 @@ describe("OpenClaw Gateway protocol helpers", () => {
       minProtocol: 4,
       maxProtocol: 4,
       client: {
-        id: "ragenius-execution-subsystem",
+        id: "gateway-client",
         displayName: "RAGenius Execution Subsystem",
         version: "0.1.0",
         platform: "windows",
-        mode: "operator"
+        mode: "backend"
       },
       caps: [],
       auth: { token: "gateway-secret" },
@@ -340,7 +343,10 @@ describe("OpenClaw Gateway adapter", () => {
       emit: async (event) => { events.push(event); }
     });
     await factory.connection.emit(approvalEvent("approval-wrong", "ragenius:other:session:agent"));
-    await factory.connection.emit(approvalEvent("approval-1", handle.providerSessionRef));
+    await factory.connection.emit(approvalEvent(
+      "approval-1",
+      `agent:main:${handle.providerSessionRef}`
+    ));
     const interaction = events.find(({ type }) => type === "interaction_requested")?.interaction;
     assert.ok(interaction);
     assert.deepEqual(interaction.options.map(({ id }) => id), ["allow_once", "deny"]);
@@ -380,6 +386,14 @@ describe("OpenClaw Gateway adapter", () => {
     assert.ok(factory.connection.requests.some(({ method }) => method === "agent.wait"));
     assert.equal(events.some(({ type }) => type === "warning"), true);
 
+    factory.connection.waitResponse = {
+      runId: "run-001",
+      status: "timeout",
+      error: "aborted",
+      stopReason: "rpc",
+      timeoutPhase: "queue",
+      providerStarted: false
+    };
     assert.equal((await adapter.cancel(handle)).cancelled, true);
     assert.deepEqual(factory.connection.requests.slice(-2), [
       {

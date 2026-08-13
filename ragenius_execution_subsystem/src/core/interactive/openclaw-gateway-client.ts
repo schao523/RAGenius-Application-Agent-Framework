@@ -69,11 +69,11 @@ export function buildOpenClawConnectParams(input: {
     minProtocol: 4,
     maxProtocol: 4,
     client: {
-      id: "ragenius-execution-subsystem",
+      id: "gateway-client",
       displayName: "RAGenius Execution Subsystem",
       version: "0.1.0",
       platform: "windows",
-      mode: "operator"
+      mode: "backend"
     },
     caps: [],
     auth: { token: input.credential },

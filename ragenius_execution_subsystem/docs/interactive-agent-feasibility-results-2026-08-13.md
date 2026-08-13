@@ -61,6 +61,16 @@ rule prohibiting provider configuration changes.
 | OC-09 | Partial | Gateway exposes structured authentication, token, scope, pairing, and protocol-mismatch error codes. External tool authentication handoff was not exercised. |
 | OC-10 | Pass for yielded continuation primitive | A disposable plugin-owned sub-agent session called `sessions_yield` twice without spawning child work. Each yield ended its provider run with `waitForRun` status `ok` and persisted a structured `{status: "yielded"}` tool result. Calling `api.runtime.subagent.run` again with the same session key created a new run id each time, retained both test markers, and appended the continuation as a new user turn. `deliver: false` produced no configured external delivery. |
 
+Implementation acceptance on 2026-08-13 additionally passed the production
+Gateway client continuation/cancellation smoke and the temporary-policy
+approval matrix: allow-once executed one marker write, deny created no marker,
+one-second expiry returned `decision: null`, duplicate resolution emitted no
+second resolved event, and an approval-only connection lacked the required
+admin visibility scope. OpenClaw emitted approval session keys as
+`agent:<agent_id>:<submitted key>`; the adapter now accepts only that exact
+provider alias and the submitted key. Policy was restored and verified as
+`full/on-miss/deny`, followed by a successful one-shot harmless exec.
+
 ### OpenClaw Conclusions
 
 - OpenClaw Gateway is technically feasible as the primary interactive OpenClaw
