@@ -302,6 +302,10 @@ model ProjectedAgentSkillGovernance {
   modelVisible           Boolean @map("model_visible")
   userInvocable          Boolean @map("user_invocable")
   directToolDispatch     Boolean @map("direct_tool_dispatch")
+  interactionRequirement String  @default("autonomous") @map("interaction_requirement")
+  supportedInteractionTypesJson String @default("[]") @map("supported_interaction_types_json")
+  requiredTransport      String  @default("one_shot") @map("required_transport")
+  recoveryClass          String  @default("not_resumable") @map("recovery_class")
 
   projectionRevision AgentSkillProjectionRevision @relation(fields: [projectionRevisionId], references: [id], onDelete: Cascade)
 

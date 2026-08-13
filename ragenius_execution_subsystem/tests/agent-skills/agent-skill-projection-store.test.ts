@@ -22,6 +22,12 @@ function binding(
     direct_tool_dispatch: false,
     display_name: "Test Skill",
     model_visible: true,
+    interaction_policy: {
+      interaction_requirement: "autonomous",
+      supported_interaction_types: [],
+      required_transport: "one_shot",
+      recovery_class: "not_resumable"
+    },
     protected_locator_ref: "codex-source-ref-1",
     provider_skill_name: "test-skill",
     provider_skill_reference: "test-plugin:test-skill",
@@ -114,5 +120,24 @@ describe("agent skill projection store", () => {
     assert.deepEqual(await store.listForApp("app-1", "openclaw_cli"), []);
     assert.deepEqual(await store.getForApp("app-1", "agent-skill-1"), appOne);
     assert.deepEqual(await store.getForApp("app-3", "agent-skill-1"), null);
+  });
+
+  it("round trips reviewed interactive requirements without weakening them", async () => {
+    const store = new InMemoryAgentSkillProjectionStore();
+    const governed = binding({
+      interaction_policy: {
+        interaction_requirement: "required",
+        supported_interaction_types: ["approval", "selection"],
+        required_transport: "interactive",
+        recovery_class: "turn_resumable"
+      }
+    });
+
+    await store.publish(snapshot(42, "sha256:interactive", [governed]));
+
+    assert.deepEqual(
+      (await store.getForApp("app-1", "agent-skill-1"))?.interaction_policy,
+      governed.interaction_policy
+    );
   });
 });

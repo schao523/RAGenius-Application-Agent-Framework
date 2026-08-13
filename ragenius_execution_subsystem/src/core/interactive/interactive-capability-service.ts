@@ -53,6 +53,24 @@ export class InteractiveCapabilityService {
         reason: `The adapter does not support required interaction types: ${missing.join(", ")}.`
       };
     }
+    const recoveryClass = input.requiredRecoveryClass ?? "not_resumable";
+    if (
+      recoveryClass === "session_resumable"
+      && !preflight.capabilities.sameSessionContinuation
+    ) {
+      return {
+        available: false,
+        failureCode: "INTERACTIVE_CAPABILITY_UNAVAILABLE",
+        reason: "The adapter does not support required same-session recovery."
+      };
+    }
+    if (recoveryClass === "turn_resumable" && !preflight.capabilities.sameTurnResume) {
+      return {
+        available: false,
+        failureCode: "INTERACTIVE_CAPABILITY_UNAVAILABLE",
+        reason: "The adapter does not support required same-turn recovery."
+      };
+    }
     return { adapter, available: true, preflight };
   }
 }

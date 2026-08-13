@@ -31,7 +31,10 @@ import {
   applyResolvedAgentSkillSelection,
   type AgentSkillSelectionService
 } from "../agent-skills/agent-skill-selection-service.js";
-import type { ResolvedAgentSkillSelection } from "../agent-skills/agent-skill-types.js";
+import type {
+  AgentSkillRecoveryClass,
+  ResolvedAgentSkillSelection
+} from "../agent-skills/agent-skill-types.js";
 import { projectAgentSkillSelection } from "../agent-skills/agent-skill-activation-evidence.js";
 import { PermissionEngine } from "../permissions/permission-engine.js";
 import type { PermissionPolicy } from "../permissions/permission.types.js";
@@ -115,7 +118,10 @@ export class ExecutionEngine {
     | ((input: {
         request: ExecutionRequest & { request_type: "execute_agent" };
         selection: ResolvedAgentSkillSelection | null;
-      }) => { requiredInteractionTypes: AgentInteractionType[] } | null)
+      }) => {
+        requiredInteractionTypes: AgentInteractionType[];
+        requiredRecoveryClass?: AgentSkillRecoveryClass;
+      } | null)
     | undefined;
 
   constructor(options?: {
@@ -144,7 +150,10 @@ export class ExecutionEngine {
     interactiveRequirementResolver?: (input: {
       request: ExecutionRequest & { request_type: "execute_agent" };
       selection: ResolvedAgentSkillSelection | null;
-    }) => { requiredInteractionTypes: AgentInteractionType[] } | null;
+    }) => {
+      requiredInteractionTypes: AgentInteractionType[];
+      requiredRecoveryClass?: AgentSkillRecoveryClass;
+    } | null;
   }) {
     this.skillRegistry = options?.skillRegistry ?? new SkillRegistry();
     this.builderSkillClient = options?.builderSkillClient;
@@ -453,6 +462,12 @@ export class ExecutionEngine {
             request: policyRequest,
             requiredInteractionTypes:
               interactiveRequirement.requiredInteractionTypes,
+            ...(interactiveRequirement.requiredRecoveryClass
+              ? {
+                  requiredRecoveryClass:
+                    interactiveRequirement.requiredRecoveryClass
+                }
+              : {}),
             scope
           });
           return (

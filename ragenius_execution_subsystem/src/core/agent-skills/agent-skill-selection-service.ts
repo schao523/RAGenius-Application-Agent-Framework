@@ -161,6 +161,7 @@ export class AgentSkillSelectionService {
       approved_fingerprint: selected.approved_fingerprint,
       backend: selected.backend,
       display_name: selected.display_name,
+      interaction_policy: selected.interaction_policy,
       observed_fingerprint: observed.content_fingerprint,
       protected_locator_ref: selected.protected_locator_ref,
       provider_skill_name: selected.provider_skill_name,

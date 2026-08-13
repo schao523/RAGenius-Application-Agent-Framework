@@ -26,6 +26,12 @@ function projected(
     description: "Approved skill",
     direct_tool_dispatch: false,
     display_name: "Approved Skill",
+    interaction_policy: {
+      interaction_requirement: "autonomous",
+      supported_interaction_types: [],
+      required_transport: "one_shot",
+      recovery_class: "not_resumable"
+    },
     model_visible: true,
     protected_locator_ref: "codex-source-ref-1",
     provider_skill_name: "approved-skill",
@@ -129,6 +135,7 @@ describe("agent skill selection service", () => {
     assert.equal(resolved?.provider_skill_reference, "superpowers:approved-skill");
     assert.equal(resolved?.activation_method, "codex_explicit_reference");
     assert.equal(resolved?.observed_fingerprint, "sha256:v1:approved");
+    assert.deepEqual(resolved?.interaction_policy, projected().interaction_policy);
   });
 
   it("fails when an explicit selection has no active projection", async () => {

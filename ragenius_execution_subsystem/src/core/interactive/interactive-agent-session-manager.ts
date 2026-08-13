@@ -5,6 +5,7 @@ import type { NormalizedExecutionResult } from "../../api/schemas/common-respons
 import { providerInteractionRequestSchema } from "../../api/schemas/interactive-agent.schema.js";
 import type { AgentPolicyDecision } from "../agents/agent-policy.js";
 import type { AgentProviderExecutionContext } from "../agents/agent-provider-context.js";
+import type { AgentSkillRecoveryClass } from "../agent-skills/agent-skill-types.js";
 import type { ExecutionStore } from "../execution/execution-store.js";
 
 import type { AgentEventStore } from "./agent-event-store.js";
@@ -27,6 +28,7 @@ export interface StartInteractiveAgentInput {
   providerContext: AgentProviderExecutionContext;
   request: ExecuteAgentRequest;
   requiredInteractionTypes: AgentInteractionType[];
+  requiredRecoveryClass?: AgentSkillRecoveryClass;
   scope: ExecutionScope;
 }
 

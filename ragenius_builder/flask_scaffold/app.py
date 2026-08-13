@@ -2344,6 +2344,7 @@ def api_approve_agent_skill(agent_skill_id):
             expected_fingerprint=str(data.get("expected_fingerprint") or "").strip(),
             approved_by=_agent_skill_actor_id(),
             review_notes=str(data.get("review_notes") or "").strip(),
+            interaction_policy=data.get("interaction_policy"),
             correlation_id=request.headers.get("X-Request-Id"),
         )
     except ValueError as exc:
@@ -2354,6 +2355,14 @@ def api_approve_agent_skill(agent_skill_id):
         "id": approval["id"],
         "agent_skill_id": approval["agent_skill_id"],
         "approved_fingerprint": approval["approved_fingerprint"],
+        "interaction_policy": {
+            "interaction_requirement": approval["interaction_requirement"],
+            "supported_interaction_types": json.loads(
+                approval["supported_interaction_types_json"]
+            ),
+            "required_transport": approval["required_transport"],
+            "recovery_class": approval["recovery_class"],
+        },
         "state": approval["state"],
         "approved_at": approval["approved_at"],
     })

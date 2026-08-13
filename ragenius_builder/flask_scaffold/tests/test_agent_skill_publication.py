@@ -225,6 +225,33 @@ class AgentSkillPublicationTests(unittest.TestCase):
         )
         self.assertEqual(preview["changes"]["affected_apps"], [self.ids["app_id"]])
 
+    def test_reapproved_interaction_policy_is_an_explicit_publication_change(self) -> None:
+        self._publish_current()
+        skill = self.store.get_agent_skill_catalog_item(self.ids["skill_id"])
+        self.store.approve_agent_skill(
+            agent_skill_id=self.ids["skill_id"],
+            expected_fingerprint=skill["content_fingerprint"],
+            approved_by="admin-1",
+            interaction_policy={
+                "interaction_requirement": "conditional",
+                "supported_interaction_types": ["approval"],
+                "required_transport": "interactive",
+                "recovery_class": "session_resumable",
+            },
+        )
+
+        preview = build_publication_preview(
+            store=self.store, builder_instance_id="builder-test"
+        )
+
+        self.assertEqual(preview["counts"]["approval_changes"], 1)
+        change = preview["changes"]["approvals"][0]
+        self.assertEqual(
+            change["after"]["interaction_policy"]["interaction_requirement"],
+            "conditional",
+        )
+        self.assertNotEqual(change["before"], change["after"])
+
     def test_binding_removal_is_reported_in_stable_order(self) -> None:
         second_app = self.store.create_application(
             {

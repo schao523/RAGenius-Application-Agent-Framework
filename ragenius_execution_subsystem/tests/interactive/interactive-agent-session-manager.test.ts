@@ -77,6 +77,7 @@ class FakeAdapter implements InteractiveAgentAdapter {
   readonly backend = "codex_cli" as const;
   readonly responses: string[] = [];
   cancelled = false;
+  capabilityOverrides: Partial<AgentInteractionCapabilities> = {};
   available = true;
   onStart?: (input: InteractiveStartInput) => void;
   private emit?: (event: InteractiveProviderEvent) => Promise<void>;
@@ -84,7 +85,7 @@ class FakeAdapter implements InteractiveAgentAdapter {
   async preflight() {
     return {
       available: this.available,
-      capabilities,
+      capabilities: { ...capabilities, ...this.capabilityOverrides },
       protocolVersion: "test-v1",
       ...(!this.available
         ? { reason: "Interactive transport is unavailable." }
@@ -263,6 +264,24 @@ describe("interactive Agent session manager", () => {
     assert.equal(result.failureCode, "INTERACTIVE_CAPABILITY_UNAVAILABLE");
     assert.equal((await harness.executionStore.get(scope))?.status, "failed");
     assert.equal(await harness.sessionStore.getByExecution(scope), null);
+  });
+
+  it("fails closed when reviewed recovery exceeds adapter guarantees", async () => {
+    const harness = await createHarness();
+    harness.adapter.capabilityOverrides = { sameTurnResume: false };
+
+    const result = await harness.manager.start({
+      request,
+      policy,
+      providerContext,
+      requiredInteractionTypes: ["approval"],
+      requiredRecoveryClass: "turn_resumable",
+      scope
+    });
+
+    assert.equal(result.started, false);
+    assert.equal(result.failureCode, "INTERACTIVE_CAPABILITY_UNAVAILABLE");
+    assert.match(result.reason, /same-turn recovery/);
   });
 
   it("cancels pending interactions and reaches terminal cancelled", async () => {

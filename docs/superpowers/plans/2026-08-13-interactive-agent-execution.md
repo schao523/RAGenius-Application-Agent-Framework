@@ -344,25 +344,34 @@ git commit -m "feat: add interactive OpenClaw Gateway adapter"
 **Interfaces:**
 - Produces: synchronized `AgentSkillInteractionPolicy` included in reviewed fingerprints and projections.
 
-- [ ] **Step 1: Write failing publication and projection tests**
+- [x] **Step 1: Write failing publication and projection tests**
 
 Test defaults to autonomous/one-shot/not-resumable, administrator-reviewed changes, fingerprint invalidation, projection round trip, and rejection of unsupported values.
 
-- [ ] **Step 2: Implement Builder fields and validation**
+- [x] **Step 2: Implement Builder fields and validation**
 
 Add interaction requirement, supported types, required transport, and recovery class to the existing governance resource rather than creating another catalog.
 
-- [ ] **Step 3: Extend execution projection validation and preflight**
+- [x] **Step 3: Extend execution projection validation and preflight**
 
 Published requirements may raise capability/risk and must fail closed when the active provider cannot satisfy them.
 
-- [ ] **Step 4: Run Builder and execution tests**
+- [x] **Step 4: Run Builder and execution tests**
 
 Run Builder: `python -m pytest flask_scaffold/tests/test_agent_skill_publication.py flask_scaffold/tests/test_agent_skill_projection.py`
 
 Run execution: `npm test -- tests/agent-skills/agent-skill-projection-store.test.ts tests/agent-skills/agent-skill-selection-service.test.ts`
 
-- [ ] **Step 5: Commit**
+Implemented the reviewed policy on immutable Builder approval records and in
+the synchronized projection. Legacy approvals normalize to
+`autonomous`/`one_shot`/`not_resumable`; inconsistent transport, interaction
+type, and recovery combinations fail validation. Execution preflight rejects
+published recovery requirements that the active adapter cannot satisfy. The
+Builder focused governance/API suite passed 49 tests, the execution focused
+suite passed 34 tests, Prisma validation passed, and the full execution suite
+and lint passed on 2026-08-13.
+
+- [x] **Step 5: Commit**
 
 ```text
 git add ragenius_builder/flask_scaffold ragenius_execution_subsystem/src ragenius_execution_subsystem/tests/agent-skills

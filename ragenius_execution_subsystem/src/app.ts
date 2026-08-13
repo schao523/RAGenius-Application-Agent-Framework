@@ -367,6 +367,14 @@ export function createAppServices(
         (await artifactStore.resolveScopedFile(input)).absolute_path,
       notebookLmProfile: runtimeConfig.providers.notebooklm.profile ?? "default",
       executionStore,
+      interactiveRequirementResolver: ({ selection }) => {
+        const policy = selection?.interaction_policy;
+        if (!policy || policy.required_transport === "one_shot") return null;
+        return {
+          requiredInteractionTypes: [...policy.supported_interaction_types],
+          requiredRecoveryClass: policy.recovery_class
+        };
+      },
       interactiveSessionManager,
       permissionEngine,
       skillRegistry,

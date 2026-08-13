@@ -15,6 +15,69 @@ from functools import wraps
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 
+DEFAULT_AGENT_SKILL_INTERACTION_POLICY = {
+    "interaction_requirement": "autonomous",
+    "supported_interaction_types": [],
+    "required_transport": "one_shot",
+    "recovery_class": "not_resumable",
+}
+_AGENT_INTERACTION_REQUIREMENTS = {"autonomous", "conditional", "required"}
+_AGENT_INTERACTION_TYPES = {
+    "approval",
+    "clarification",
+    "selection",
+    "authentication_handoff",
+    "user_action_required",
+}
+_AGENT_INTERACTION_TRANSPORTS = {"one_shot", "interactive"}
+_AGENT_RECOVERY_CLASSES = {
+    "not_resumable",
+    "session_resumable",
+    "turn_resumable",
+}
+
+
+def normalize_agent_skill_interaction_policy(value: Any = None) -> Dict[str, Any]:
+    invalid = ValueError("AGENT_SKILL_INTERACTION_POLICY_INVALID")
+    if value is None:
+        return {
+            **DEFAULT_AGENT_SKILL_INTERACTION_POLICY,
+            "supported_interaction_types": [],
+        }
+    if not isinstance(value, dict) or set(value) != set(DEFAULT_AGENT_SKILL_INTERACTION_POLICY):
+        raise invalid
+    requirement = value.get("interaction_requirement")
+    transport = value.get("required_transport")
+    recovery = value.get("recovery_class")
+    interaction_types = value.get("supported_interaction_types")
+    if (
+        requirement not in _AGENT_INTERACTION_REQUIREMENTS
+        or transport not in _AGENT_INTERACTION_TRANSPORTS
+        or recovery not in _AGENT_RECOVERY_CLASSES
+        or not isinstance(interaction_types, list)
+        or any(item not in _AGENT_INTERACTION_TYPES for item in interaction_types)
+    ):
+        raise invalid
+    normalized_types = sorted(set(interaction_types))
+    if transport == "one_shot" and (
+        requirement != "autonomous"
+        or normalized_types
+        or recovery != "not_resumable"
+    ):
+        raise invalid
+    if requirement in {"conditional", "required"} and not normalized_types:
+        raise invalid
+    if normalized_types and transport != "interactive":
+        raise invalid
+    if recovery != "not_resumable" and transport != "interactive":
+        raise invalid
+    return {
+        "interaction_requirement": requirement,
+        "supported_interaction_types": normalized_types,
+        "required_transport": transport,
+        "recovery_class": recovery,
+    }
+
 DEFAULT_APP_CONFIG_SETTINGS = {
     "llm": {
         "provider": "deepseek",
@@ -661,6 +724,10 @@ class DatabaseStore:
                 id TEXT PRIMARY KEY,
                 agent_skill_id TEXT NOT NULL,
                 approved_fingerprint TEXT NOT NULL,
+                interaction_requirement TEXT NOT NULL DEFAULT 'autonomous',
+                supported_interaction_types_json TEXT NOT NULL DEFAULT '[]',
+                required_transport TEXT NOT NULL DEFAULT 'one_shot',
+                recovery_class TEXT NOT NULL DEFAULT 'not_resumable',
                 state TEXT NOT NULL,
                 review_notes TEXT,
                 approved_by TEXT NOT NULL,
@@ -744,6 +811,16 @@ class DatabaseStore:
         except sqlite3.OperationalError:
             # Column already exists in current local DBs.
             pass
+        for statement in (
+            "ALTER TABLE agent_skill_approvals ADD COLUMN interaction_requirement TEXT NOT NULL DEFAULT 'autonomous'",
+            "ALTER TABLE agent_skill_approvals ADD COLUMN supported_interaction_types_json TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE agent_skill_approvals ADD COLUMN required_transport TEXT NOT NULL DEFAULT 'one_shot'",
+            "ALTER TABLE agent_skill_approvals ADD COLUMN recovery_class TEXT NOT NULL DEFAULT 'not_resumable'",
+        ):
+            try:
+                cursor.execute(statement)
+            except sqlite3.OperationalError:
+                pass
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_app_id ON documents(app_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_skill_versions_skill_id ON skill_versions(skill_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_app_skill_bindings_app_id ON app_skill_bindings(app_id)")
@@ -2130,6 +2207,7 @@ class DatabaseStore:
         expected_fingerprint: str,
         approved_by: str,
         review_notes: str = "",
+        interaction_policy: Dict[str, Any] | None = None,
         correlation_id: str | None = None,
     ) -> Dict[str, Any]:
         skill = self.get_agent_skill_catalog_item(agent_skill_id)
@@ -2143,6 +2221,7 @@ class DatabaseStore:
             raise ValueError("Agent skill is not available")
         approval_id = str(uuid.uuid4())
         now = self._agent_skill_now()
+        normalized_policy = normalize_agent_skill_interaction_policy(interaction_policy)
         with self.conn:
             cursor = self.conn.cursor()
             cursor.execute(
@@ -2155,11 +2234,25 @@ class DatabaseStore:
             cursor.execute(
                 """
                 INSERT INTO agent_skill_approvals (
-                    id, agent_skill_id, approved_fingerprint, state, review_notes,
+                    id, agent_skill_id, approved_fingerprint,
+                    interaction_requirement, supported_interaction_types_json,
+                    required_transport, recovery_class, state, review_notes,
                     approved_by, approved_at, updated_at
-                ) VALUES (?, ?, ?, 'approved', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?)
                 """,
-                (approval_id, agent_skill_id, expected_fingerprint, review_notes, approved_by, now, now),
+                (
+                    approval_id,
+                    agent_skill_id,
+                    expected_fingerprint,
+                    normalized_policy["interaction_requirement"],
+                    json.dumps(normalized_policy["supported_interaction_types"]),
+                    normalized_policy["required_transport"],
+                    normalized_policy["recovery_class"],
+                    review_notes,
+                    approved_by,
+                    now,
+                    now,
+                ),
             )
             self._mark_agent_skill_projection_pending(cursor)
             self._record_agent_skill_audit(
@@ -2168,7 +2261,11 @@ class DatabaseStore:
                 action="agent_skill.approved",
                 agent_skill_id=agent_skill_id,
                 approval_id=approval_id,
-                after={"approved_fingerprint": expected_fingerprint, "state": "approved"},
+                after={
+                    "approved_fingerprint": expected_fingerprint,
+                    "interaction_policy": normalized_policy,
+                    "state": "approved",
+                },
                 correlation_id=correlation_id,
             )
         return dict(self.conn.execute(
@@ -2189,6 +2286,28 @@ class DatabaseStore:
             raise ValueError("Agent skill not found")
         approval_id = str(uuid.uuid4())
         now = self._agent_skill_now()
+        prior = self.conn.execute(
+            """
+            SELECT interaction_requirement, supported_interaction_types_json,
+                   required_transport, recovery_class
+            FROM agent_skill_approvals
+            WHERE agent_skill_id = ? AND state = 'approved'
+            ORDER BY approved_at DESC, rowid DESC LIMIT 1
+            """,
+            (agent_skill_id,),
+        ).fetchone()
+        prior_policy = normalize_agent_skill_interaction_policy(
+            {
+                "interaction_requirement": prior["interaction_requirement"],
+                "supported_interaction_types": json.loads(
+                    prior["supported_interaction_types_json"]
+                ),
+                "required_transport": prior["required_transport"],
+                "recovery_class": prior["recovery_class"],
+            }
+            if prior
+            else None
+        )
         with self.conn:
             cursor = self.conn.cursor()
             cursor.execute(
@@ -2198,11 +2317,25 @@ class DatabaseStore:
             cursor.execute(
                 """
                 INSERT INTO agent_skill_approvals (
-                    id, agent_skill_id, approved_fingerprint, state, review_notes,
+                    id, agent_skill_id, approved_fingerprint,
+                    interaction_requirement, supported_interaction_types_json,
+                    required_transport, recovery_class, state, review_notes,
                     approved_by, approved_at, updated_at
-                ) VALUES (?, ?, ?, 'revoked', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'revoked', ?, ?, ?, ?)
                 """,
-                (approval_id, agent_skill_id, skill["content_fingerprint"], review_notes, actor_id, now, now),
+                (
+                    approval_id,
+                    agent_skill_id,
+                    skill["content_fingerprint"],
+                    prior_policy["interaction_requirement"],
+                    json.dumps(prior_policy["supported_interaction_types"]),
+                    prior_policy["required_transport"],
+                    prior_policy["recovery_class"],
+                    review_notes,
+                    actor_id,
+                    now,
+                    now,
+                ),
             )
             self._mark_agent_skill_projection_pending(cursor)
             self._record_agent_skill_audit(
@@ -2419,7 +2552,10 @@ class DatabaseStore:
             """
             SELECT b.app_id, b.enabled AS binding_enabled,
                    c.*, s.enabled AS source_enabled,
-                   a.approved_fingerprint, a.state AS approval_state
+                   a.approved_fingerprint, a.state AS approval_state,
+                   a.interaction_requirement,
+                   a.supported_interaction_types_json,
+                   a.required_transport, a.recovery_class
             FROM app_agent_skill_bindings b
             JOIN agent_skill_catalog c ON c.id = b.agent_skill_id
             JOIN agent_skill_sources s ON s.id = c.source_id
@@ -2452,6 +2588,16 @@ class DatabaseStore:
                 "model_visible": bool(row["model_visible"]),
                 "user_invocable": bool(row["user_invocable"]),
                 "direct_tool_dispatch": bool(row["direct_tool_dispatch"]),
+                "interaction_policy": normalize_agent_skill_interaction_policy(
+                    {
+                        "interaction_requirement": row["interaction_requirement"],
+                        "supported_interaction_types": json.loads(
+                            row["supported_interaction_types_json"]
+                        ),
+                        "required_transport": row["required_transport"],
+                        "recovery_class": row["recovery_class"],
+                    }
+                ),
             }
             for row in rows
         ]
@@ -2487,6 +2633,7 @@ class DatabaseStore:
                 "current_fingerprint": str,
                 "approved_fingerprint": (str, type(None)),
                 "approval_state": str,
+                "interaction_policy": dict,
             },
             "bindings": {
                 "app_id": str,
@@ -2501,6 +2648,13 @@ class DatabaseStore:
                 raise invalid
             checked = []
             for record in records:
+                if collection == "skills" and isinstance(record, dict):
+                    record = {
+                        **record,
+                        "interaction_policy": normalize_agent_skill_interaction_policy(
+                            record.get("interaction_policy")
+                        ),
+                    }
                 if not isinstance(record, dict) or set(record) != set(schema):
                     raise invalid
                 for field, expected_type in schema.items():

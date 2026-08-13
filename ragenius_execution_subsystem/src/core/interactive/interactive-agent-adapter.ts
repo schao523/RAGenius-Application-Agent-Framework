@@ -1,6 +1,7 @@
 import type { ExecuteAgentRequest } from "../../api/schemas/execution-request.schema.js";
 import type { AgentPolicyDecision } from "../agents/agent-policy.js";
 import type { AgentProviderExecutionContext } from "../agents/agent-provider-context.js";
+import type { AgentSkillRecoveryClass } from "../agent-skills/agent-skill-types.js";
 
 import type {
   AgentBackend,
@@ -18,6 +19,7 @@ export interface InteractivePreflightInput {
   providerContext: AgentProviderExecutionContext;
   request: ExecuteAgentRequest;
   requiredInteractionTypes: AgentInteractionType[];
+  requiredRecoveryClass?: AgentSkillRecoveryClass;
   scope: ExecutionScope;
 }
 
