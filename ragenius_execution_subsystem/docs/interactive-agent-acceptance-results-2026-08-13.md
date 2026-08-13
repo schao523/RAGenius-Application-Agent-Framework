@@ -42,15 +42,16 @@ included.
   cancellation, allow-once exactly once, deny without execution, expiry,
   duplicate-resolution idempotency, scope reduction, and restoration to the
   normal `full/on-miss/deny` profile.
-- Fresh Task 9 smoke: blocked before run creation because the credentials
-  available in WSL configuration were rejected by the running Gateway as a
-  token mismatch. This is deployment credential drift, not a provider-run or
-  interaction failure.
-- No policy, credential, or Gateway configuration was changed during Task 9.
-- Result: keep OpenClaw interactive mode disabled until an administrator
-  provisions a current external credential with the required scopes and reruns
-  the live completion/cancellation smoke. Approval acceptance additionally
-  requires the documented temporary policy profile.
+- Fresh Task 9 smoke: passed live completion and correlated cancellation through
+  the production Gateway client. The credential was read from WSL with approved
+  host access, held only in the test process environment, and never logged or
+  written by RAGenius.
+- An earlier token-mismatch result was caused by a sandbox-denied WSL read whose
+  error text was mistakenly supplied as the token. It was not Gateway credential
+  drift. No credential or execution policy was changed to obtain the passing run.
+- Result: OpenClaw interactive session and cancellation transport is accepted
+  behind its disabled-by-default feature flag. Approval acceptance additionally
+  requires the documented administrator-controlled temporary policy profile.
 
 ## Recovery And Rollback
 
@@ -65,10 +66,10 @@ included.
 ## Known Limitations
 
 - OpenClaw does not advertise structured clarification or selection. Those
-  capabilities remain unavailable pending the separate Task 10 feasibility
+  capabilities remain unavailable because the separate Task 10 feasibility
   experiment and any subsequently approved production design.
 - Codex app-server is experimental. Supported-version and capability preflight
   must remain fail closed during upgrades.
-- Fresh OpenClaw live acceptance must be repeated after external credential
-  provisioning; prior passing evidence is retained for regression reference,
-  not as proof that the current credential is deployable.
+- External deployments still require a separately provisioned credential with
+  the documented scopes; a local configuration token is test evidence, not a
+  production credential-distribution design.

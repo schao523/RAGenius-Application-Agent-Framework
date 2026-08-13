@@ -547,10 +547,10 @@ Builder: `python -m pytest flask_scaffold/tests`
 
 Task 9 acceptance combined fresh Codex initialization/read-only evidence with
 the earlier same-branch Codex interaction and OpenClaw approval/cancellation
-matrix. The fresh OpenClaw rerun was blocked before run creation by external
-Gateway credential drift; no policy or credential was changed. OpenClaw
-interactive mode therefore remains disabled pending administrator credential
-provisioning and a repeated live completion/cancellation smoke. See
+matrix. The fresh OpenClaw completion/cancellation rerun passed after the local
+Gateway token was read with approved WSL access and held only in the test
+process environment. An earlier token-mismatch result was sandbox error text,
+not credential drift; no policy or credential was changed. See
 `ragenius_execution_subsystem/docs/interactive-agent-acceptance-results-2026-08-13.md`.
 
 - [x] **Step 6: Record evidence and commit**
@@ -580,7 +580,7 @@ Gateway adapter.
 - Produces: feasibility evidence only. It must not enable or advertise
   OpenClaw `clarification` or `selection` capabilities.
 
-- [ ] **Step 1: Implement disposable typed request persistence**
+- [x] **Step 1: Implement disposable typed request persistence**
 
 Register a reviewed local `ragenius_request_input` test tool and plugin-owned
 Gateway methods. Persist bounded typed requests with trusted session/run/tool
@@ -594,13 +594,13 @@ API. Prove that replaying the same idempotency key returns the original outcome
 without another continuation run, while a second logical resolution fails
 closed.
 
-- [ ] **Step 3: Verify cancellation and expiry**
+- [x] **Step 3: Verify cancellation and expiry**
 
 Cancel the exact pending interaction and let another request expire. Confirm no
 late response can continue either request, no answer is inferred, and pending
 state is removed or terminally marked.
 
-- [ ] **Step 4: Verify Gateway/plugin restart behavior**
+- [x] **Step 4: Verify Gateway/plugin restart behavior**
 
 Restart while a request is pending. Reconcile durable state if independently
 supported; otherwise prove explicit fail-closed interruption. Never synthesize
@@ -620,12 +620,23 @@ redacted evidence, delete disposable sessions and plugin state, uninstall the
 test plugin, restart the Gateway, and verify the normal execution policy and
 Gateway health.
 
-- [ ] **Step 7: Apply the capability gate**
+- [x] **Step 7: Apply the capability gate**
 
 If every required gate passes, write a separate production plugin contract,
 design, and implementation plan for approval. If any required gate fails,
 retain OpenClaw clarification and selection as unsupported. Do not combine the
 experimental plugin with the base interactive implementation in either case.
+
+Task 10 result (2026-08-13): the disposable typed selection path passed live,
+and bounded persistence, expiry, cancellation, restart interruption, scoped
+isolation, and security checks passed locally. Same-key replay after a recorded
+continuation passed, but the provider-call/durable-commit crash window remains
+unproven, and overlapping resolutions are not serialized before provider
+dispatch. Cross-runtime locking, several live reconnect/concurrency/repeated-
+yield cases, and unsupported-version checks also remain incomplete. The full
+production gate did not pass. OpenClaw clarification and selection remain
+unsupported; no production plugin capability was added. Disposable sessions,
+state, plugin installation, and configuration changes were cleaned up.
 
 ## Rollout Gate
 

@@ -1,13 +1,15 @@
 {
-  "id": "ragenius-yield-feasibility",
-  "name": "RAGenius Yield Feasibility",
-  "description": "Disposable same-session continuation feasibility probe.",
+  "id": "ragenius-request-input-feasibility",
+  "name": "RAGenius Request Input Feasibility",
+  "description": "Disposable typed request-input and same-session continuation feasibility probe.",
   "version": "0.1.0",
   "activation": {
     "onStartup": true
   },
   "contracts": {
-    "tools": []
+    "tools": [
+      "ragenius_request_input"
+    ]
   },
   "configSchema": {
     "type": "object",
