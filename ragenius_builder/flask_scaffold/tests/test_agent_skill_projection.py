@@ -152,6 +152,7 @@ class AgentSkillProjectionTests(unittest.TestCase):
         self.assertEqual(
             autonomous["items"][0]["interaction_policy"],
             {
+                "interaction_channel": "none",
                 "interaction_requirement": "autonomous",
                 "supported_interaction_types": [],
                 "required_transport": "one_shot",
@@ -177,6 +178,7 @@ class AgentSkillProjectionTests(unittest.TestCase):
         self.assertEqual(
             interactive["items"][0]["interaction_policy"],
             {
+                "interaction_channel": "none",
                 "interaction_requirement": "required",
                 "supported_interaction_types": ["approval", "selection"],
                 "required_transport": "interactive",
@@ -343,6 +345,7 @@ class AgentSkillProjectionTests(unittest.TestCase):
                     "approved_fingerprint": "sha256:v1:abc",
                     "current_fingerprint": "sha256:v1:abc",
                     "interaction_policy": {
+                        "interaction_channel": "none",
                         "interaction_requirement": "autonomous",
                         "supported_interaction_types": [],
                         "required_transport": "one_shot",

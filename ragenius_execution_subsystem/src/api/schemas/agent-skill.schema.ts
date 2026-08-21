@@ -5,6 +5,7 @@ import { z } from "zod";
 const backendSchema = z.enum(["codex_cli", "openclaw_cli"]);
 const fingerprintSchema = z.string().trim().min(1);
 const interactionPolicySchema = z.object({
+  interaction_channel: z.enum(["none", "typed", "chat_level"]).default("none"),
   interaction_requirement: z.enum(["autonomous", "conditional", "required"]),
   supported_interaction_types: z.array(z.enum([
     "approval",
@@ -40,6 +41,7 @@ const interactionPolicySchema = z.object({
   }
 });
 const defaultInteractionPolicy = {
+  interaction_channel: "none" as const,
   interaction_requirement: "autonomous" as const,
   supported_interaction_types: [],
   required_transport: "one_shot" as const,

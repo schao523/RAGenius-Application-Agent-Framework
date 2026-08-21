@@ -4,6 +4,9 @@ ALTER TABLE "agent_sessions"
   ADD COLUMN "active_chat_turn_id" TEXT,
   ADD COLUMN "idle_expires_at" TIMESTAMP(3);
 
+ALTER TABLE "projected_agent_skill_governance"
+  ADD COLUMN "interaction_channel" TEXT NOT NULL DEFAULT 'none';
+
 CREATE TABLE "agent_chat_turns" (
   "id" TEXT NOT NULL,
   "agent_session_id" TEXT NOT NULL,

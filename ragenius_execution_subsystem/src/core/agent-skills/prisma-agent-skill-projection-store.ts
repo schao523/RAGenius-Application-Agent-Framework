@@ -34,6 +34,7 @@ interface GovernanceRow {
   directToolDispatch: boolean;
   displayName: string;
   interactionRequirement: string;
+  interactionChannel: string;
   modelVisible: boolean;
   protectedLocatorRef: string;
   providerSkillName: string;
@@ -127,6 +128,9 @@ function toGovernance(row: GovernanceRow): ProjectedAgentSkillGovernance {
       interaction_requirement: row.interactionRequirement as ProjectedAgentSkillGovernance[
         "interaction_policy"
       ]["interaction_requirement"],
+      interaction_channel: (row.interactionChannel || "none") as Exclude<ProjectedAgentSkillGovernance[
+        "interaction_policy"
+      ]["interaction_channel"], undefined>,
       supported_interaction_types: JSON.parse(
         row.supportedInteractionTypesJson
       ) as ProjectedAgentSkillGovernance["interaction_policy"]["supported_interaction_types"],
@@ -166,6 +170,7 @@ function itemData(
     directToolDispatch: item.direct_tool_dispatch,
     displayName: item.display_name,
     interactionRequirement: item.interaction_policy.interaction_requirement,
+    interactionChannel: item.interaction_policy.interaction_channel ?? "none",
     modelVisible: item.model_visible,
     protectedLocatorRef: item.protected_locator_ref,
     providerSkillName: item.provider_skill_name,

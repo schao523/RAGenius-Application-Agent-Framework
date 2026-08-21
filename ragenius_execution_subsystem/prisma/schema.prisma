@@ -335,6 +335,7 @@ model ProjectedAgentSkillGovernance {
   userInvocable          Boolean @map("user_invocable")
   directToolDispatch     Boolean @map("direct_tool_dispatch")
   interactionRequirement String  @default("autonomous") @map("interaction_requirement")
+  interactionChannel String @default("none") @map("interaction_channel")
   supportedInteractionTypesJson String @default("[]") @map("supported_interaction_types_json")
   requiredTransport      String  @default("one_shot") @map("required_transport")
   recoveryClass          String  @default("not_resumable") @map("recovery_class")

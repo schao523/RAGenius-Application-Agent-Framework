@@ -16,12 +16,14 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 
 DEFAULT_AGENT_SKILL_INTERACTION_POLICY = {
+    "interaction_channel": "none",
     "interaction_requirement": "autonomous",
     "supported_interaction_types": [],
     "required_transport": "one_shot",
     "recovery_class": "not_resumable",
 }
 _AGENT_INTERACTION_REQUIREMENTS = {"autonomous", "conditional", "required"}
+_AGENT_INTERACTION_CHANNELS = {"none", "typed", "chat_level"}
 _AGENT_INTERACTION_TYPES = {
     "approval",
     "clarification",
@@ -44,14 +46,17 @@ def normalize_agent_skill_interaction_policy(value: Any = None) -> Dict[str, Any
             **DEFAULT_AGENT_SKILL_INTERACTION_POLICY,
             "supported_interaction_types": [],
         }
-    if not isinstance(value, dict) or set(value) != set(DEFAULT_AGENT_SKILL_INTERACTION_POLICY):
+    if not isinstance(value, dict) or not set(value).issubset(DEFAULT_AGENT_SKILL_INTERACTION_POLICY):
         raise invalid
+    value = {**DEFAULT_AGENT_SKILL_INTERACTION_POLICY, **value}
+    channel = value.get("interaction_channel")
     requirement = value.get("interaction_requirement")
     transport = value.get("required_transport")
     recovery = value.get("recovery_class")
     interaction_types = value.get("supported_interaction_types")
     if (
-        requirement not in _AGENT_INTERACTION_REQUIREMENTS
+        channel not in _AGENT_INTERACTION_CHANNELS
+        or requirement not in _AGENT_INTERACTION_REQUIREMENTS
         or transport not in _AGENT_INTERACTION_TRANSPORTS
         or recovery not in _AGENT_RECOVERY_CLASSES
         or not isinstance(interaction_types, list)
@@ -71,7 +76,14 @@ def normalize_agent_skill_interaction_policy(value: Any = None) -> Dict[str, Any
         raise invalid
     if recovery != "not_resumable" and transport != "interactive":
         raise invalid
+    if channel == "typed" and transport != "interactive":
+        raise invalid
+    if channel == "chat_level" and (
+        transport != "interactive" or normalized_types or recovery != "session_resumable"
+    ):
+        raise invalid
     return {
+        "interaction_channel": channel,
         "interaction_requirement": requirement,
         "supported_interaction_types": normalized_types,
         "required_transport": transport,
@@ -724,6 +736,7 @@ class DatabaseStore:
                 id TEXT PRIMARY KEY,
                 agent_skill_id TEXT NOT NULL,
                 approved_fingerprint TEXT NOT NULL,
+                interaction_channel TEXT NOT NULL DEFAULT 'none',
                 interaction_requirement TEXT NOT NULL DEFAULT 'autonomous',
                 supported_interaction_types_json TEXT NOT NULL DEFAULT '[]',
                 required_transport TEXT NOT NULL DEFAULT 'one_shot',
@@ -813,6 +826,7 @@ class DatabaseStore:
             pass
         for statement in (
             "ALTER TABLE agent_skill_approvals ADD COLUMN interaction_requirement TEXT NOT NULL DEFAULT 'autonomous'",
+            "ALTER TABLE agent_skill_approvals ADD COLUMN interaction_channel TEXT NOT NULL DEFAULT 'none'",
             "ALTER TABLE agent_skill_approvals ADD COLUMN supported_interaction_types_json TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE agent_skill_approvals ADD COLUMN required_transport TEXT NOT NULL DEFAULT 'one_shot'",
             "ALTER TABLE agent_skill_approvals ADD COLUMN recovery_class TEXT NOT NULL DEFAULT 'not_resumable'",
@@ -2222,6 +2236,8 @@ class DatabaseStore:
         approval_id = str(uuid.uuid4())
         now = self._agent_skill_now()
         normalized_policy = normalize_agent_skill_interaction_policy(interaction_policy)
+        if normalized_policy["interaction_channel"] == "chat_level" and skill["backend"] != "openclaw_cli":
+            raise ValueError("AGENT_SKILL_INTERACTION_POLICY_INVALID")
         with self.conn:
             cursor = self.conn.cursor()
             cursor.execute(
@@ -2235,15 +2251,17 @@ class DatabaseStore:
                 """
                 INSERT INTO agent_skill_approvals (
                     id, agent_skill_id, approved_fingerprint,
+                    interaction_channel,
                     interaction_requirement, supported_interaction_types_json,
                     required_transport, recovery_class, state, review_notes,
                     approved_by, approved_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?)
                 """,
                 (
                     approval_id,
                     agent_skill_id,
                     expected_fingerprint,
+                    normalized_policy["interaction_channel"],
                     normalized_policy["interaction_requirement"],
                     json.dumps(normalized_policy["supported_interaction_types"]),
                     normalized_policy["required_transport"],
@@ -2288,7 +2306,7 @@ class DatabaseStore:
         now = self._agent_skill_now()
         prior = self.conn.execute(
             """
-            SELECT interaction_requirement, supported_interaction_types_json,
+            SELECT interaction_channel, interaction_requirement, supported_interaction_types_json,
                    required_transport, recovery_class
             FROM agent_skill_approvals
             WHERE agent_skill_id = ? AND state = 'approved'
@@ -2298,6 +2316,7 @@ class DatabaseStore:
         ).fetchone()
         prior_policy = normalize_agent_skill_interaction_policy(
             {
+                "interaction_channel": prior["interaction_channel"],
                 "interaction_requirement": prior["interaction_requirement"],
                 "supported_interaction_types": json.loads(
                     prior["supported_interaction_types_json"]
@@ -2318,15 +2337,17 @@ class DatabaseStore:
                 """
                 INSERT INTO agent_skill_approvals (
                     id, agent_skill_id, approved_fingerprint,
+                    interaction_channel,
                     interaction_requirement, supported_interaction_types_json,
                     required_transport, recovery_class, state, review_notes,
                     approved_by, approved_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'revoked', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'revoked', ?, ?, ?, ?)
                 """,
                 (
                     approval_id,
                     agent_skill_id,
                     skill["content_fingerprint"],
+                    prior_policy["interaction_channel"],
                     prior_policy["interaction_requirement"],
                     json.dumps(prior_policy["supported_interaction_types"]),
                     prior_policy["required_transport"],
@@ -2553,6 +2574,7 @@ class DatabaseStore:
             SELECT b.app_id, b.enabled AS binding_enabled,
                    c.*, s.enabled AS source_enabled,
                    a.approved_fingerprint, a.state AS approval_state,
+                   a.interaction_channel,
                    a.interaction_requirement,
                    a.supported_interaction_types_json,
                    a.required_transport, a.recovery_class
@@ -2590,6 +2612,7 @@ class DatabaseStore:
                 "direct_tool_dispatch": bool(row["direct_tool_dispatch"]),
                 "interaction_policy": normalize_agent_skill_interaction_policy(
                     {
+                        "interaction_channel": row["interaction_channel"],
                         "interaction_requirement": row["interaction_requirement"],
                         "supported_interaction_types": json.loads(
                             row["supported_interaction_types_json"]

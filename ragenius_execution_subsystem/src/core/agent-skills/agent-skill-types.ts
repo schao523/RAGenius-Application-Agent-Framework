@@ -96,6 +96,7 @@ export type AgentSkillRecoveryClass =
   | "turn_resumable";
 
 export interface AgentSkillInteractionPolicy {
+  interaction_channel?: "none" | "typed" | "chat_level";
   interaction_requirement: "autonomous" | "conditional" | "required";
   supported_interaction_types: AgentSkillInteractionType[];
   required_transport: "one_shot" | "interactive";
