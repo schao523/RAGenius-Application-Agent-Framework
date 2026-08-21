@@ -233,7 +233,9 @@ export class PrismaExecutionStore implements ExecutionStore {
       where: {
         appId: input.appId,
         sessionId: input.sessionId,
-        status: { in: ["queued", "running", "pending_confirmation"] }
+        status: {
+          in: ["queued", "running", "pending_confirmation", "waiting_for_interaction"]
+        }
       }
     });
     return rows.some((row) => {

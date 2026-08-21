@@ -146,6 +146,85 @@ class AgentSkillProjectionTests(unittest.TestCase):
         changed = build_agent_skill_projection(self.store, "builder-test")
         self.assertGreater(changed["revision"], previous_revision)
 
+    def test_interaction_policy_defaults_and_reviewed_change_round_trip(self) -> None:
+        self._populate()
+        autonomous = build_agent_skill_projection(self.store, "builder-test")
+        self.assertEqual(
+            autonomous["items"][0]["interaction_policy"],
+            {
+                "interaction_channel": "none",
+                "interaction_requirement": "autonomous",
+                "supported_interaction_types": [],
+                "required_transport": "one_shot",
+                "recovery_class": "not_resumable",
+            },
+        )
+
+        skill = self.store.list_agent_skill_catalog()[0]
+        self.store.approve_agent_skill(
+            agent_skill_id=skill["id"],
+            expected_fingerprint=skill["content_fingerprint"],
+            approved_by="admin-1",
+            interaction_policy={
+                "interaction_requirement": "required",
+                "supported_interaction_types": ["selection", "approval", "approval"],
+                "required_transport": "interactive",
+                "recovery_class": "turn_resumable",
+            },
+        )
+        interactive = build_agent_skill_projection(self.store, "builder-test")
+
+        self.assertNotEqual(interactive["digest"], autonomous["digest"])
+        self.assertEqual(
+            interactive["items"][0]["interaction_policy"],
+            {
+                "interaction_channel": "none",
+                "interaction_requirement": "required",
+                "supported_interaction_types": ["approval", "selection"],
+                "required_transport": "interactive",
+                "recovery_class": "turn_resumable",
+            },
+        )
+
+    def test_chat_level_channel_is_explicitly_approved_and_projected(self) -> None:
+        self._populate()
+        skill = self.store.list_agent_skill_catalog()[0]
+        self.store.approve_agent_skill(
+            agent_skill_id=skill["id"],
+            expected_fingerprint=skill["content_fingerprint"],
+            approved_by="admin-1",
+            interaction_policy={
+                "interaction_channel": "chat_level",
+                "interaction_requirement": "autonomous",
+                "supported_interaction_types": [],
+                "required_transport": "interactive",
+                "recovery_class": "session_resumable",
+            },
+        )
+        projection = build_agent_skill_projection(self.store, "builder-test")
+        self.assertEqual(
+            projection["items"][0]["interaction_policy"]["interaction_channel"],
+            "chat_level",
+        )
+
+    def test_invalid_interaction_policy_is_rejected(self) -> None:
+        self._populate()
+        skill = self.store.list_agent_skill_catalog()[0]
+        invalid = {
+            "interaction_requirement": "required",
+            "supported_interaction_types": ["approval"],
+            "required_transport": "one_shot",
+            "recovery_class": "not_resumable",
+        }
+
+        with self.assertRaisesRegex(ValueError, "AGENT_SKILL_INTERACTION_POLICY_INVALID"):
+            self.store.approve_agent_skill(
+                agent_skill_id=skill["id"],
+                expected_fingerprint=skill["content_fingerprint"],
+                approved_by="admin-1",
+                interaction_policy=invalid,
+            )
+
     def test_first_empty_snapshot_receives_a_real_monotonic_revision(self) -> None:
         snapshot = build_agent_skill_projection(self.store, "builder-test")
 
@@ -286,6 +365,13 @@ class AgentSkillProjectionTests(unittest.TestCase):
                     "approval_state": "approved",
                     "approved_fingerprint": "sha256:v1:abc",
                     "current_fingerprint": "sha256:v1:abc",
+                    "interaction_policy": {
+                        "interaction_channel": "none",
+                        "interaction_requirement": "autonomous",
+                        "supported_interaction_types": [],
+                        "required_transport": "one_shot",
+                        "recovery_class": "not_resumable",
+                    },
                     "provider_skill_reference": "summarizer",
                     "source_id": "source-1",
                 }

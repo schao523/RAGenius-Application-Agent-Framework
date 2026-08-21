@@ -61,6 +61,16 @@ rule prohibiting provider configuration changes.
 | OC-09 | Partial | Gateway exposes structured authentication, token, scope, pairing, and protocol-mismatch error codes. External tool authentication handoff was not exercised. |
 | OC-10 | Pass for yielded continuation primitive | A disposable plugin-owned sub-agent session called `sessions_yield` twice without spawning child work. Each yield ended its provider run with `waitForRun` status `ok` and persisted a structured `{status: "yielded"}` tool result. Calling `api.runtime.subagent.run` again with the same session key created a new run id each time, retained both test markers, and appended the continuation as a new user turn. `deliver: false` produced no configured external delivery. |
 
+Implementation acceptance on 2026-08-13 additionally passed the production
+Gateway client continuation/cancellation smoke and the temporary-policy
+approval matrix: allow-once executed one marker write, deny created no marker,
+one-second expiry returned `decision: null`, duplicate resolution emitted no
+second resolved event, and an approval-only connection lacked the required
+admin visibility scope. OpenClaw emitted approval session keys as
+`agent:<agent_id>:<submitted key>`; the adapter now accepts only that exact
+provider alias and the submitted key. Policy was restored and verified as
+`full/on-miss/deny`, followed by a successful one-shot harmless exec.
+
 ### OpenClaw Conclusions
 
 - OpenClaw Gateway is technically feasible as the primary interactive OpenClaw
@@ -92,6 +102,51 @@ rule prohibiting provider configuration changes.
   cancellation while yielded, restart recovery, or idempotent external
   completion delivery. OpenClaw must still advertise no structured
   clarification capability until the remaining feasibility matrix passes.
+
+## Disposable Request-Input Protocol Results
+
+Task 10 tested a disposable native plugin outside production capability
+discovery. The fixture registered exactly one reviewed tool,
+`ragenius_request_input`, and scoped Gateway methods. It used Candidate A:
+plugin-owned yielded sub-agent runs followed by `same_session_new_turn`
+continuation.
+
+The minimal live selection flow passed on OpenClaw `2026.6.8`: a trusted tool
+call created one typed request, the adapter matched a start-time one-use nonce
+to its persisted SHA-256 hash, one scoped resolution started a distinct
+continuation run, same-key replay after durable completion returned that run id,
+a second logical resolution conflicted, the transcript retained `alpha`, and
+cleanup deleted the disposable session and record. The run completed in
+approximately 6.9 seconds.
+
+| IDs | Result | Evidence |
+| --- | --- | --- |
+| RI-01 to RI-03 | Pass | Runtime inspection showed one declared tool, one typed hook, seven scoped Gateway methods, no diagnostics, and trusted session/run/tool-call identity. Requests were queryable as typed records without prose parsing. No public method can add trusted bindings. |
+| RI-04 to RI-08 | Partial for Candidate A | Gateway polling remained responsive while the Agent yielded. Live selection, exact-scope resolution, same-key replay after durable completion, conflict rejection, and wrong scope/run/tool/nonce unit checks passed. Candidate A creates a new continuation turn rather than resuming the same tool call. A crash after the provider accepts a continuation but before its run id is durably committed can require a retry and was not proven exactly-once. Overlapping same-key resolutions are not serialized before provider dispatch and may start duplicate continuation runs. |
+| RI-09 to RI-10 | Pass in protocol tests | Expiry and cancellation became terminal and rejected late responses. Live provider cancellation of this disposable request flow was not repeated. |
+| RI-11 | Partial | Durable `get` reconciliation passed. A live adapter disconnect/reconnect during a pending request was not executed. |
+| RI-12 | Pass in protocol test, partial live | A new process id marked pending requests `interrupted` and restored no raw nonce. A live Gateway restart during a pending request was not executed. |
+| RI-13 | Partial | Exact-scope isolation and serialized same-instance persistence passed. Cross-runtime file locking and two live Agent runtime sessions resolving concurrently were not executed. |
+| RI-14 to RI-17 | Pass in protocol tests | Distinct repeated requests, selection and normalized free text, secret/authorization rejection, payload bounds, pending limits, serialized atomic writes, and stale-binding removal passed. Repeated requests were not exercised live through the final plugin. |
+| RI-18 | Partial | Unsupported sessions fail the trusted ownership preflight. A separate one-shot CLI invocation was not retained as final evidence. |
+| RI-19 | Fail gate | Exact version `2026.6.8` passed, but an unsupported-version fixture and capability-advertisement gate were not implemented. |
+| RI-20 | Pass | Live continuation used the same session key and a distinct continuation run id with the exact structured selection. |
+| RI-21 | Partial | Earlier yield feasibility passed two cycles; the final typed plugin did not repeat two complete live request/resolve cycles. |
+| RI-22 | Pass for live minimal flow | `deliver: false` produced one local terminal transcript and no external requester announcement. Production adapter event deduplication is not part of this disposable plugin. |
+| RI-23 | Pass | Only an authenticated plugin start creates trusted bindings and nonce hashes; arbitrary sessions fail closed. OpenClaw tool profiles additionally require explicit `tools.alsoAllow`. |
+
+### Decision
+
+The architecture is technically promising, but the Task 10 production gate did
+not pass because RI-04 to RI-08 retain an exactly-once crash window and RI-11,
+RI-13, RI-18, RI-19, and RI-21 remain partial or failed.
+RAGenius therefore continues to advertise neither OpenClaw `clarification` nor
+`selection`. No production plugin contract, design, or implementation plan is
+authorized from this evidence. A follow-up matrix should focus only on those
+remaining live/version gates, provider-call commit recovery, and cross-runtime
+file-locking for concurrent plugin instances. It must also serialize or lease
+each resolution before provider dispatch so overlapping retries cannot start
+duplicate continuation runs.
 
 ## Cross-Provider Findings
 

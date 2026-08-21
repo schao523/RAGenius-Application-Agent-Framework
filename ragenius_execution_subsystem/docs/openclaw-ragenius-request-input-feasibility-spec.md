@@ -12,6 +12,14 @@ Initial live evidence confirms the preferred candidate's basic yield and
 same-session continuation primitive on OpenClaw 2026.6.8. It does not complete
 the feasibility matrix or authorize capability advertisement.
 
+Task 10 subsequently passed the minimal typed Candidate A path but did not pass
+every production gate. The dated feasibility results are authoritative for the
+observed matrix status; OpenClaw clarification and selection remain disabled.
+In particular, the disposable implementation did not prove exactly-once
+continuation across a crash between provider acceptance and durable run-id
+commit, serialize overlapping resolution dispatch, or prove cross-runtime file
+locking.
+
 ## Purpose
 
 Determine whether an administrator-managed OpenClaw native plugin can provide a
@@ -107,9 +115,27 @@ type OpenClawInputRequest = {
 };
 ```
 
+OpenClaw 2026.6.8 loads Gateway methods and Agent tools in separate runtime
+plugin instances. The tested cross-runtime binding therefore creates a bounded
+pool of random one-use nonces during the authenticated `start` call, persists
+only their hashes with the trusted session binding, and lets each tool request
+consume one hash. The execution adapter keeps the raw pool in memory and selects
+the nonce whose hash matches the request. Restart loses the raw pool and fails
+pending requests closed. Raw nonces are never written to plugin state or exposed
+to the model.
+
 For Candidate A, `provider_run_id` identifies the turn that created the
 request. Resolution also records a distinct `continuation_run_id`; the two ids
 must never be collapsed. The stable `session_key` is the continuity anchor.
+Resolution uses a durable `continuation_pending` phase before calling the
+provider and stores the returned run id before reporting `applied`. A retry
+before provider acceptance is resumable, and replay after durable completion
+returns the original run id. The crash window after provider acceptance but
+before that run id is stored remains a failed production gate rather than an
+exactly-once claim. The disposable fixture also does not lease or serialize the
+`continuation_pending` transition before provider dispatch, so overlapping
+identical resolutions can start duplicate provider runs. A production design
+must close both windows before advertising the capability.
 
 The proposed Gateway methods are plugin-owned names, not core approval
 namespaces:

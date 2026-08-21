@@ -36,7 +36,7 @@ backend to stream a session upload into the execution artifact store; it does
 not grant the browser direct access.
 
 ```powershell
-$env:RAGENIUS_EXECUTION_SERVICE_CREDENTIALS_JSON = '[{"service_id":"ragenius_app","token":"replace-app-token","scopes":["agent_skills:read","artifacts:write"]},{"service_id":"ragenius_builder","token":"replace-builder-token","scopes":["agent_skills:admin"]}]'
+$env:RAGENIUS_EXECUTION_SERVICE_CREDENTIALS_JSON = '[{"service_id":"ragenius_app","token":"replace-app-token","scopes":["execution","agent_skills:read","artifacts:write"]},{"service_id":"ragenius_builder","token":"replace-builder-token","scopes":["agent_skills:admin"]}]'
 ```
 
 ### `RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED=true`
@@ -122,15 +122,32 @@ The health check should continue to succeed without authentication:
 Invoke-RestMethod http://localhost:3001/healthz
 ```
 
-## Current `.env` Limitation
+## `.env` Loading
 
-The current execution-subsystem PowerShell script checks that `.env` exists,
-but it does not load `.env` values into the PowerShell environment.
+The execution-subsystem PowerShell script loads values from its local `.env`
+when the same process variable has not already been set. Explicit `$env:`
+values therefore override `.env`. Restart the service after changing either.
 
-For now, setting the variables with `$env:` before starting each service is the
-reliable activation method. Adding the variables only to `.env` will not
-activate authentication unless the startup process is updated to load that
-file.
+## OpenClaw Chat-Level Continuation
+
+Chat-level continuation is independently disabled by default. Development
+testing requires both flags and an exact supported Gateway version:
+
+```powershell
+$env:OPENCLAW_GATEWAY_INTERACTIVE_ENABLED = "true"
+$env:OPENCLAW_GATEWAY_CHAT_LEVEL_ENABLED = "true"
+$env:OPENCLAW_GATEWAY_CHAT_IDLE_TTL_MS = "900000"
+```
+
+The startup script rejects chat-level mode when the base Gateway interactive
+transport is disabled. Keep chat-level mode off for production until the full
+CL-01 through CL-28 acceptance matrix passes.
+
+The `ragenius_app` credential must include the `execution` scope for scoped
+interaction, follow-up, cancellation, and chat-session APIs. Keep
+`agent_skills:read` for the Composer inventory and `artifacts:write` for session
+upload preparation. Builder should retain its separate `agent_skills:admin`
+credential rather than receiving the app's execution scope.
 
 ## Disable Authentication for Local Development
 

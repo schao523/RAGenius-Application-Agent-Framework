@@ -4,6 +4,59 @@ import { z } from "zod";
 
 const backendSchema = z.enum(["codex_cli", "openclaw_cli"]);
 const fingerprintSchema = z.string().trim().min(1);
+const interactionPolicyShape = {
+  interaction_channel: z.enum(["none", "typed", "chat_level"]).optional(),
+  interaction_requirement: z.enum(["autonomous", "conditional", "required"]),
+  supported_interaction_types: z.array(z.enum([
+    "approval",
+    "clarification",
+    "selection",
+    "authentication_handoff",
+    "user_action_required"
+  ])),
+  required_transport: z.enum(["one_shot", "interactive"]),
+  recovery_class: z.enum(["not_resumable", "session_resumable", "turn_resumable"])
+};
+const interactionPolicyBaseSchema = z.object(interactionPolicyShape).strict();
+function validateInteractionPolicy(
+  value: z.infer<typeof interactionPolicyBaseSchema>,
+  context: z.RefinementCtx
+): void {
+  if (new Set(value.supported_interaction_types).size !== value.supported_interaction_types.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Interaction types must be unique." });
+  }
+  if (value.required_transport === "one_shot" && (
+    value.interaction_requirement !== "autonomous"
+    || value.supported_interaction_types.length > 0
+    || value.recovery_class !== "not_resumable"
+  )) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "One-shot skills must be autonomous and not resumable." });
+  }
+  if (["conditional", "required"].includes(value.interaction_requirement)
+    && value.supported_interaction_types.length === 0) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Interactive requirements must declare supported interaction types." });
+  }
+  if (value.supported_interaction_types.length > 0
+    && value.required_transport !== "interactive") {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Interaction types require interactive transport." });
+  }
+  if (value.recovery_class !== "not_resumable"
+    && value.required_transport !== "interactive") {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Resumable recovery requires interactive transport." });
+  }
+}
+const interactionPolicyWireSchema = interactionPolicyBaseSchema
+  .superRefine(validateInteractionPolicy);
+const interactionPolicySchema = interactionPolicyBaseSchema.extend({
+  interaction_channel: z.enum(["none", "typed", "chat_level"])
+}).strict().superRefine(validateInteractionPolicy);
+const defaultInteractionPolicy = {
+  interaction_channel: "none" as const,
+  interaction_requirement: "autonomous" as const,
+  supported_interaction_types: [],
+  required_transport: "one_shot" as const,
+  recovery_class: "not_resumable" as const
+};
 
 export const projectedAgentSkillGovernanceWireSchema = z.object({
   agent_skill_id: z.string().trim().min(1),
@@ -17,6 +70,7 @@ export const projectedAgentSkillGovernanceWireSchema = z.object({
   direct_tool_dispatch: z.boolean(),
   display_name: z.string().trim().min(1),
   model_visible: z.boolean(),
+  interaction_policy: interactionPolicyWireSchema.optional(),
   protected_locator_ref: z.string().trim().min(1),
   provider_skill_name: z.string().trim().min(1),
   provider_skill_reference: z.string().trim().min(1).optional(),
@@ -28,7 +82,8 @@ export const projectedAgentSkillGovernanceWireSchema = z.object({
 
 export const projectedAgentSkillGovernanceSchema =
   projectedAgentSkillGovernanceWireSchema.extend({
-    provider_skill_reference: z.string().trim().min(1)
+    provider_skill_reference: z.string().trim().min(1),
+    interaction_policy: interactionPolicySchema
   }).strict();
 
 export const agentSkillGovernanceProjectionSchema = z.object({
@@ -84,6 +139,12 @@ export function normalizeProjectedAgentSkillGovernance(
 ): z.infer<typeof projectedAgentSkillGovernanceSchema> {
   return projectedAgentSkillGovernanceSchema.parse({
     ...item,
+    interaction_policy: item.interaction_policy
+      ? {
+          ...item.interaction_policy,
+          interaction_channel: item.interaction_policy.interaction_channel ?? "none"
+        }
+      : defaultInteractionPolicy,
     provider_skill_reference:
       item.provider_skill_reference ?? item.provider_skill_name
   });

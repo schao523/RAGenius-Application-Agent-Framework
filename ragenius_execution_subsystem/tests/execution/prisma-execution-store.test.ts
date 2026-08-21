@@ -65,7 +65,9 @@ describe("prisma execution store", () => {
     assert.deepEqual(observedWhere, {
       appId: "app_001",
       sessionId: "sess_001",
-      status: { in: ["queued", "running", "pending_confirmation"] }
+      status: {
+        in: ["queued", "running", "pending_confirmation", "waiting_for_interaction"]
+      }
     });
     assert.equal(await store.hasActiveArtifactReference({
       appId: "app_001",

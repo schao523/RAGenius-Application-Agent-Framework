@@ -33,13 +33,18 @@ interface GovernanceRow {
   description: string;
   directToolDispatch: boolean;
   displayName: string;
+  interactionRequirement: string;
+  interactionChannel: string;
   modelVisible: boolean;
   protectedLocatorRef: string;
   providerSkillName: string;
   providerSkillReference: string;
+  recoveryClass: string;
+  requiredTransport: string;
   runtimeTargetId: string;
   sourceEnabled: boolean;
   sourceId: string;
+  supportedInteractionTypesJson: string;
   userInvocable: boolean;
 }
 
@@ -119,6 +124,23 @@ function toGovernance(row: GovernanceRow): ProjectedAgentSkillGovernance {
     description: row.description,
     direct_tool_dispatch: row.directToolDispatch,
     display_name: row.displayName,
+    interaction_policy: {
+      interaction_requirement: row.interactionRequirement as ProjectedAgentSkillGovernance[
+        "interaction_policy"
+      ]["interaction_requirement"],
+      interaction_channel: (row.interactionChannel || "none") as Exclude<ProjectedAgentSkillGovernance[
+        "interaction_policy"
+      ]["interaction_channel"], undefined>,
+      supported_interaction_types: JSON.parse(
+        row.supportedInteractionTypesJson
+      ) as ProjectedAgentSkillGovernance["interaction_policy"]["supported_interaction_types"],
+      required_transport: row.requiredTransport as ProjectedAgentSkillGovernance[
+        "interaction_policy"
+      ]["required_transport"],
+      recovery_class: row.recoveryClass as ProjectedAgentSkillGovernance[
+        "interaction_policy"
+      ]["recovery_class"]
+    },
     model_visible: row.modelVisible,
     protected_locator_ref: row.protectedLocatorRef,
     provider_skill_name: row.providerSkillName,
@@ -147,13 +169,20 @@ function itemData(
     description: item.description,
     directToolDispatch: item.direct_tool_dispatch,
     displayName: item.display_name,
+    interactionRequirement: item.interaction_policy.interaction_requirement,
+    interactionChannel: item.interaction_policy.interaction_channel ?? "none",
     modelVisible: item.model_visible,
     protectedLocatorRef: item.protected_locator_ref,
     providerSkillName: item.provider_skill_name,
     providerSkillReference: item.provider_skill_reference,
+    recoveryClass: item.interaction_policy.recovery_class,
+    requiredTransport: item.interaction_policy.required_transport,
     runtimeTargetId: item.runtime_target_id,
     sourceEnabled: item.source_enabled,
     sourceId: item.source_id,
+    supportedInteractionTypesJson: JSON.stringify(
+      item.interaction_policy.supported_interaction_types
+    ),
     userInvocable: item.user_invocable
   };
 }

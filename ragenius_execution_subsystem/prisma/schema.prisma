@@ -30,6 +30,9 @@ model Execution {
   workflowSteps WorkflowStep[]
   toolCalls     ToolCall[]
   logs          ExecutionLog[]
+  agentSession  AgentSession?
+  agentInteractions AgentInteraction[]
+  agentExecutionEvents AgentExecutionEvent[]
 
   @@index([appId], map: "idx_executions_app_id")
   @@index([sessionId], map: "idx_executions_session_id")
@@ -38,6 +41,119 @@ model Execution {
   @@index([status], map: "idx_executions_status")
   @@index([createdAt], map: "idx_executions_created_at")
   @@map("executions")
+}
+
+model AgentSession {
+  id                 String   @id
+  executionId        String   @unique @map("execution_id")
+  appId              String   @map("app_id")
+  sessionId          String   @map("session_id")
+  backend            String
+  transport          String
+  state              String
+  providerSessionRef String   @map("provider_session_ref")
+  providerRunRef     String?  @map("provider_run_ref")
+  providerTurnRef    String?  @map("provider_turn_ref")
+  continuationMode   String   @map("continuation_mode")
+  protocolVersion    String   @map("protocol_version")
+  policyBindingHash  String   @default("") @map("policy_binding_hash")
+  capabilitySnapshot Json     @map("capability_snapshot")
+  lastInteractionSeq Int      @default(0) @map("last_interaction_seq")
+  lastEventSeq       Int      @default(0) @map("last_event_seq")
+  sessionVersion     Int      @default(1) @map("session_version")
+  turnSequence       Int      @default(0) @map("turn_sequence")
+  activeChatTurnId   String?  @map("active_chat_turn_id")
+  idleExpiresAt      DateTime? @map("idle_expires_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  execution    Execution          @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  interactions AgentInteraction[]
+  chatTurns    AgentChatTurn[]
+
+  @@index([appId, sessionId], map: "idx_agent_sessions_app_session")
+  @@index([state], map: "idx_agent_sessions_state")
+  @@map("agent_sessions")
+}
+
+model AgentChatTurn {
+  id                   String    @id
+  agentSessionId       String    @map("agent_session_id")
+  executionId          String    @map("execution_id")
+  appId                String    @map("app_id")
+  sessionId            String    @map("session_id")
+  sequence             Int
+  idempotencyKey       String    @map("idempotency_key")
+  kind                 String
+  state                String
+  acknowledgementState String    @default("unacknowledged") @map("acknowledgement_state")
+  requestSummary       Json      @map("request_summary")
+  providerRunRef       String?   @map("provider_run_ref")
+  normalizedResult     Json?     @map("normalized_result")
+  completedAt          DateTime? @map("completed_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  agentSession AgentSession @relation(fields: [agentSessionId], references: [id], onDelete: Cascade)
+
+  @@unique([agentSessionId, sequence], map: "agent_chat_turns_session_sequence_key")
+  @@unique([agentSessionId, idempotencyKey], map: "agent_chat_turns_session_idempotency_key")
+  @@index([appId, sessionId, executionId], map: "idx_agent_chat_turns_scope")
+  @@index([state], map: "idx_agent_chat_turns_state")
+  @@map("agent_chat_turns")
+}
+
+model AgentInteraction {
+  id                     String    @id
+  executionId            String    @map("execution_id")
+  agentSessionId         String    @map("agent_session_id")
+  appId                  String    @map("app_id")
+  sessionId              String    @map("session_id")
+  sequence               Int
+  type                   String
+  state                  String
+  prompt                 String
+  options                Json
+  allowsFreeText         Boolean   @map("allows_free_text")
+  secretInput            Boolean   @default(false) @map("secret_input")
+  providerCorrelationRef String    @map("provider_correlation_ref")
+  policyBindingHash      String    @map("policy_binding_hash")
+  version                Int       @default(1)
+  expiresAt              DateTime  @map("expires_at")
+  resolvedAt             DateTime? @map("resolved_at")
+  responseSummary        Json?     @map("response_summary")
+  idempotencyKey         String?   @map("idempotency_key")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  execution    Execution    @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  agentSession AgentSession @relation(fields: [agentSessionId], references: [id], onDelete: Cascade)
+
+  @@unique([executionId, sequence], map: "agent_interactions_execution_sequence_key")
+  @@unique([executionId, providerCorrelationRef], map: "agent_interactions_execution_provider_ref_key")
+  @@index([appId, sessionId, executionId], map: "idx_agent_interactions_scope")
+  @@index([state, expiresAt], map: "idx_agent_interactions_state_expiry")
+  @@map("agent_interactions")
+}
+
+model AgentExecutionEvent {
+  id               String   @id @default(uuid())
+  executionId      String   @map("execution_id")
+  appId            String   @map("app_id")
+  sessionId        String   @map("session_id")
+  sequence         Int
+  type             String
+  providerEventRef String?  @map("provider_event_ref")
+  interactionId    String?  @map("interaction_id")
+  payload          Json
+  occurredAt       DateTime @map("occurred_at")
+
+  execution Execution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@unique([executionId, sequence], map: "agent_execution_events_execution_sequence_key")
+  @@unique([executionId, providerEventRef], map: "agent_execution_events_execution_provider_ref_key")
+  @@index([appId, sessionId, executionId], map: "idx_agent_execution_events_scope")
+  @@map("agent_execution_events")
 }
 
 model ExecutionConfirmation {
@@ -219,6 +335,11 @@ model ProjectedAgentSkillGovernance {
   modelVisible           Boolean @map("model_visible")
   userInvocable          Boolean @map("user_invocable")
   directToolDispatch     Boolean @map("direct_tool_dispatch")
+  interactionRequirement String  @default("autonomous") @map("interaction_requirement")
+  interactionChannel String @default("none") @map("interaction_channel")
+  supportedInteractionTypesJson String @default("[]") @map("supported_interaction_types_json")
+  requiredTransport      String  @default("one_shot") @map("required_transport")
+  recoveryClass          String  @default("not_resumable") @map("recovery_class")
 
   projectionRevision AgentSkillProjectionRevision @relation(fields: [projectionRevisionId], references: [id], onDelete: Cascade)
 

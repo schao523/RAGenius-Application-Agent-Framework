@@ -254,6 +254,19 @@ export default function ExecutionInspector({
           {renderKeyValue("Network access", agentResult.network_access)}
         </div>
       </div>
+      {executionLane.latest_interaction_id ? (
+        <div style={styles.inspectorGroup}>
+          <div style={styles.inspectorGroupTitle}>Interactive state</div>
+          <div style={styles.inspectorKeyValue}>
+            {renderKeyValue("Interaction ID", executionLane.latest_interaction_id)}
+            {renderKeyValue("Type", String(executionLane.latest_interaction_type || "").replace(/_/g, " "))}
+            {renderKeyValue("State", executionLane.latest_interaction_state)}
+            {renderKeyValue("Version", executionLane.latest_interaction_version)}
+            {renderKeyValue("Expires", executionLane.latest_interaction_expires_at)}
+            {renderKeyValue("Last event sequence", executionLane.last_event_sequence)}
+          </div>
+        </div>
+      ) : null}
       {isCodexAgent && (
         <>
           <div style={styles.inspectorGroup}>

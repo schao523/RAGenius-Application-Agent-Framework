@@ -10,6 +10,7 @@ import { registerToolRoutes } from "./api/routes/tools.routes.js";
 import { registerArtifactRoutes } from "./api/routes/artifacts.routes.js";
 import { registerAgentSkillRoutes } from "./api/routes/agent-skills.routes.js";
 import { registerArtifactImportRoutes } from "./api/routes/artifact-imports.routes.js";
+import { registerInteractiveAgentRoutes } from "./api/routes/interactive-agent.routes.js";
 import { createPrismaClient } from "./db/prisma.js";
 import type { AgentProvider } from "./core/agents/agent-provider.js";
 import type { AgentProviderExecutionContext } from "./core/agents/agent-provider-context.js";
@@ -76,6 +77,44 @@ import { OpenClawAgentSkillDiscoveryAdapter } from "./core/agent-skills/openclaw
 import { AgentSkillSelectionService } from "./core/agent-skills/agent-skill-selection-service.js";
 import { SessionUploadArtifactImporter } from "./core/artifacts/session-upload-artifact-importer.js";
 import { ArtifactReferenceCoordinator } from "./core/artifacts/artifact-reference-coordinator.js";
+import {
+  InMemoryAgentSessionStore,
+  type AgentSessionStore
+} from "./core/interactive/agent-session-store.js";
+import {
+  PrismaAgentSessionStore,
+  type AgentSessionPrismaClient
+} from "./core/interactive/prisma-agent-session-store.js";
+import {
+  InMemoryAgentInteractionStore,
+  type AgentInteractionStore
+} from "./core/interactive/agent-interaction-store.js";
+import {
+  PrismaAgentInteractionStore,
+  type AgentInteractionPrismaClient
+} from "./core/interactive/prisma-agent-interaction-store.js";
+import {
+  InMemoryAgentEventStore,
+  type AgentEventStore
+} from "./core/interactive/agent-event-store.js";
+import {
+  PrismaAgentEventStore,
+  type AgentEventPrismaClient
+} from "./core/interactive/prisma-agent-event-store.js";
+import {
+  InMemoryAgentChatTurnStore,
+  type AgentChatTurnStore
+} from "./core/interactive/agent-chat-turn-store.js";
+import {
+  PrismaAgentChatTurnStore,
+  type AgentChatTurnPrismaClient
+} from "./core/interactive/prisma-agent-chat-turn-store.js";
+import { InteractiveCapabilityService } from "./core/interactive/interactive-capability-service.js";
+import { InteractiveAgentSessionManager } from "./core/interactive/interactive-agent-session-manager.js";
+import { CodexAppServerAdapter } from "./core/interactive/codex-app-server-adapter.js";
+import { CodexAppServerProcessFactory } from "./core/interactive/codex-app-server-process.js";
+import { OpenClawGatewayAdapter } from "./core/interactive/openclaw-gateway-adapter.js";
+import { OpenClawGatewayClient } from "./core/interactive/openclaw-gateway-client.js";
 
 export interface McpDiscoveryProviderState {
   discoveredToolCount: number;
@@ -91,7 +130,11 @@ export interface McpDiscoveryState {
 }
 
 export interface AppServices {
+  agentChatTurnStore: AgentChatTurnStore;
+  agentEventStore: AgentEventStore;
   agentExecutionQueue: AgentExecutionQueue;
+  agentInteractionStore: AgentInteractionStore;
+  agentSessionStore: AgentSessionStore;
   agentSkillDiscoveryService: AgentSkillDiscoveryService;
   agentSkillSelectionService: AgentSkillSelectionService;
   agentSkillProjectionStore: AgentSkillProjectionStore;
@@ -105,6 +148,7 @@ export interface AppServices {
   executionEngine: ExecutionEngine;
   executionStatusService: ExecutionStatusService;
   executionStore: ExecutionStore;
+  interactiveSessionManager: InteractiveAgentSessionManager;
   mcpDiscovery: McpDiscoveryState;
   permissionEngine: PermissionEngine;
   runtimeConfig: RuntimeConfig;
@@ -139,6 +183,67 @@ export function createAppServices(
     (dependencies.prismaClient
       ? new PrismaExecutionStore(dependencies.prismaClient)
       : new InMemoryExecutionStore());
+  const agentSessionStore =
+    overrides.agentSessionStore ??
+    (dependencies.prismaClient
+      ? new PrismaAgentSessionStore(
+          dependencies.prismaClient as unknown as AgentSessionPrismaClient
+        )
+      : new InMemoryAgentSessionStore());
+  const agentInteractionStore =
+    overrides.agentInteractionStore ??
+    (dependencies.prismaClient
+      ? new PrismaAgentInteractionStore(
+          dependencies.prismaClient as unknown as AgentInteractionPrismaClient
+        )
+      : new InMemoryAgentInteractionStore());
+  const agentChatTurnStore =
+    overrides.agentChatTurnStore ??
+    (dependencies.prismaClient
+      ? new PrismaAgentChatTurnStore(
+          dependencies.prismaClient as unknown as AgentChatTurnPrismaClient
+        )
+      : new InMemoryAgentChatTurnStore(agentSessionStore));
+  const agentEventStore =
+    overrides.agentEventStore ??
+    (dependencies.prismaClient
+      ? new PrismaAgentEventStore(
+          dependencies.prismaClient as unknown as AgentEventPrismaClient
+        )
+      : new InMemoryAgentEventStore());
+  const codexAppServerAdapter = new CodexAppServerAdapter(
+    runtimeConfig.providers.codexAppServer,
+    new CodexAppServerProcessFactory(runtimeConfig.providers.codexAppServer)
+  );
+  const openClawGatewayConfig = runtimeConfig.providers.openClawGateway;
+  const openClawGatewayAdapter = new OpenClawGatewayAdapter(
+    openClawGatewayConfig,
+    {
+      connect: async () => new OpenClawGatewayClient({
+        credential: openClawGatewayConfig.credential ?? "",
+        gatewayUrl: openClawGatewayConfig.gatewayUrl,
+        maxMessageBytes: openClawGatewayConfig.maxMessageBytes,
+        reconnectBaseDelayMs: openClawGatewayConfig.reconnectBaseDelayMs,
+        reconnectMaxAttempts: openClawGatewayConfig.reconnectMaxAttempts,
+        rpcTimeoutMs: openClawGatewayConfig.rpcTimeoutMs,
+        scopes: ["operator.admin", "operator.approvals"]
+      }).connect()
+    }
+  );
+  const interactiveSessionManager =
+    overrides.interactiveSessionManager ??
+    new InteractiveAgentSessionManager({
+      capabilityService: new InteractiveCapabilityService([
+        codexAppServerAdapter,
+        openClawGatewayAdapter
+      ]),
+      chatTurnStore: agentChatTurnStore,
+      eventStore: agentEventStore,
+      executionStore,
+      idleTtlMs: openClawGatewayConfig.chatIdleTtlMs,
+      interactionStore: agentInteractionStore,
+      sessionStore: agentSessionStore
+    });
   const agentSkillProjectionStore =
     overrides.agentSkillProjectionStore ??
     (dependencies.prismaClient
@@ -280,6 +385,15 @@ export function createAppServices(
         (await artifactStore.resolveScopedFile(input)).absolute_path,
       notebookLmProfile: runtimeConfig.providers.notebooklm.profile ?? "default",
       executionStore,
+      interactiveRequirementResolver: ({ selection }) => {
+        const policy = selection?.interaction_policy;
+        if (!policy || policy.required_transport === "one_shot") return null;
+        return {
+          requiredInteractionTypes: [...policy.supported_interaction_types],
+          requiredRecoveryClass: policy.recovery_class
+        };
+      },
+      interactiveSessionManager,
       permissionEngine,
       skillRegistry,
       toolEngine,
@@ -348,7 +462,11 @@ export function createAppServices(
   };
 
   return {
+    agentChatTurnStore,
+    agentEventStore,
     agentExecutionQueue,
+    agentInteractionStore,
+    agentSessionStore,
     agentSkillDiscoveryService,
     agentSkillSelectionService,
     agentSkillProjectionStore,
@@ -362,6 +480,7 @@ export function createAppServices(
     executionEngine,
     executionStatusService,
     executionStore,
+    interactiveSessionManager,
     mcpDiscovery,
     permissionEngine,
     runtimeConfig,
@@ -395,6 +514,7 @@ export function buildApp(
   app.addHook("onReady", async () => {
     await services.sessionUploadArtifactImporter.cleanupExpiredTemporaryFiles();
     await services.agentExecutionQueue.reconcileInterrupted();
+    await services.interactiveSessionManager.reconcileInterrupted();
     services.agentExecutionQueue.start();
     const enabledServers = services.runtimeConfig.mcp.servers.filter(
       (server) => server.enabled
@@ -417,6 +537,7 @@ export function buildApp(
 
   app.addHook("onClose", async () => {
     services.agentExecutionQueue.stop();
+    await services.interactiveSessionManager.shutdown();
   });
 
   app.setErrorHandler((error, _request, reply) => {
@@ -433,6 +554,7 @@ export function buildApp(
   void app.register(registerArtifactRoutes, { prefix: "/v1" });
   void app.register(registerAgentSkillRoutes, { prefix: "/v1" });
   void app.register(registerArtifactImportRoutes, { prefix: "/v1" });
+  void app.register(registerInteractiveAgentRoutes, { prefix: "/v1" });
 
   return app;
 }

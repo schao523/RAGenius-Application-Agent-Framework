@@ -25,6 +25,17 @@ export class MockApiToolProvider implements ApiToolProvider {
 
   constructor(
     config: ProviderRuntimeConfig = {
+      codexAppServer: {
+        enabled: false,
+        command: "codex",
+        initializationTimeoutMs: 15000,
+        interactionTtlMs: 900000,
+        maxDeltaBytes: 16384,
+          maxLineBytes: 1048576,
+          maxStderrBytes: 65536,
+          runRoot: "storage/codex-runs",
+          supportedVersions: ["0.146.0"]
+      },
       codexCli: {
         enabled: false,
         nodeCommand: "node",
@@ -43,6 +54,22 @@ export class MockApiToolProvider implements ApiToolProvider {
         maxStdoutBytes: 262144,
         maxStderrBytes: 65536,
         runRetentionHours: 24
+      },
+      openClawGateway: {
+        agentId: "main",
+        chatLevelEnabled: false,
+        chatIdleTtlMs: 900000,
+        credentialEnv: "OPENCLAW_GATEWAY_APPROVAL_TOKEN",
+        enabled: false,
+        gatewayUrl: "ws://127.0.0.1:18789",
+        interactionTtlMs: 900000,
+        maxMessageBytes: 1048576,
+        reconnectBaseDelayMs: 250,
+        reconnectMaxAttempts: 5,
+        rpcTimeoutMs: 15000,
+        supportedVersions: ["2026.6.8"],
+        workspaceRoot: "/home/openclaw/.openclaw/workspace",
+        wslDistro: "OpenClawGateway"
       },
       notebooklm: {
         enabled: false,

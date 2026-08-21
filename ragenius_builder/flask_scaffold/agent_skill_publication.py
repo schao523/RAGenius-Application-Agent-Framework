@@ -4,6 +4,7 @@ import json
 from typing import Any, Dict
 
 from agent_skill_projection import build_agent_skill_projection
+from storage import normalize_agent_skill_interaction_policy
 
 
 class PublicationRevisionStale(ValueError):
@@ -41,6 +42,9 @@ def _redact_projection(projection: Dict[str, Any]) -> Dict[str, Any]:
             "current_fingerprint": str(item["current_fingerprint"]),
             "approved_fingerprint": item.get("approved_fingerprint"),
             "approval_state": str(item["approval_state"]),
+            "interaction_policy": normalize_agent_skill_interaction_policy(
+                item.get("interaction_policy")
+            ),
         }
         bindings.append(
             {

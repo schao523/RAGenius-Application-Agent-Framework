@@ -1,4 +1,7 @@
 import { PrismaClient } from "@prisma/client";
+import type { AgentEventPrismaClient } from "../core/interactive/prisma-agent-event-store.js";
+import type { AgentInteractionPrismaClient } from "../core/interactive/prisma-agent-interaction-store.js";
+import type { AgentSessionPrismaClient } from "../core/interactive/prisma-agent-session-store.js";
 
 export interface ExecutionRow {
   id: string;
@@ -101,11 +104,17 @@ export interface ConfirmationStorePrismaClient extends PrismaClientLike {
 let prismaClient: PrismaClient | undefined;
 
 export function createPrismaClient(): ExecutionStorePrismaClient &
-  ConfirmationStorePrismaClient {
+  ConfirmationStorePrismaClient &
+  AgentSessionPrismaClient &
+  AgentInteractionPrismaClient &
+  AgentEventPrismaClient {
   if (!prismaClient) {
     prismaClient = new PrismaClient();
   }
 
   return prismaClient as unknown as ExecutionStorePrismaClient &
-    ConfirmationStorePrismaClient;
+    ConfirmationStorePrismaClient &
+    AgentSessionPrismaClient &
+    AgentInteractionPrismaClient &
+    AgentEventPrismaClient;
 }

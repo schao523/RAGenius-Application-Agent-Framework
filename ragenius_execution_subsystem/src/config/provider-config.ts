@@ -85,6 +85,18 @@ export interface CodexCliProviderConfig {
   sandboxMode?: "read-only" | "workspace-write";
 }
 
+export interface CodexAppServerProviderConfig {
+  enabled: boolean;
+  command: string;
+  initializationTimeoutMs: number;
+  interactionTtlMs: number;
+  maxDeltaBytes: number;
+  maxLineBytes: number;
+  maxStderrBytes: number;
+  runRoot: string;
+  supportedVersions: string[];
+}
+
 export interface OpenClawCliRuntimeConfig {
   enabled: boolean;
   wslDistro: string;
@@ -97,15 +109,35 @@ export interface OpenClawCliRuntimeConfig {
   runRetentionHours: number;
 }
 
+export interface OpenClawGatewayProviderConfig {
+  agentId: string;
+  chatLevelEnabled: boolean;
+  chatIdleTtlMs: number;
+  credential?: string;
+  credentialEnv: string;
+  enabled: boolean;
+  gatewayUrl: string;
+  interactionTtlMs: number;
+  maxMessageBytes: number;
+  reconnectBaseDelayMs: number;
+  reconnectMaxAttempts: number;
+  rpcTimeoutMs: number;
+  supportedVersions: string[];
+  workspaceRoot: string;
+  wslDistro: string;
+}
+
 export interface ResearchPaperProviderConfig {
   arxiv: ArxivProviderConfig;
   semanticScholar: SemanticScholarProviderConfig;
 }
 
 export interface ProviderRuntimeConfig {
+  codexAppServer: CodexAppServerProviderConfig;
   codexCli: CodexCliProviderConfig;
   notebooklm: NotebookLmProviderConfig;
   openClaw: OpenClawCliRuntimeConfig;
+  openClawGateway: OpenClawGatewayProviderConfig;
   researchPaper: ResearchPaperProviderConfig;
   openAi: OpenAiProviderConfig;
 }
@@ -199,8 +231,22 @@ export function buildAdapterRuntimeConfig(
   };
 }
 
-export function buildProviderRuntimeConfig(env: AppEnv): ProviderRuntimeConfig {
+export function buildProviderRuntimeConfig(
+  env: AppEnv,
+  source: NodeJS.ProcessEnv = process.env
+): ProviderRuntimeConfig {
   return {
+    codexAppServer: {
+      enabled: env.CODEX_APP_SERVER_INTERACTIVE_ENABLED,
+      command: env.CODEX_APP_SERVER_COMMAND,
+      initializationTimeoutMs: env.CODEX_APP_SERVER_INITIALIZATION_TIMEOUT_MS,
+      interactionTtlMs: env.CODEX_APP_SERVER_INTERACTION_TTL_MS,
+      maxDeltaBytes: env.CODEX_APP_SERVER_MAX_DELTA_BYTES,
+      maxLineBytes: env.CODEX_APP_SERVER_MAX_LINE_BYTES,
+      maxStderrBytes: env.CODEX_APP_SERVER_MAX_STDERR_BYTES,
+      runRoot: env.CODEX_RUN_ROOT,
+      supportedVersions: splitCsv(env.CODEX_APP_SERVER_SUPPORTED_VERSIONS)
+    },
     codexCli: {
       enabled: env.CODEX_CLI_ENABLED,
       nodeCommand: env.CODEX_CLI_NODE_COMMAND,
@@ -223,6 +269,25 @@ export function buildProviderRuntimeConfig(env: AppEnv): ProviderRuntimeConfig {
       maxStdoutBytes: env.OPENCLAW_MAX_STDOUT_BYTES,
       maxStderrBytes: env.OPENCLAW_MAX_STDERR_BYTES,
       runRetentionHours: env.OPENCLAW_RUN_RETENTION_HOURS
+    },
+    openClawGateway: {
+      agentId: env.OPENCLAW_AGENT_ID,
+      chatLevelEnabled: env.OPENCLAW_GATEWAY_CHAT_LEVEL_ENABLED,
+      chatIdleTtlMs: env.OPENCLAW_GATEWAY_CHAT_IDLE_TTL_MS,
+      credentialEnv: env.OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV,
+      ...(source[env.OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV]?.trim()
+        ? { credential: source[env.OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV]!.trim() }
+        : {}),
+      enabled: env.OPENCLAW_GATEWAY_INTERACTIVE_ENABLED,
+      gatewayUrl: env.OPENCLAW_GATEWAY_URL,
+      interactionTtlMs: env.OPENCLAW_GATEWAY_INTERACTION_TTL_MS,
+      maxMessageBytes: env.OPENCLAW_GATEWAY_MAX_MESSAGE_BYTES,
+      reconnectBaseDelayMs: env.OPENCLAW_GATEWAY_RECONNECT_BASE_DELAY_MS,
+      reconnectMaxAttempts: env.OPENCLAW_GATEWAY_RECONNECT_MAX_ATTEMPTS,
+      rpcTimeoutMs: env.OPENCLAW_GATEWAY_RPC_TIMEOUT_MS,
+      supportedVersions: splitCsv(env.OPENCLAW_GATEWAY_SUPPORTED_VERSIONS),
+      workspaceRoot: env.OPENCLAW_WORKSPACE_ROOT,
+      wslDistro: env.OPENCLAW_WSL_DISTRO
     },
     notebooklm: {
       enabled: env.NOTEBOOKLM_ENABLED,

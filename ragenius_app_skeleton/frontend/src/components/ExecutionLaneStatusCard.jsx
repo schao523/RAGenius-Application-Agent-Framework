@@ -1,4 +1,6 @@
 import React from "react";
+import AgentInteractionCard from "./AgentInteractionCard";
+import AgentChatFollowUpPanel from "./AgentChatFollowUpPanel";
 
 function resolveExecutionStatus(executionLaneState) {
   const latestResult = executionLaneState?.latest_execution_result;
@@ -7,6 +9,7 @@ function resolveExecutionStatus(executionLaneState) {
     latestStatus?.status
     || latestResult?.status
     || latestResult?.state
+    || executionLaneState?.latest_execution_status
     || ""
   );
 }
@@ -82,6 +85,17 @@ export default function ExecutionLaneStatusCard({
   onRetryExecution,
   onOpenComposer,
   onOpenInspector,
+  interaction,
+  onRespondInteraction,
+  onCancelInteraction,
+  onRefreshInteraction,
+  interactionSubmitting,
+  interactionError,
+  chatSession,
+  onAgentChatFollowUp,
+  onEndAgentChatSession,
+  agentChatSubmitting,
+  agentChatError,
   styles,
 }) {
   const contentLane = sessionLaneState?.content_lane || {};
@@ -208,6 +222,24 @@ export default function ExecutionLaneStatusCard({
           Approve a revision, then use the execution composer or run `@exec tool ...` / `@exec skill ...` to start the execution lane.
         </div>
       )}
+      <AgentInteractionCard
+        interaction={interaction}
+        onRespond={onRespondInteraction}
+        onCancel={onCancelInteraction}
+        onRefresh={onRefreshInteraction}
+        submitting={interactionSubmitting}
+        error={interactionError}
+        styles={styles}
+      />
+      <AgentChatFollowUpPanel
+        chatSession={chatSession}
+        error={agentChatError}
+        onCancel={onCancelInteraction}
+        onEnd={onEndAgentChatSession}
+        onFollowUp={onAgentChatFollowUp}
+        submitting={agentChatSubmitting}
+        styles={styles}
+      />
     </section>
   );
 }

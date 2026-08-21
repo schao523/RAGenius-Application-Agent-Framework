@@ -253,7 +253,7 @@ git commit -m "feat: add interactive Codex app-server adapter"
 - Consumes: `InteractiveAgentAdapter`, existing OpenClaw workspace staging, and process-independent WSL path rules.
 - Produces: `OpenClawGatewayAdapter` and capability profile.
 
-- [ ] **Step 1: Write Gateway RPC and event fixture tests**
+- [x] **Step 1: Write Gateway RPC and event fixture tests**
 
 Cover connection authentication, request ids, canonical session key, run ids,
 sequenced run events, unsequenced approval events, gap detection, `agent.wait`,
@@ -261,15 +261,15 @@ approval requested/resolved, and token redaction. Deduplicate approval events by
 `{approval_id, event_kind}` while retaining normal sequence-gap handling for
 events that carry a Gateway sequence.
 
-- [ ] **Step 2: Implement authenticated Gateway client**
+- [x] **Step 2: Implement authenticated Gateway client**
 
 Use a subsystem-owned WebSocket connection, explicit request timeouts, bounded messages, reconnect backoff, sequence tracking, and event routing by canonical session key/run id.
 
-- [ ] **Step 3: Implement session start and continuation**
+- [x] **Step 3: Implement session start and continuation**
 
 Generate a key from `{app_id, session_id, agent_session_id}` without execution id. Stage and verify each provider run independently even when runs share a session.
 
-- [ ] **Step 4: Implement approval preflight and credential isolation**
+- [x] **Step 4: Implement approval preflight and credential isolation**
 
 Advertise approval only when preflight confirms OpenClaw 2026.6.8, effective
 `security: allowlist`, `ask: on-miss`, `askFallback: deny`, and both
@@ -278,7 +278,7 @@ redact it from diagnostics, and return a precise capability failure for every
 missing prerequisite. Record that `operator.admin` is a provider visibility
 constraint, not permission for RAGenius to expose arbitrary admin operations.
 
-- [ ] **Step 5: Implement approval resolution and cancellation mapping**
+- [x] **Step 5: Implement approval resolution and cancellation mapping**
 
 Map only allow-once/deny. Atomically claim the interaction before calling
 `exec.approval.resolve`; duplicate RAGenius idempotency keys return the stored
@@ -286,20 +286,27 @@ outcome without another provider call. Treat provider `{ok:true}` for a
 duplicate resolution as provider idempotence, not a second transition. Use
 exact run-scoped `chat.abort` for cancellation and confirm with `agent.wait`.
 
-- [ ] **Step 6: Implement expiry and reconciliation**
+- [x] **Step 6: Implement expiry and reconciliation**
 
 Use `sessions.list` and `agent.wait` after reconnect. Treat event gaps as
 reconciliation triggers, not replay. Expire an approval when the provider
 returns `decision: null` or its authoritative expiry passes; do not require an
 `exec.approval.resolved` event. Do not advertise clarification or selection.
 
-- [ ] **Step 7: Add disabled-by-default configuration**
+- [x] **Step 7: Add disabled-by-default configuration**
 
 Add `OPENCLAW_GATEWAY_INTERACTIVE_ENABLED`, WSL distro, URL, external approval
 credential env reference, supported version range, RPC timeout, and interaction
 TTL. Never log the credential value. Preflight must not mutate OpenClaw policy.
 
-- [ ] **Step 8: Run tests and live smoke**
+- [x] **Step 8: Run tests and live smoke**
+
+Automated fixtures and the opt-in live smoke harness are complete. The
+installed Gateway was confirmed at `2026.6.8`. On 2026-08-13, the live
+continuation/cancellation smoke and the administrator-gated approval matrix
+passed using a server-side credential with `operator.admin` and
+`operator.approvals`. The credential value was not logged or persisted in
+the repository.
 
 Run: `npm test -- tests/interactive/openclaw-gateway-adapter.test.ts tests/agents/openclaw-workspace.test.ts`
 
@@ -310,8 +317,12 @@ Approval smoke runs only under the administrator-enabled temporary
 deny without execution, one-second expiry returning `decision: null`, duplicate
 RAGenius response suppression, one resolved event despite provider-idempotent
 duplicate resolve calls, wrong-session filtering, and credential-scope failure.
+The test also exposed and fixed OpenClaw's approval-event normalization from
+the submitted RAGenius key to `agent:<agent_id>:<RAGenius key>`. After the
+matrix, policy restoration to `full/on-miss/deny` was verified and a harmless
+one-shot exec returned `RAGENIUS_NORMAL_PROFILE_OK`.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```text
 git add ragenius_execution_subsystem/src ragenius_execution_subsystem/tests/interactive
@@ -333,25 +344,34 @@ git commit -m "feat: add interactive OpenClaw Gateway adapter"
 **Interfaces:**
 - Produces: synchronized `AgentSkillInteractionPolicy` included in reviewed fingerprints and projections.
 
-- [ ] **Step 1: Write failing publication and projection tests**
+- [x] **Step 1: Write failing publication and projection tests**
 
 Test defaults to autonomous/one-shot/not-resumable, administrator-reviewed changes, fingerprint invalidation, projection round trip, and rejection of unsupported values.
 
-- [ ] **Step 2: Implement Builder fields and validation**
+- [x] **Step 2: Implement Builder fields and validation**
 
 Add interaction requirement, supported types, required transport, and recovery class to the existing governance resource rather than creating another catalog.
 
-- [ ] **Step 3: Extend execution projection validation and preflight**
+- [x] **Step 3: Extend execution projection validation and preflight**
 
 Published requirements may raise capability/risk and must fail closed when the active provider cannot satisfy them.
 
-- [ ] **Step 4: Run Builder and execution tests**
+- [x] **Step 4: Run Builder and execution tests**
 
 Run Builder: `python -m pytest flask_scaffold/tests/test_agent_skill_publication.py flask_scaffold/tests/test_agent_skill_projection.py`
 
 Run execution: `npm test -- tests/agent-skills/agent-skill-projection-store.test.ts tests/agent-skills/agent-skill-selection-service.test.ts`
 
-- [ ] **Step 5: Commit**
+Implemented the reviewed policy on immutable Builder approval records and in
+the synchronized projection. Legacy approvals normalize to
+`autonomous`/`one_shot`/`not_resumable`; inconsistent transport, interaction
+type, and recovery combinations fail validation. Execution preflight rejects
+published recovery requirements that the active adapter cannot satisfy. The
+Builder focused governance/API suite passed 49 tests, the execution focused
+suite passed 34 tests, Prisma validation passed, and the full execution suite
+and lint passed on 2026-08-13.
+
+- [x] **Step 5: Commit**
 
 ```text
 git add ragenius_builder/flask_scaffold ragenius_execution_subsystem/src ragenius_execution_subsystem/tests/agent-skills
@@ -372,23 +392,23 @@ git commit -m "feat: govern agent interaction capabilities"
 - Consumes: Task 3 service APIs.
 - Produces: user/session-scoped app APIs and rehydratable interaction lane state.
 
-- [ ] **Step 1: Write failing client and ownership tests**
+- [x] **Step 1: Write failing client and ownership tests**
 
 Cover list interactions/events, respond, cancel, bearer service auth, session-owner rejection, cross-app rejection, duplicate response, and provider handle redaction.
 
-- [ ] **Step 2: Add execution-subsystem client methods**
+- [x] **Step 2: Add execution-subsystem client methods**
 
 Implement bounded timeouts for list/respond/cancel. Forward complete scope and service credential; never forward user-supplied provider identifiers.
 
-- [ ] **Step 3: Add scoped app routes**
+- [x] **Step 3: Add scoped app routes**
 
 Use `/sessions/{session_id}/executions/{execution_id}/interactions`, response, events, and cancel routes. Verify authenticated ownership before calling the execution subsystem.
 
-- [ ] **Step 4: Extend execution lane state**
+- [x] **Step 4: Extend execution lane state**
 
 Persist latest normalized interaction id/type/state/version/expiry and last event sequence. Do not persist raw prompts containing provider secrets or use lane state as authorization.
 
-- [ ] **Step 5: Run backend tests and commit**
+- [x] **Step 5: Run backend tests and commit**
 
 Run: `python -m pytest backend/tests/test_execution_subsystem_client.py backend/tests/test_chat_exec_routing.py backend/tests/test_session_execution_state_rehydration.py`
 
@@ -396,6 +416,14 @@ Run: `python -m pytest backend/tests/test_execution_subsystem_client.py backend/
 git add ragenius_app_skeleton/backend
 git commit -m "feat: proxy interactive agent sessions"
 ```
+
+The app now proxies interaction listing, normalized event pagination,
+idempotent responses, and cancellation only after validating the app/user
+session owner. Downstream conflict and availability status is preserved,
+provider-handle fields are rejected or redacted, and the durable lane stores
+only the latest normalized interaction metadata plus the event cursor. The
+focused Task 7 suite passed 69 tests and the full app backend suite passed 123
+tests with one skip on 2026-08-13.
 
 ### Task 8: Execution Composer And Interaction UX
 
@@ -413,34 +441,44 @@ git commit -m "feat: proxy interactive agent sessions"
 - Consumes: app backend interaction/event APIs.
 - Produces: generic interaction rendering and response/cancellation actions.
 
-- [ ] **Step 1: Write failing interaction-card tests**
+- [x] **Step 1: Write failing interaction-card tests**
 
 Test allow-once/deny/cancel wording, clarification text limits, selection options, auth handoff with no secret input, expiry, submitting state, duplicate click suppression, stale refresh, and inaccessible provider details.
 
-- [ ] **Step 2: Implement the generic card**
+- [x] **Step 2: Implement the generic card**
 
 Render from normalized `type`, `options`, `allows_free_text`, state, and expiry. Approval cards explain exact one-time scope. Authentication cards provide launch instructions and only Completed/Cancel actions.
 
-- [ ] **Step 3: Integrate polling and event cursor**
+- [x] **Step 3: Integrate polling and event cursor**
 
 While status is queued, running, or waiting, poll scoped status/interactions/events. Use event `after_sequence`; stop on terminal status. Refresh after stale-version conflict instead of retrying the response automatically.
 
-- [ ] **Step 4: Add cancellation UX**
+- [x] **Step 4: Add cancellation UX**
 
 Show Cancel only for active executions. Disable it after submission and display authoritative cancellation/cleanup result.
 
-- [ ] **Step 5: Run frontend tests and build**
+- [x] **Step 5: Run frontend tests and build**
 
 Run: `npm test -- AgentInteractionCard.test.jsx ExecutionLaneStatusCard.test.jsx ExecutionInspector.test.jsx App.test.jsx`
 
 Run: `npm run build`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```text
 git add ragenius_app_skeleton/frontend/src
 git commit -m "feat: add interactive agent UX"
 ```
+
+The execution lane now renders one provider-neutral interaction card for
+approval, clarification, selection, authentication handoff, and user-action
+requests. Responses carry the server-issued version plus a client idempotency
+key; stale conflicts trigger refresh rather than automatic replay. Scoped
+interaction and event polling continues while the execution is active, and
+cancellation uses the authoritative backend result. Authentication never
+renders a credential field. The focused suite passed 73 tests, the complete
+frontend suite passed 151 tests, and the production build passed on
+2026-08-13.
 
 ### Task 9: Recovery, Security, And End-To-End Acceptance
 
@@ -457,15 +495,15 @@ git commit -m "feat: add interactive agent UX"
 **Interfaces:**
 - Verifies all preceding tasks as one deployable feature behind disabled flags.
 
-- [ ] **Step 1: Add recovery and attack-path tests**
+- [x] **Step 1: Add recovery and attack-path tests**
 
 Cover restart with running/waiting records, provider event spoofing, prompt-injection attempts to authorize actions, wrong interaction version, cross-session access, replayed decisions, oversized events, secret-shaped authentication payloads, and cancellation races.
 
-- [ ] **Step 2: Add end-to-end mocked flows**
+- [x] **Step 2: Add end-to-end mocked flows**
 
 Test Codex approval then clarification then completion, OpenClaw approval then cancellation, app refresh while waiting, and explicit failure when a selected skill requires unsupported OpenClaw clarification.
 
-- [ ] **Step 3: Update startup and operational documentation**
+- [x] **Step 3: Update startup and operational documentation**
 
 Document disabled-by-default flags, provider preflight diagnostics, the
 OpenClaw external scope constraint, interaction TTL, fallback behavior, and
@@ -475,7 +513,7 @@ safe rollback. Define two explicit operational profiles: normal one-shot uses
 are administrator actions outside RAGenius and require a Gateway restart plus
 effective-policy verification.
 
-- [ ] **Step 4: Run subsystem suites**
+- [x] **Step 4: Run subsystem suites**
 
 Execution subsystem:
 
@@ -493,7 +531,7 @@ App frontend: `npm test && npm run build`
 
 Builder: `python -m pytest flask_scaffold/tests`
 
-- [ ] **Step 5: Run live acceptance in increasing risk order**
+- [x] **Step 5: Run live acceptance in increasing risk order**
 
 1. Codex read-only two-turn continuation.
 2. Codex dynamic selection.
@@ -507,7 +545,15 @@ Builder: `python -m pytest flask_scaffold/tests`
 8. Restore the normal one-shot profile after acceptance until the interactive
    adapter is enabled for users, then verify current one-shot smoke behavior.
 
-- [ ] **Step 6: Record evidence and commit**
+Task 9 acceptance combined fresh Codex initialization/read-only evidence with
+the earlier same-branch Codex interaction and OpenClaw approval/cancellation
+matrix. The fresh OpenClaw completion/cancellation rerun passed after the local
+Gateway token was read with approved WSL access and held only in the test
+process environment. An earlier token-mismatch result was sandbox error text,
+not credential drift; no policy or credential was changed. See
+`ragenius_execution_subsystem/docs/interactive-agent-acceptance-results-2026-08-13.md`.
+
+- [x] **Step 6: Record evidence and commit**
 
 Store redacted execution ids, versions, status transitions, interaction ids, verification results, and limitations in a dated acceptance document.
 
@@ -534,7 +580,7 @@ Gateway adapter.
 - Produces: feasibility evidence only. It must not enable or advertise
   OpenClaw `clarification` or `selection` capabilities.
 
-- [ ] **Step 1: Implement disposable typed request persistence**
+- [x] **Step 1: Implement disposable typed request persistence**
 
 Register a reviewed local `ragenius_request_input` test tool and plugin-owned
 Gateway methods. Persist bounded typed requests with trusted session/run/tool
@@ -548,13 +594,13 @@ API. Prove that replaying the same idempotency key returns the original outcome
 without another continuation run, while a second logical resolution fails
 closed.
 
-- [ ] **Step 3: Verify cancellation and expiry**
+- [x] **Step 3: Verify cancellation and expiry**
 
 Cancel the exact pending interaction and let another request expire. Confirm no
 late response can continue either request, no answer is inferred, and pending
 state is removed or terminally marked.
 
-- [ ] **Step 4: Verify Gateway/plugin restart behavior**
+- [x] **Step 4: Verify Gateway/plugin restart behavior**
 
 Restart while a request is pending. Reconcile durable state if independently
 supported; otherwise prove explicit fail-closed interruption. Never synthesize
@@ -574,12 +620,23 @@ redacted evidence, delete disposable sessions and plugin state, uninstall the
 test plugin, restart the Gateway, and verify the normal execution policy and
 Gateway health.
 
-- [ ] **Step 7: Apply the capability gate**
+- [x] **Step 7: Apply the capability gate**
 
 If every required gate passes, write a separate production plugin contract,
 design, and implementation plan for approval. If any required gate fails,
 retain OpenClaw clarification and selection as unsupported. Do not combine the
 experimental plugin with the base interactive implementation in either case.
+
+Task 10 result (2026-08-13): the disposable typed selection path passed live,
+and bounded persistence, expiry, cancellation, restart interruption, scoped
+isolation, and security checks passed locally. Same-key replay after a recorded
+continuation passed, but the provider-call/durable-commit crash window remains
+unproven, and overlapping resolutions are not serialized before provider
+dispatch. Cross-runtime locking, several live reconnect/concurrency/repeated-
+yield cases, and unsupported-version checks also remain incomplete. The full
+production gate did not pass. OpenClaw clarification and selection remain
+unsupported; no production plugin capability was added. Disposable sessions,
+state, plugin installation, and configuration changes were cleaned up.
 
 ## Rollout Gate
 

@@ -311,6 +311,107 @@ class ExecutionSubsystemClient:
             query={"app_id": app_id, "session_id": session_id},
         )
 
+    def get_agent_interactions(
+        self,
+        execution_id: str,
+        *,
+        app_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        return self._json_request(
+            "GET",
+            f"/executions/{execution_id}/interactions",
+            query={"app_id": app_id, "session_id": session_id},
+        )
+
+    def get_agent_chat_session(self, execution_id: str, *, app_id: str, session_id: str) -> dict[str, Any]:
+        return self._json_request(
+            "GET", f"/executions/{execution_id}/chat-session",
+            query={"app_id": app_id, "session_id": session_id},
+        )
+
+    def submit_agent_follow_up(
+        self, execution_id: str, *, app_id: str, session_id: str,
+        expected_session_version: int, idempotency_key: str, kind: str,
+        text: str | None = None,
+    ) -> dict[str, Any]:
+        body = {
+            "expected_session_version": expected_session_version,
+            "idempotency_key": idempotency_key,
+            "kind": kind,
+        }
+        if text:
+            body["text"] = text
+        return self._json_request(
+            "POST", f"/executions/{execution_id}/follow-ups", body,
+            query={"app_id": app_id, "session_id": session_id},
+        )
+
+    def end_agent_chat_session(
+        self, execution_id: str, *, app_id: str, session_id: str,
+        expected_session_version: int,
+    ) -> dict[str, Any]:
+        return self._json_request(
+            "POST", f"/executions/{execution_id}/end-chat-session",
+            {"expected_session_version": expected_session_version},
+            query={"app_id": app_id, "session_id": session_id},
+        )
+
+    def get_agent_events(
+        self,
+        execution_id: str,
+        *,
+        app_id: str,
+        session_id: str,
+        after_sequence: int = 0,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        return self._json_request(
+            "GET",
+            f"/executions/{execution_id}/events",
+            query={
+                "app_id": app_id,
+                "session_id": session_id,
+                "after_sequence": after_sequence,
+                "limit": limit,
+            },
+        )
+
+    def respond_agent_interaction(
+        self,
+        execution_id: str,
+        interaction_id: str,
+        *,
+        app_id: str,
+        session_id: str,
+        expected_version: int,
+        idempotency_key: str,
+        response: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._json_request(
+            "POST",
+            f"/executions/{execution_id}/interactions/{interaction_id}/responses",
+            {
+                "expected_version": expected_version,
+                "idempotency_key": idempotency_key,
+                "response": response,
+            },
+            query={"app_id": app_id, "session_id": session_id},
+        )
+
+    def cancel_agent_execution(
+        self,
+        execution_id: str,
+        *,
+        app_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        return self._json_request(
+            "POST",
+            f"/executions/{execution_id}/cancel",
+            query={"app_id": app_id, "session_id": session_id},
+        )
+
     def get_tool_inventory(self) -> dict[str, Any]:
         return self._json_request("GET", "/tools/inventory")
 

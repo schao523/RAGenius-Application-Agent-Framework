@@ -83,12 +83,16 @@ export class AgentExecutionQueue {
   }
 
   async reconcileInterrupted(): Promise<number> {
-    const interrupted = await this.store.listByStatuses(["queued", "running"]);
+    const interrupted = await this.store.listByStatuses([
+      "queued",
+      "running",
+      "waiting_for_interaction"
+    ]);
     let reconciled = 0;
     for (const record of interrupted) {
       const transitioned = await this.store.transition({
         scope: this.scope(record),
-        from: ["queued", "running"],
+        from: ["queued", "running", "waiting_for_interaction"],
         result: interruptedResult(record.execution_id)
       });
       if (transitioned) {

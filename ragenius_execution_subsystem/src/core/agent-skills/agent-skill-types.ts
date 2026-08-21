@@ -83,6 +83,26 @@ export interface AgentSkillDiscoveryAdapter {
   sourceOptions(): AgentSkillSourceOption[];
 }
 
+export type AgentSkillInteractionType =
+  | "approval"
+  | "clarification"
+  | "selection"
+  | "authentication_handoff"
+  | "user_action_required";
+
+export type AgentSkillRecoveryClass =
+  | "not_resumable"
+  | "session_resumable"
+  | "turn_resumable";
+
+export interface AgentSkillInteractionPolicy {
+  interaction_channel?: "none" | "typed" | "chat_level";
+  interaction_requirement: "autonomous" | "conditional" | "required";
+  supported_interaction_types: AgentSkillInteractionType[];
+  required_transport: "one_shot" | "interactive";
+  recovery_class: AgentSkillRecoveryClass;
+}
+
 export interface ResolvedAgentSkillSelection {
   activation_method:
     | "codex_explicit_reference"
@@ -92,6 +112,7 @@ export interface ResolvedAgentSkillSelection {
   approved_fingerprint: string;
   backend: AgentSkillBackend;
   display_name: string;
+  interaction_policy?: AgentSkillInteractionPolicy;
   observed_fingerprint: string;
   protected_locator_ref: string;
   provider_skill_name: string;
@@ -115,6 +136,7 @@ export interface ProjectedAgentSkillGovernance {
   direct_tool_dispatch: boolean;
   display_name: string;
   model_visible: boolean;
+  interaction_policy: AgentSkillInteractionPolicy;
   protected_locator_ref: string;
   provider_skill_name: string;
   provider_skill_reference: string;

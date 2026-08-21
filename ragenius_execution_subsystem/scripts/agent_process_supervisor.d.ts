@@ -25,3 +25,8 @@ export type SupervisedProcessSpec = {
 export function runSupervisedProcess(
   spec: SupervisedProcessSpec
 ): Promise<SupervisedProcessResult>;
+
+export function terminateSupervisedProcessTree(
+  pid: number | null,
+  graceMs?: number
+): Promise<void>;

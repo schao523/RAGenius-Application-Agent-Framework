@@ -490,4 +490,34 @@ describe("ExecutionInspector", () => {
     expect(screen.getByText(/^agent reported$/i)).toBeInTheDocument();
     expect(screen.queryByText(/^process observed$/i)).not.toBeInTheDocument();
   });
+
+  it("shows normalized interactive lane metadata without provider handles or prompts", () => {
+    render(
+      <ExecutionInspector
+        open
+        tab="summary"
+        onChangeTab={vi.fn()}
+        onClose={vi.fn()}
+        message={{ retrievalSummary: {} }}
+        sessionLaneState={{
+          execution_lane: {
+            latest_execution_id: "execution_1",
+            latest_interaction_id: "interaction_1",
+            latest_interaction_type: "authentication_handoff",
+            latest_interaction_state: "pending",
+            latest_interaction_version: 3,
+            latest_interaction_expires_at: "2026-08-13T12:00:00Z",
+            last_event_sequence: 11,
+          },
+        }}
+        styles={styles}
+      />,
+    );
+
+    expect(screen.getByText(/interactive state/i)).toBeInTheDocument();
+    expect(screen.getByText(/interaction_1/i)).toBeInTheDocument();
+    expect(screen.getByText(/authentication handoff/i)).toBeInTheDocument();
+    expect(screen.getByText(/last event sequence/i)).toBeInTheDocument();
+    expect(screen.queryByText(/provider_session|session_key|secret prompt/i)).toBeNull();
+  });
 });

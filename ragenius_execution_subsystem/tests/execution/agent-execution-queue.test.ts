@@ -76,17 +76,37 @@ test("bounded concurrency and duplicate enqueue invoke each execution once", asy
   assert.equal(calls.get("execution_002"), 1);
 });
 
-test("restart reconciliation fails queued and running records", async () => {
+test("restart reconciliation fails queued, running, and waiting records", async () => {
   const store = new InMemoryExecutionStore();
   const queue = new AgentExecutionQueue(store, async () => {
     throw new Error("not invoked");
   });
   await queue.enqueue({ executionId: "execution_001", request });
+  await store.save({
+    executionId: "execution_waiting",
+    request,
+    result: {
+      execution_id: "execution_waiting",
+      status: "waiting_for_interaction",
+      result_type: "json",
+      result: {},
+      files: [],
+      errors: [],
+      logs_summary: "Waiting."
+    }
+  });
   const count = await queue.reconcileInterrupted();
   const record = await store.get({ appId: "app_001", sessionId: "session_001", executionId: "execution_001" });
-  assert.equal(count, 1);
+  const waitingRecord = await store.get({
+    appId: "app_001",
+    sessionId: "session_001",
+    executionId: "execution_waiting"
+  });
+  assert.equal(count, 2);
   assert.equal(record?.status, "failed");
   assert.equal(record?.errors[0]?.code, "AGENT_EXECUTION_INTERRUPTED");
+  assert.equal(waitingRecord?.status, "failed");
+  assert.equal(waitingRecord?.errors[0]?.code, "AGENT_EXECUTION_INTERRUPTED");
 });
 
 test("queued execution revalidates synchronized revocation before provider invocation", async () => {

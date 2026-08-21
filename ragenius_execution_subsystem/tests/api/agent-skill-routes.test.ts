@@ -24,6 +24,12 @@ function item(
     description: "A selectable skill",
     direct_tool_dispatch: false,
     display_name: "Selectable Skill",
+    interaction_policy: {
+      interaction_requirement: "autonomous",
+      supported_interaction_types: [],
+      required_transport: "one_shot",
+      recovery_class: "not_resumable"
+    },
     model_visible: true,
     protected_locator_ref: "secret-source-ref",
     provider_skill_name: "selectable-skill",
@@ -225,6 +231,7 @@ describe("agent skill projection routes", () => {
     app = buildApp({ agentSkillProjectionStore: store }, runtimeConfig());
     const legacyItem = item() as Partial<ProjectedAgentSkillGovernance>;
     delete legacyItem.provider_skill_reference;
+    delete legacyItem.interaction_policy;
     const payload = projection(
       [legacyItem as ProjectedAgentSkillGovernance],
       43
@@ -241,6 +248,11 @@ describe("agent skill projection routes", () => {
     assert.equal(
       (await store.getForApp("app-1", "agent-skill-1"))?.provider_skill_reference,
       "selectable-skill"
+    );
+    assert.equal(
+      (await store.getForApp("app-1", "agent-skill-1"))
+        ?.interaction_policy.required_transport,
+      "one_shot"
     );
   });
 
@@ -285,6 +297,15 @@ describe("agent skill projection routes", () => {
     );
     const invalidDigest = projection([]);
     invalidDigest.digest = `sha256:${"0".repeat(64)}`;
+    const invalidPolicy = projection([item()]) as Record<string, unknown>;
+    const invalidItems = invalidPolicy.items as Array<Record<string, unknown>>;
+    invalidItems[0]!.interaction_policy = {
+      interaction_requirement: "required",
+      supported_interaction_types: ["approval"],
+      required_transport: "one_shot",
+      recovery_class: "not_resumable"
+    };
+    invalidPolicy.digest = computeAgentSkillProjectionDigest(invalidPolicy);
 
     const digestResponse = await app.inject({
       method: "PUT",
@@ -298,6 +319,12 @@ describe("agent skill projection routes", () => {
       headers: { authorization: "Bearer builder-token" },
       payload: projection([item(), item({ agent_skill_id: "agent-skill-2" })])
     });
+    const policyResponse = await app.inject({
+      method: "PUT",
+      url: "/v1/admin/agent-skills/governance-projection",
+      headers: { authorization: "Bearer builder-token" },
+      payload: invalidPolicy
+    });
 
     assert.equal(digestResponse.statusCode, 400);
     assert.equal(
@@ -306,5 +333,6 @@ describe("agent skill projection routes", () => {
     );
     assert.equal(limitResponse.statusCode, 413);
     assert.equal(limitResponse.json().error.code, "AGENT_SKILL_PROJECTION_TOO_LARGE");
+    assert.equal(policyResponse.statusCode, 400);
   });
 });

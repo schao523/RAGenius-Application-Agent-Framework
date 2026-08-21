@@ -476,7 +476,15 @@ class AgentSkillAdminRouteTests(unittest.TestCase):
         )
         approved = self.client.post(
             f"/api/agent-skills/{skill['id']}/approve",
-            json={"expected_fingerprint": skill["content_fingerprint"]},
+            json={
+                "expected_fingerprint": skill["content_fingerprint"],
+                "interaction_policy": {
+                    "interaction_requirement": "conditional",
+                    "supported_interaction_types": ["approval"],
+                    "required_transport": "interactive",
+                    "recovery_class": "session_resumable",
+                },
+            },
         )
         bound = self.client.post(
             f"/api/apps/{self.app_record['id']}/agent-skill-bindings",
@@ -491,11 +499,37 @@ class AgentSkillAdminRouteTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409)
         self.assertEqual(stale.get_json()["error"]["code"], "AGENT_SKILL_FINGERPRINT_CHANGED")
         self.assertEqual(approved.status_code, 200)
+        self.assertEqual(
+            approved.get_json()["interaction_policy"]["required_transport"],
+            "interactive",
+        )
         self.assertEqual(bound.status_code, 201)
         self.assertIn("Pending synchronization", pending_page.get_data(as_text=True))
         self.assertEqual(synchronized.status_code, 200)
         self.assertEqual(synchronized.get_json()["sync_status"], "synchronized")
         self.assertEqual(len(self.execution_client.projection_payloads), 1)
+
+    def test_approval_rejects_inconsistent_interaction_policy(self) -> None:
+        _, skill = self._create_and_discover()
+
+        response = self.client.post(
+            f"/api/agent-skills/{skill['id']}/approve",
+            json={
+                "expected_fingerprint": skill["content_fingerprint"],
+                "interaction_policy": {
+                    "interaction_requirement": "required",
+                    "supported_interaction_types": ["approval"],
+                    "required_transport": "one_shot",
+                    "recovery_class": "not_resumable",
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.get_json()["error"]["code"],
+            "AGENT_SKILL_INTERACTION_POLICY_INVALID",
+        )
 
     def test_agent_skill_mutations_do_not_accept_get(self) -> None:
         _, skill = self._create_and_discover()
