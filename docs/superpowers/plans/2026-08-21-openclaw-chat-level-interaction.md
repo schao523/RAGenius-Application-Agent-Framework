@@ -13,7 +13,8 @@
 **Completion status (2026-08-21):** Tasks 1 through 7 are implemented and
 committed. Task 8 automated and live CL-01 through CL-28 acceptance passed for
 OpenClaw `2026.6.8` and the approved TaskFlow fingerprint. Final local review
-completed; the evidence commit and branch integration remain.
+completed, the evidence was committed, and the feature branch was integrated
+into `main` by merge commit `d5c969d` after the merged verification matrix passed.
 
 ## Global Constraints
 
@@ -163,11 +164,11 @@ completed; the evidence commit and branch integration remain.
 - Modify: `docs/openclaw-chat-level-interaction-contract-addendum.md` only if evidence changes a normative claim.
 - Modify: `docs/superpowers/specs/2026-08-21-openclaw-chat-level-interaction-design.md` only if implementation evidence requires it.
 
-- [ ] Run execution-subsystem unit/integration tests, Prisma validation/generation, Builder tests, app backend tests, frontend tests, and frontend build.
-- [ ] Start all three subsystems from the feature worktree with chat-level interaction explicitly enabled only for testing.
-- [ ] Re-review TaskFlow as `interaction_channel: chat_level`, publish, synchronize, and confirm the execution projection matches its non-empty approved fingerprint.
-- [ ] Execute CL-01 through CL-28, including selection, clarification, review/revision/continue, concurrent submission, idempotent replay, cancellation, restart, disconnect, timeout ambiguity, expiry, wrong scope, and policy escalation.
-- [ ] Record exact versions, execution ids, expected/observed results, and sanitized evidence; leave failures visible rather than weakening gates.
-- [ ] Keep the feature disabled if any production gate fails.
-- [ ] Run `git diff --check`, inspect `git status`, and use superpowers:requesting-code-review plus superpowers:verification-before-completion.
-- [ ] Commit final evidence, then use superpowers:finishing-a-development-branch to integrate the branch into `main` only after all gates pass.
+- [x] Run execution-subsystem unit/integration tests, Prisma validation/generation, Builder tests, app backend tests, frontend tests, and frontend build.
+- [x] Start all three subsystems from the feature worktree with chat-level interaction explicitly enabled only for testing.
+- [x] Re-review TaskFlow as `interaction_channel: chat_level`, publish, synchronize, and confirm the execution projection matches its non-empty approved fingerprint.
+- [x] Execute CL-01 through CL-28, including selection, clarification, review/revision/continue, concurrent submission, idempotent replay, cancellation, restart, disconnect, timeout ambiguity, expiry, wrong scope, and policy escalation.
+- [x] Record exact versions, execution ids, expected/observed results, and sanitized evidence; leave failures visible rather than weakening gates.
+- [x] Keep the feature disabled if any production gate fails.
+- [x] Run `git diff --check`, inspect `git status`, and use superpowers:requesting-code-review plus superpowers:verification-before-completion.
+- [x] Commit final evidence, then use superpowers:finishing-a-development-branch to integrate the branch into `main` only after all gates pass.
