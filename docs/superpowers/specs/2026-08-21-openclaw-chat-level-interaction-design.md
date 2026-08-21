@@ -4,8 +4,8 @@ Date: 2026-08-21
 
 ## Status
 
-Proposed design for review. No production capability is authorized by this
-document.
+Approved for staged implementation planning on 2026-08-21. No production
+capability is authorized until the production acceptance gate passes.
 
 ## Goal
 
@@ -115,6 +115,15 @@ Conditional updates serialize turns. A second concurrent submission receives
 ambiguous provider acknowledgement, reconciliation must inspect the canonical
 session before allowing another turn.
 
+The serialization primitive is durable: use a database conditional update or
+lease keyed by Agent session and expected session version. OpenClaw accepted
+two concurrent distinct idempotency keys in live testing, so adapter-local or
+process-local maps cannot enforce this invariant.
+
+Persist provider acknowledgement separately from terminal outcome. Provider
+same-key replay returned the same run id in live testing, but it does not
+replace RAGenius idempotency and recovery records.
+
 ### Policy Handling
 
 The initial execution's policy decision and immutable operation plan define the
@@ -157,11 +166,26 @@ idle session may remain continuable after reconnection or service restart only
 when its protected session reference and compatible provider version are
 durably restored. An active run with irreconcilable status fails closed.
 
+`agent.wait` normal completion is normalized from `status: ok` with
+`stopReason: stop`. A provider `timeout` after restart is not terminal success;
+it leaves the turn reconciliation-required or `delivery_unknown` and prevents
+new dispatch until resolved.
+
+Provider session deletion is not a lifecycle authority. Live testing showed a
+deleted key could be accepted again and could retain apparent context.
+RAGenius therefore rejects follow-up before provider contact whenever its own
+durable session is missing, closed, expired, or version-incompatible.
+
 ### Compatibility
 
 The existing one-shot OpenClaw provider remains unchanged. The chat-level
 feature has a separate disabled-by-default flag and exact OpenClaw version
 allowlist. Structured OpenClaw interaction work remains deferred.
+
+Bundled-skill discovery uses the stable approved root
+`/home/openclaw/.openclaw/tools`; version-specific Node package paths are not
+configuration contracts. Existing exact-package containment, symlink, file,
+depth, and byte limits remain unchanged.
 
 ## Error Model
 
@@ -183,7 +207,10 @@ action cannot duplicate a provider run.
 
 ## Acceptance
 
-Implementation starts only after the companion TaskFlow matrix passes or
-identifies an explicit fail-closed behavior for every required recovery case.
-The production test plan must include unit, route, persistence, app, Builder,
-security, and opt-in live Gateway coverage.
+Provider feasibility authorizes implementation only after exact-version live
+proof of same-session turns, continuation, cancellation, disconnect, restart,
+and timeout behavior. The 2026-08-21 matrix passed that gate.
+
+Production rollout requires all CL-01 through CL-28 to pass against the final
+implementation. The production test plan includes unit, route, persistence,
+app, Builder, security, and opt-in live Gateway coverage.

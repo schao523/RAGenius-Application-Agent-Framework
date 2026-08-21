@@ -47,7 +47,7 @@ raw provider handle, or reasoning trace was retained.
 | ID | Result | Observation |
 | --- | --- | --- |
 | CL-01 | Pass | Gateway health, version, protocol, authentication, and required scopes passed without configuration mutation. |
-| CL-02 | Fail closed | The live Builder catalog contains TaskFlow but marks it `invalid` with an empty fingerprint. The configured root still targets `.../tools/node/...`, while the installed runtime uses `.../tools/node-v22.22.0/...`. The real discovery adapter returned `available` and a valid fingerprint when tested with the approved broad root `/home/openclaw/.openclaw/tools`. Approval, binding, and publication were therefore not tested. |
+| CL-02 | Pass after configuration correction | Initial discovery failed closed because the configured root targeted `.../tools/node/...`. After changing it to `/home/openclaw/.openclaw/tools`, live Builder state reported TaskFlow `available`, approved at the matching fingerprint, enabled for one app, and included in a synchronized published projection. Chat-level interaction metadata must still be republished after its schema is implemented. |
 | CL-03 | Pass | The initial provider message used explicit `/taskflow`; provider inventory reported TaskFlow command-visible and the response established the requested TaskFlow marker and selection step. |
 | CL-04 | Pass | The initial run returned one run id, completed with `status: ok`, and produced a bounded three-title response. |
 | CL-05 | Pass | Sequential requests used distinct run ids, one canonical session, one provider session, and retained marker `TF-8d7cf3e1`. |
@@ -84,6 +84,12 @@ only in documentation. The stale version-specific `node` locator caused every
 bundled TaskFlow package inspection to fail even though provider inventory was
 healthy. Use `/home/openclaw/.openclaw/tools` as the trusted package root and
 keep package containment and fingerprint limits unchanged.
+
+Follow-up verification confirmed TaskFlow `available` with fingerprint
+`sha256:v1:8bf1f1a1a60b10d4a6ba53deb9a0adc2244319dc1c07ebd653e9a788a3a3c5bc`.
+The approved fingerprint matched, its app binding was enabled, and Builder
+projection revision `1787303510208` was synchronized and published without an
+error.
 
 ### Concurrency is a RAGenius responsibility
 
@@ -129,8 +135,8 @@ outcome so restart recovery never relies solely on provider behavior.
 
 ## Next Gate
 
-Do not write or execute the production implementation plan as though the matrix
-fully passed. The plan must explicitly close CL-02, CL-12 through CL-14, CL-19,
-CL-20, and CL-22 through CL-27, while preserving the observed provider behavior
-for CL-03 through CL-11 and CL-15 through CL-18.
-
+The provider-feasibility gate passed and implementation planning is authorized.
+The plan must explicitly close CL-12 through CL-14, CL-19, CL-20, and CL-22
+through CL-27, while preserving the observed provider behavior for CL-03
+through CL-11 and CL-15 through CL-18. CL-02 must be rerun after Builder gains
+and republishes explicit `interaction_channel: chat_level` metadata.

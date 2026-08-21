@@ -4,8 +4,8 @@ Date: 2026-08-21
 
 ## Status
 
-Proposed normative cross-subsystem addendum. This document requires review
-before implementation.
+Approved for implementation planning on 2026-08-21. This document does not
+authorize production rollout until the production acceptance gate passes.
 
 This addendum extends `docs/interactive-agent-execution-contract.md` for an
 OpenClaw capability that preserves one provider session across multiple
@@ -110,11 +110,16 @@ Rules:
   summarize completed work. It is not authoritative cancellation.
 - Only `ready_for_follow_up` accepts a follow-up.
 - One session permits at most one active provider run and one claimed
-  follow-up submission.
+  follow-up submission. RAGenius enforces this with a durable conditional
+  claim or lease before provider contact; OpenClaw does not serialize distinct
+  idempotency keys for the same submitted session.
 - The adapter sends the turn to the exact canonical session key with a unique
   provider idempotency key and records the returned run id before reporting
   acceptance.
 - Duplicate RAGenius idempotency keys replay the stored normalized result.
+- Provider idempotency is supplementary evidence only. RAGenius persists its
+  claimed key, provider acknowledgement state, run reference, and normalized
+  outcome before relying on replay behavior after restart.
 - If provider acceptance cannot be reconciled, RAGenius reports
   `delivery_unknown`; it never reports completion or automatically submits a
   replacement turn.
@@ -159,6 +164,12 @@ must label that trust model and must not claim exactly-once enforcement.
 - Idle expiry closes a session only when no run is active.
 - Wrong scope, stale session version, duplicate concurrent turn, closed
   session, and invalid provider session fail closed.
+- RAGenius session state is authoritative. Provider session deletion, absence,
+  recreation, or apparent context retention never reopens a locally closed,
+  expired, missing, or version-incompatible session.
+- A restart or disconnect that yields only provider `timeout` is not success.
+  The turn remains `delivery_unknown` or reconciliation-required until an
+  authoritative terminal state is established or the session is closed.
 
 ## Builder Governance
 
@@ -173,6 +184,11 @@ fingerprint, OpenClaw runtime target, and supported provider version are
 administrator-approved. Existing app binding and trusted projection rules
 remain mandatory.
 
+OpenClaw bundled-skill discovery must trust an administrator-configured stable
+tools parent such as `/home/openclaw/.openclaw/tools`, not a Node-version-
+specific package path. Containment and package fingerprint limits still apply
+to every exact discovered skill directory.
+
 ## App UX
 
 The app displays completed Agent output followed by a chat follow-up composer
@@ -183,9 +199,19 @@ The app must say that follow-ups start a new Agent run in the same OpenClaw
 session. It must not say that OpenClaw is paused, that an option is formally
 bound, or that a response is exactly-once.
 
-## Rollout Gate
+## Acceptance Gates
 
-OpenClaw chat-level interaction remains disabled until the live TaskFlow matrix
-passes for the exact OpenClaw and TaskFlow versions. Typed OpenClaw
-clarification and selection remain unsupported. The disposable Task 10 plugin
-remains experimental evidence and is not a production dependency.
+The implementation-feasibility gate requires live proof of exact-version
+Gateway preflight, explicit TaskFlow activation, same-session multi-run
+continuity, ordinary selection and clarification turns, review/revision/
+continue, graceful and authoritative cancellation, disconnect/restart
+reconciliation, and bounded timeout behavior. The 2026-08-21 provider matrix
+passed this gate and authorizes implementation.
+
+The production-rollout gate requires all CL-01 through CL-28 to pass against
+the implemented RAGenius APIs, persistence, Builder governance, app UX, and
+recovery behavior. OpenClaw chat-level interaction remains disabled by default
+until that gate passes for the exact approved OpenClaw and TaskFlow versions.
+Typed OpenClaw clarification and selection remain unsupported. The disposable
+Task 10 plugin remains experimental evidence and is not a production
+dependency.
