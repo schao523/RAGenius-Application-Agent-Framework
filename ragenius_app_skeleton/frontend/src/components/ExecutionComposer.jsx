@@ -438,7 +438,7 @@ export default function ExecutionComposer({
   const [agentArtifactIds, setAgentArtifactIds] = useState(
     normalizedInitialCommandKind === "agent" ? initialAgentArtifactIds : [],
   );
-  const [persistAgentOutput, setPersistAgentOutput] = useState(true);
+  const [persistAgentOutput, setPersistAgentOutput] = useState(false);
   const [preparedArtifactsByUploadId, setPreparedArtifactsByUploadId] = useState({});
   const [uploadBusy, setUploadBusy] = useState(false);
   const [error, setError] = useState("");

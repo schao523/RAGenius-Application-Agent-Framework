@@ -507,12 +507,6 @@ describe("ExecutionComposer", () => {
           agent_skill_id: "agent-notebooklm",
           approved_fingerprint: "sha256:v1:notebooklm",
         },
-        expectedOutputs: [
-          expect.objectContaining({
-            output_id: "agent_output",
-            persist_as_artifact: true,
-          }),
-        ],
       },
     });
   });
@@ -533,6 +527,38 @@ describe("ExecutionComposer", () => {
     expect(screen.getByLabelText("Agent Backend")).toHaveValue("codex_cli");
     expect(screen.getByLabelText("Agent Skill")).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "NotebookLM" })).not.toBeInTheDocument();
+  });
+
+  it("keeps reusable Agent output persistence opt-in", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <ExecutionComposer
+        toolInventory={[]}
+        skillInventory={[]}
+        onSubmit={onSubmit}
+        onClose={vi.fn()}
+        styles={styles}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    expect(screen.getByLabelText("Save agent output as reusable artifact")).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText("Agent Request"), {
+      target: { value: "Reply exactly: CODEX_POST_MERGE_OK." },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    });
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      commandKind: "agent",
+      targetId: "codex_cli",
+      executionMode: "sync",
+      args: {
+        request: "Reply exactly: CODEX_POST_MERGE_OK.",
+      },
+    });
   });
 
   it("filters approved Agent Skills by backend and resets selection", async () => {
@@ -595,12 +621,6 @@ describe("ExecutionComposer", () => {
           agent_skill_id: "agent-openclaw",
           approved_fingerprint: "sha256:v1:openclaw",
         },
-        expectedOutputs: [
-          expect.objectContaining({
-            output_id: "agent_output",
-            persist_as_artifact: true,
-          }),
-        ],
       },
     });
   });
@@ -697,6 +717,7 @@ describe("ExecutionComposer", () => {
 
     expect(screen.getByText(/agent artifacts/i)).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText(/reviewed chat\.md/i));
+    fireEvent.click(screen.getByLabelText("Save agent output as reusable artifact"));
     fireEvent.change(screen.getByLabelText("Agent Request"), {
       target: { value: "Use the selected artifact to produce a concise study note." },
     });

@@ -993,6 +993,7 @@ describe("App artifact fetch propagation", () => {
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
     fireEvent.change(screen.getByLabelText("Agent Backend"), { target: { value: "openclaw_cli" } });
     fireEvent.click(screen.getAllByLabelText(/reviewed chat\.md/i)[0]);
+    fireEvent.click(screen.getByLabelText("Save agent output as reusable artifact"));
     fireEvent.change(screen.getByLabelText("Agent Request"), {
       target: { value: "Use the selected artifact to write a study note." },
     });
