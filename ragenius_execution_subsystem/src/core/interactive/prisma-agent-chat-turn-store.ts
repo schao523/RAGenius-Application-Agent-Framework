@@ -37,6 +37,7 @@ interface AgentChatTurnTransaction {
     create(args: { data: Record<string, unknown> }): Promise<AgentChatTurnRow>;
     findFirst(args: { where: Record<string, unknown> }): Promise<AgentChatTurnRow | null>;
     findMany(args: { orderBy: Record<string, unknown>; where: Record<string, unknown> }): Promise<AgentChatTurnRow[]>;
+    updateMany(args: { data: Record<string, unknown>; where: Record<string, unknown> }): Promise<{ count: number }>;
   };
   agentSession: {
     findFirst(args: { where: Record<string, unknown> }): Promise<AgentSessionClaimRow | null>;
@@ -114,6 +115,19 @@ export class PrismaAgentChatTurnStore implements AgentChatTurnStore {
       orderBy: { sequence: "asc" }
     });
     return rows.map(toRecord);
+  }
+
+  async update(
+    scope: ExecutionScope,
+    chatTurnId: string,
+    input: Partial<Pick<AgentChatTurnRecord,
+      "acknowledgementState" | "completedAt" | "normalizedResult" | "providerRunRef" | "state">>
+  ): Promise<AgentChatTurnRecord | null> {
+    const where = { ...scopeWhere(scope), id: chatTurnId };
+    const result = await this.prisma.agentChatTurn.updateMany({ where, data: input });
+    if (result.count !== 1) return null;
+    const row = await this.prisma.agentChatTurn.findFirst({ where });
+    return row ? toRecord(row) : null;
   }
 }
 

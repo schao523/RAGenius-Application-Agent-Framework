@@ -237,6 +237,7 @@ export function createAppServices(
         codexAppServerAdapter,
         openClawGatewayAdapter
       ]),
+      chatTurnStore: agentChatTurnStore,
       eventStore: agentEventStore,
       executionStore,
       interactionStore: agentInteractionStore,

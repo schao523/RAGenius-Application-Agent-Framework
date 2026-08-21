@@ -47,13 +47,16 @@ export interface ExecutionScope {
 }
 
 export interface AgentInteractionCapabilities {
+  chatLevelInteraction?: boolean;
   cancellation: boolean;
   eventReplay: "none" | "bounded" | "documented";
+  exactlyOnceFollowUp?: boolean;
   interactionTypes: AgentInteractionType[];
   protocolTransport: boolean;
   reconnectReconciliation: boolean;
   sameSessionContinuation: boolean;
   sameTurnResume: boolean;
+  structuredWaitSignal?: boolean;
 }
 
 export interface AgentSessionRecord extends ExecutionScope {

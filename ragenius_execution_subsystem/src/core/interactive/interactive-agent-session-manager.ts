@@ -9,6 +9,7 @@ import type { AgentSkillRecoveryClass } from "../agent-skills/agent-skill-types.
 import type { ExecutionStore } from "../execution/execution-store.js";
 
 import type { AgentEventStore } from "./agent-event-store.js";
+import type { AgentChatTurnStore } from "./agent-chat-turn-store.js";
 import type { AgentInteractionStore } from "./agent-interaction-store.js";
 import type { AgentSessionStore } from "./agent-session-store.js";
 import type {
@@ -55,6 +56,17 @@ export type RespondToInteractionResult = {
   outcome: "resolved" | "replay" | "conflict" | "expired" | "not_found";
 };
 
+export interface AgentChatFollowUpInput extends ExecutionScope {
+  expectedSessionVersion: number;
+  idempotencyKey: string;
+  kind: "reply" | "continue" | "revise" | "graceful_cancel";
+  text?: string;
+}
+
+export type AgentChatFollowUpResult = {
+  outcome: "accepted" | "replay" | "active" | "stale" | "not_ready" | "not_found" | "delivery_unknown";
+};
+
 interface ActiveProviderSession {
   adapter: InteractiveAgentAdapter;
   expiryTimers: Map<string, NodeJS.Timeout>;
@@ -79,6 +91,7 @@ const PROVIDER_EVENT_TYPES = new Set<InteractiveProviderEvent["type"]>([
 
 export class InteractiveAgentSessionManager {
   private readonly capabilityService: InteractiveCapabilityService;
+  private readonly chatTurnStore: AgentChatTurnStore | undefined;
   private readonly eventStore: AgentEventStore;
   private readonly executionStore: ExecutionStore;
   private readonly interactionStore: AgentInteractionStore;
@@ -87,16 +100,72 @@ export class InteractiveAgentSessionManager {
 
   constructor(options: {
     capabilityService: InteractiveCapabilityService;
+    chatTurnStore?: AgentChatTurnStore;
     eventStore: AgentEventStore;
     executionStore: ExecutionStore;
     interactionStore: AgentInteractionStore;
     sessionStore: AgentSessionStore;
   }) {
     this.capabilityService = options.capabilityService;
+    this.chatTurnStore = options.chatTurnStore;
     this.eventStore = options.eventStore;
     this.executionStore = options.executionStore;
     this.interactionStore = options.interactionStore;
     this.sessionStore = options.sessionStore;
+  }
+
+  async followUp(input: AgentChatFollowUpInput): Promise<AgentChatFollowUpResult> {
+    if (!this.chatTurnStore) return { outcome: "not_ready" };
+    const session = await this.sessionStore.getByExecution(input);
+    const active = this.active.get(input.executionId);
+    if (!session || !active) return { outcome: "not_found" };
+    if (!session.capabilitySnapshot.chatLevelInteraction || !active.adapter.sendFollowUp) {
+      return { outcome: "not_ready" };
+    }
+    const message = followUpMessage(input);
+    const claim = await this.chatTurnStore.claim({
+      ...input,
+      agentSessionId: session.agentSessionId,
+      now: new Date(),
+      requestSummary: { kind: input.kind, ...(input.text ? { text: input.text } : {}) }
+    });
+    if (claim.outcome !== "claimed" || !claim.record) {
+      return {
+        outcome: claim.outcome === "claimed" ? "not_ready" : claim.outcome
+      };
+    }
+    try {
+      active.handle = await active.adapter.sendFollowUp(active.handle, {
+        idempotencyKey: input.idempotencyKey,
+        kind: input.kind,
+        message,
+        sequence: claim.record.sequence
+      });
+      await this.chatTurnStore.update(input, claim.record.chatTurnId, {
+        acknowledgementState: "acknowledged",
+        providerRunRef: active.handle.providerRunRef,
+        state: "running"
+      });
+      await this.sessionStore.update(
+        { ...input, agentSessionId: session.agentSessionId },
+        {
+          providerRunRef: active.handle.providerRunRef,
+          providerTurnRef: active.handle.providerTurnRef
+        }
+      );
+      await this.executionStore.transition({
+        scope: input,
+        from: ["ready_for_follow_up"],
+        result: stateResult(input.executionId, "running", "Agent follow-up started.")
+      });
+      return { outcome: "accepted" };
+    } catch {
+      await this.chatTurnStore.update(input, claim.record.chatTurnId, {
+        acknowledgementState: "ambiguous",
+        state: "delivery_unknown"
+      });
+      return { outcome: "delivery_unknown" };
+    }
   }
 
   async start(input: StartInteractiveAgentInput): Promise<StartInteractiveAgentResult> {
@@ -268,6 +337,29 @@ export class InteractiveAgentSessionManager {
     return { cancelled: false };
   }
 
+  async endChatSession(
+    scope: ExecutionScope,
+    expectedSessionVersion: number
+  ): Promise<{ ended: boolean; outcome: "ended" | "not_found" | "stale" | "not_ready" }> {
+    const session = await this.sessionStore.getByExecution(scope);
+    if (!session) return { ended: false, outcome: "not_found" };
+    if (session.sessionVersion !== expectedSessionVersion) return { ended: false, outcome: "stale" };
+    if (session.state !== "ready_for_follow_up" || session.activeChatTurnId) {
+      return { ended: false, outcome: "not_ready" };
+    }
+    await this.sessionStore.update(
+      { ...scope, agentSessionId: session.agentSessionId },
+      { sessionVersion: session.sessionVersion + 1, state: "completed" }
+    );
+    await this.executionStore.transition({
+      scope,
+      from: ["ready_for_follow_up"],
+      result: stateResult(scope.executionId, "completed", "Agent chat session ended.")
+    });
+    this.clearActive(scope.executionId);
+    return { ended: true, outcome: "ended" };
+  }
+
   async shutdown(): Promise<void> {
     const activeSessions = [...this.active.values()];
     await Promise.all(activeSessions.map(async (active) => {
@@ -408,6 +500,31 @@ export class InteractiveAgentSessionManager {
     });
     if (event.type === "run_completed") {
       const status = terminalStatus(event.payload.status);
+      const session = await this.requireSession(scope);
+      if (status === "completed" && session.capabilitySnapshot.chatLevelInteraction) {
+        const activeTurnId = session.activeChatTurnId;
+        if (activeTurnId && this.chatTurnStore) {
+          await this.chatTurnStore.update(scope, activeTurnId, {
+            acknowledgementState: "acknowledged",
+            completedAt: new Date(),
+            normalizedResult: { ...event.payload },
+            state: "completed"
+          });
+        }
+        await this.sessionStore.update(
+          { ...scope, agentSessionId: session.agentSessionId },
+          { activeChatTurnId: null, state: "ready_for_follow_up" }
+        );
+        await this.executionStore.transition({
+          scope,
+          from: ["running", "waiting_for_interaction"],
+          result: {
+            ...stateResult(scope.executionId, "ready_for_follow_up", summary(event.payload)),
+            result: { ...event.payload }
+          }
+        });
+        return;
+      }
       await this.updateSessionState(scope, status === "failed" ? "failed" : "completed");
       await this.executionStore.transition({
         scope,
@@ -521,6 +638,14 @@ export class InteractiveAgentSessionManager {
       { state }
     );
   }
+}
+
+function followUpMessage(input: AgentChatFollowUpInput): string {
+  if (input.kind === "continue") return input.text?.trim() || "Continue with the current task.";
+  if (input.kind === "graceful_cancel") return "Stop remaining work and summarize what has been completed.";
+  const text = input.text?.trim();
+  if (!text) throw new Error(`${input.kind} requires text.`);
+  return text;
 }
 
 function serializedBytes(value: Record<string, unknown>): number {

@@ -64,6 +64,7 @@ class FakeGatewayConnection implements OpenClawGatewayConnection {
     scopes: ["operator.admin", "operator.approvals"]
   };
   execPolicy = { security: "allowlist", ask: "on-miss", askFallback: "deny" };
+  agentRequestCount = 0;
   waitResponse: Record<string, unknown> = {
     runId: "run-001", status: "error", error: "aborted", stopReason: "aborted"
   };
@@ -77,7 +78,8 @@ class FakeGatewayConnection implements OpenClawGatewayConnection {
       return { config: { tools: { exec: this.execPolicy } } };
     }
     if (method === "agent") {
-      return { runId: "run-001", sessionId: "provider-session-001", status: "accepted" };
+      this.agentRequestCount += 1;
+      return { runId: `run-${String(this.agentRequestCount).padStart(3, "0")}`, sessionId: "provider-session-001", status: "accepted" };
     }
     if (method === "exec.approval.resolve") return { ok: true };
     if (method === "chat.abort") return { ok: true };
@@ -260,6 +262,34 @@ class FakeSocket {
 }
 
 describe("OpenClaw Gateway adapter", () => {
+  it("starts a new run for a follow-up in the exact same canonical session", async () => {
+    const factory = new FakeGatewayFactory();
+    const adapter = new OpenClawGatewayAdapter(config({ chatLevelEnabled: true }), factory, runDependencies());
+    const handle = await adapter.start({
+      ...preflightInput(), capabilities: { ...capabilities(), chatLevelInteraction: true },
+      protocolVersion: "2026.6.8", emit: async () => {}
+    });
+    await factory.connection.emit({
+      type: "event", event: "agent", seq: 1,
+      payload: { runId: "run-001", seq: 1, stream: "lifecycle", data: { phase: "end" } }
+    });
+
+    const next = await adapter.sendFollowUp(handle, {
+      idempotencyKey: "follow-up-001", kind: "reply",
+      message: "Use the second title.", sequence: 1
+    });
+
+    assert.equal(next.providerRunRef, "run-002");
+    assert.equal(next.providerSessionRef, handle.providerSessionRef);
+    assert.deepEqual(factory.connection.requests.at(-1), {
+      method: "agent",
+      params: {
+        agentId: "main", deliver: false, idempotencyKey: "follow-up-001",
+        message: "Use the second title.", sessionKey: handle.providerSessionRef
+      }
+    });
+  });
+
   it("fails precise preflight checks for version, scopes, and policy", async () => {
     const factory = new FakeGatewayFactory();
     const disabled = new OpenClawGatewayAdapter(config({ enabled: false }), factory);
@@ -411,6 +441,7 @@ function config(overrides: Record<string, unknown> = {}) {
     agentId: "main",
     credential: "gateway-secret",
     credentialEnv: "OPENCLAW_GATEWAY_APPROVAL_TOKEN",
+    chatLevelEnabled: false,
     enabled: true,
     gatewayUrl: "ws://127.0.0.1:18789",
     interactionTtlMs: 60000,

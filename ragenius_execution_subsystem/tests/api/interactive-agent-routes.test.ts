@@ -9,6 +9,7 @@ import type { AgentPolicyDecision } from "../../src/core/agents/agent-policy.js"
 import type { AgentProviderExecutionContext } from "../../src/core/agents/agent-provider-context.js";
 import { InMemoryExecutionStore } from "../../src/core/execution/execution-store.js";
 import { InMemoryAgentEventStore } from "../../src/core/interactive/agent-event-store.js";
+import { InMemoryAgentChatTurnStore } from "../../src/core/interactive/agent-chat-turn-store.js";
 import { InMemoryAgentInteractionStore } from "../../src/core/interactive/agent-interaction-store.js";
 import type {
   ClaimedInteraction,
@@ -59,10 +60,17 @@ const providerContext = {
 class RouteTestAdapter implements InteractiveAgentAdapter {
   readonly backend = "codex_cli" as const;
   respondCount = 0;
+  followUpCount = 0;
+  chatLevel = false;
   private emit?: (event: InteractiveProviderEvent) => Promise<void>;
 
   async preflight() {
-    return { available: true, capabilities, protocolVersion: "test-v1", transport: "codex_app_server" as const };
+    return {
+      available: true,
+      capabilities: { ...capabilities, chatLevelInteraction: this.chatLevel },
+      protocolVersion: "test-v1",
+      transport: "codex_app_server" as const
+    };
   }
   async start(input: InteractiveStartInput): Promise<ProviderSessionHandle> {
     this.emit = input.emit;
@@ -73,6 +81,10 @@ class RouteTestAdapter implements InteractiveAgentAdapter {
   }
   async cancel() { return { cancelled: true }; }
   async reconcile() { return { state: "running" as const }; }
+  async sendFollowUp(handle: ProviderSessionHandle) {
+    this.followUpCount += 1;
+    return { ...handle, providerRunRef: "run-2", providerTurnRef: "run-2" };
+  }
   async requestApproval(): Promise<void> {
     assert.ok(this.emit);
     await this.emit({
@@ -90,16 +102,23 @@ class RouteTestAdapter implements InteractiveAgentAdapter {
       }
     });
   }
+  async complete(): Promise<void> {
+    assert.ok(this.emit);
+    await this.emit({ type: "run_completed", payload: { status: "completed", summary: "Ready." } });
+  }
 }
 
-async function createHarness(scopes = ["execution"]) {
+async function createHarness(scopes = ["execution"], chatLevel = false) {
   const executionStore = new InMemoryExecutionStore();
   const agentSessionStore = new InMemoryAgentSessionStore();
   const agentInteractionStore = new InMemoryAgentInteractionStore();
   const agentEventStore = new InMemoryAgentEventStore();
+  const agentChatTurnStore = new InMemoryAgentChatTurnStore(agentSessionStore);
   const adapter = new RouteTestAdapter();
+  adapter.chatLevel = chatLevel;
   const interactiveSessionManager = new InteractiveAgentSessionManager({
     capabilityService: new InteractiveCapabilityService([adapter]),
+    chatTurnStore: agentChatTurnStore,
     eventStore: agentEventStore,
     executionStore,
     interactionStore: agentInteractionStore,
@@ -116,6 +135,7 @@ async function createHarness(scopes = ["execution"]) {
     agentSessionStore,
     agentInteractionStore,
     agentEventStore,
+    agentChatTurnStore,
     interactiveSessionManager
   } as unknown as Partial<AppServices>, runtimeConfig);
   apps.push(app);
@@ -148,6 +168,30 @@ function approvalResponse(extraResponse: Record<string, unknown> = {}) {
 }
 
 describe("interactive Agent routes", () => {
+  it("returns a scoped chat session and accepts a versioned follow-up", async () => {
+    const harness = await createHarness(["execution"], true);
+    await harness.adapter.complete();
+    const session = await harness.app.inject({
+      method: "GET", url: `/v1/executions/${scope.executionId}/chat-session?${scopeQuery()}`, headers: auth()
+    });
+    assert.equal(session.statusCode, 200);
+    assert.equal(session.json().state, "ready_for_follow_up");
+    assert.equal(session.json().provider_session_ref, undefined);
+
+    const followUp = await harness.app.inject({
+      method: "POST", url: `/v1/executions/${scope.executionId}/follow-ups?${scopeQuery()}`, headers: auth(),
+      payload: {
+        expected_session_version: session.json().session_version,
+        idempotency_key: "follow-up-route-001",
+        kind: "reply",
+        text: "Use the second title."
+      }
+    });
+    assert.equal(followUp.statusCode, 202);
+    assert.equal(followUp.json().outcome, "accepted");
+    assert.equal(harness.adapter.followUpCount, 1);
+  });
+
   afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())));
 
   it("requires service authentication and execution scope", async () => {

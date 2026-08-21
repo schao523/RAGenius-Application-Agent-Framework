@@ -62,6 +62,21 @@ export const agentEventQuerySchema = interactiveExecutionScopeQuerySchema.extend
   limit: z.coerce.number().int().positive().max(200).default(100)
 });
 
+export const agentChatFollowUpBodySchema = z.object({
+  expected_session_version: z.number().int().positive(),
+  idempotency_key: z.string().trim().min(1).max(128),
+  kind: z.enum(["reply", "continue", "revise", "graceful_cancel"]),
+  text: z.string().trim().min(1).max(8000).optional()
+}).strict().superRefine((value, context) => {
+  if ((value.kind === "reply" || value.kind === "revise") && !value.text) {
+    context.addIssue({ code: "custom", message: `${value.kind} requires text.`, path: ["text"] });
+  }
+});
+
+export const endAgentChatSessionBodySchema = z.object({
+  expected_session_version: z.number().int().positive()
+}).strict();
+
 export type AgentInteractionResponseBody = z.infer<
   typeof agentInteractionResponseBodySchema
 >;

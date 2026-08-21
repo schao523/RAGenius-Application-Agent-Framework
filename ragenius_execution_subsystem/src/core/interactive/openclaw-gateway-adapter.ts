@@ -18,6 +18,7 @@ import type {
 
 import type {
   ClaimedInteraction,
+  ClaimedChatFollowUp,
   InteractiveAgentAdapter,
   InteractivePreflightInput,
   InteractivePreflightResult,
@@ -42,6 +43,7 @@ import {
 
 export interface OpenClawGatewayInteractiveConfig {
   agentId: string;
+  chatLevelEnabled: boolean;
   credential?: string;
   credentialEnv: string;
   enabled: boolean;
@@ -94,6 +96,7 @@ type PendingApproval = {
 };
 
 type OpenClawProtectedHandle = {
+  chatLevelInteraction: boolean;
   emit: (event: InteractiveProviderEvent) => Promise<void>;
   expectedOutputs: OpenClawExpectedOutput[];
   messageText: string;
@@ -107,13 +110,16 @@ type OpenClawProtectedHandle = {
 };
 
 const BASE_CAPABILITIES = {
+  chatLevelInteraction: false,
   cancellation: true,
   eventReplay: "none" as const,
   interactionTypes: [] as Array<"approval">,
   protocolTransport: true,
   reconnectReconciliation: true,
   sameSessionContinuation: true,
-  sameTurnResume: true
+  sameTurnResume: true,
+  structuredWaitSignal: false,
+  exactlyOnceFollowUp: false
 };
 
 export class OpenClawGatewayAdapter implements InteractiveAgentAdapter {
@@ -132,7 +138,11 @@ export class OpenClawGatewayAdapter implements InteractiveAgentAdapter {
 
   async preflight(input: InteractivePreflightInput): Promise<InteractivePreflightResult> {
     const base = {
-      capabilities: { ...BASE_CAPABILITIES, interactionTypes: [...BASE_CAPABILITIES.interactionTypes] },
+      capabilities: {
+        ...BASE_CAPABILITIES,
+        chatLevelInteraction: this.config.chatLevelEnabled,
+        interactionTypes: [...BASE_CAPABILITIES.interactionTypes]
+      },
       protocolVersion: "unknown",
       transport: "openclaw_gateway" as const
     };
@@ -224,6 +234,7 @@ export class OpenClawGatewayAdapter implements InteractiveAgentAdapter {
     const runId = stringField(response, "runId");
     if (!runId) throw new Error("OpenClaw Gateway agent response omitted runId.");
     const state: OpenClawProtectedHandle = {
+      chatLevelInteraction: Boolean(input.capabilities.chatLevelInteraction),
       emit: input.emit,
       expectedOutputs: prepared.expectedOutputs,
       messageText: "",
@@ -245,6 +256,35 @@ export class OpenClawGatewayAdapter implements InteractiveAgentAdapter {
       providerTurnRef: runId,
       protectedHandle: state
     };
+  }
+
+  async sendFollowUp(
+    handle: ProviderSessionHandle,
+    claim: ClaimedChatFollowUp
+  ): Promise<ProviderSessionHandle> {
+    const state = protectedHandle(handle);
+    if (!state.chatLevelInteraction) throw new Error("OpenClaw chat-level continuation is disabled.");
+    if (state.state !== "completed") throw new Error("OpenClaw session already has an active run.");
+    const connection = await this.connection();
+    const response = await connection.request("agent", {
+      message: claim.message,
+      agentId: this.config.agentId,
+      sessionKey: state.sessionKey,
+      deliver: false,
+      idempotencyKey: claim.idempotencyKey
+    });
+    const runId = stringField(response, "runId");
+    if (!runId) throw new Error("OpenClaw Gateway follow-up response omitted runId.");
+    this.activeByRun.delete(state.runId);
+    state.runId = runId;
+    state.messageText = "";
+    state.messageTruncated = false;
+    state.state = "running";
+    this.activeByRun.set(runId, state);
+    for (const key of providerSessionAliases(state.sessionKey, this.config.agentId)) {
+      this.activeBySession.set(key, state);
+    }
+    return handleFor(state);
   }
 
   async respond(handle: ProviderSessionHandle, claim: ClaimedInteraction): Promise<void> {
@@ -386,7 +426,11 @@ export class OpenClawGatewayAdapter implements InteractiveAgentAdapter {
           },
           providerEventRef
         });
-        this.removeActive(state);
+        if (state.chatLevelInteraction && !failed) {
+          this.activeByRun.delete(state.runId);
+        } else {
+          this.removeActive(state);
+        }
       }
       return;
     }

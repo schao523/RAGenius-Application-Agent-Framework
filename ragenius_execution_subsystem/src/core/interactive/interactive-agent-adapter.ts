@@ -92,6 +92,13 @@ export interface ProviderReconciliationResult {
   diagnostics?: Record<string, unknown>;
 }
 
+export interface ClaimedChatFollowUp {
+  idempotencyKey: string;
+  kind: "reply" | "continue" | "revise" | "graceful_cancel";
+  message: string;
+  sequence: number;
+}
+
 export interface InteractiveAgentAdapter {
   readonly backend: AgentBackend;
   preflight(input: InteractivePreflightInput): Promise<InteractivePreflightResult>;
@@ -99,4 +106,8 @@ export interface InteractiveAgentAdapter {
   respond(handle: ProviderSessionHandle, claim: ClaimedInteraction): Promise<void>;
   cancel(handle: ProviderSessionHandle): Promise<ProviderCancellationResult>;
   reconcile(handle: ProviderSessionHandle): Promise<ProviderReconciliationResult>;
+  sendFollowUp?(
+    handle: ProviderSessionHandle,
+    claim: ClaimedChatFollowUp
+  ): Promise<ProviderSessionHandle>;
 }

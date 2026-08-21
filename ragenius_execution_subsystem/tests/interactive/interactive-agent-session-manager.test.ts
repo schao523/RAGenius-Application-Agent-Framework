@@ -8,6 +8,7 @@ import type { AgentProvider } from "../../src/core/agents/agent-provider.js";
 import { ExecutionEngine } from "../../src/core/execution/execution-engine.js";
 import { InMemoryExecutionStore } from "../../src/core/execution/execution-store.js";
 import { InMemoryAgentEventStore } from "../../src/core/interactive/agent-event-store.js";
+import { InMemoryAgentChatTurnStore } from "../../src/core/interactive/agent-chat-turn-store.js";
 import { InMemoryAgentInteractionStore } from "../../src/core/interactive/agent-interaction-store.js";
 import type {
   ClaimedInteraction,
@@ -76,6 +77,7 @@ const providerContext: AgentProviderExecutionContext = {
 class FakeAdapter implements InteractiveAgentAdapter {
   readonly backend = "codex_cli" as const;
   readonly responses: string[] = [];
+  readonly followUps: string[] = [];
   cancelled = false;
   capabilityOverrides: Partial<AgentInteractionCapabilities> = {};
   available = true;
@@ -121,6 +123,11 @@ class FakeAdapter implements InteractiveAgentAdapter {
     return { state: "running" as const };
   }
 
+  async sendFollowUp(handle: ProviderSessionHandle, claim: { idempotencyKey: string; message: string }) {
+    this.followUps.push(claim.message);
+    return { ...handle, providerRunRef: "run-follow-up", providerTurnRef: "run-follow-up" };
+  }
+
   async send(event: InteractiveProviderEvent): Promise<void> {
     assert.ok(this.emit);
     await this.emit(event);
@@ -133,6 +140,7 @@ async function createHarness(initialStatus: "running" | "pending_confirmation" =
   const interactionStore = new InMemoryAgentInteractionStore();
   const eventStore = new InMemoryAgentEventStore();
   const adapter = new FakeAdapter();
+  const chatTurnStore = new InMemoryAgentChatTurnStore(sessionStore);
   await executionStore.save({
     executionId: scope.executionId,
     request,
@@ -140,15 +148,43 @@ async function createHarness(initialStatus: "running" | "pending_confirmation" =
   });
   const manager = new InteractiveAgentSessionManager({
     capabilityService: new InteractiveCapabilityService([adapter]),
+    chatTurnStore,
     eventStore,
     executionStore,
     interactionStore,
     sessionStore
   });
-  return { adapter, eventStore, executionStore, interactionStore, manager, sessionStore };
+  return { adapter, chatTurnStore, eventStore, executionStore, interactionStore, manager, sessionStore };
 }
 
 describe("interactive Agent session manager", () => {
+  it("keeps a chat-capable OpenClaw session ready and starts a same-session follow-up", async () => {
+    const harness = await createHarness();
+    harness.adapter.capabilityOverrides = {
+      chatLevelInteraction: true,
+      exactlyOnceFollowUp: false,
+      sameSessionContinuation: true,
+      structuredWaitSignal: false
+    };
+    await harness.manager.start({ policy, providerContext, request, requiredInteractionTypes: [], scope });
+    await harness.adapter.send({ type: "run_completed", payload: { summary: "Choose a title." } });
+
+    assert.equal((await harness.executionStore.get(scope))?.status, "ready_for_follow_up");
+    const session = await harness.sessionStore.getByExecution(scope);
+    const result = await harness.manager.followUp({
+      ...scope,
+      expectedSessionVersion: session?.sessionVersion ?? 0,
+      idempotencyKey: "follow-up-001",
+      kind: "reply",
+      text: "Use the second title."
+    });
+
+    assert.equal(result.outcome, "accepted");
+    assert.deepEqual(harness.adapter.followUps, ["Use the second title."]);
+    assert.equal((await harness.executionStore.get(scope))?.status, "running");
+    assert.equal((await harness.sessionStore.getByExecution(scope))?.providerRunRef, "run-follow-up");
+  });
+
   it("persists the provider handle before processing an early interaction", async () => {
     const harness = await createHarness();
     let persistedDuringEvent = false;

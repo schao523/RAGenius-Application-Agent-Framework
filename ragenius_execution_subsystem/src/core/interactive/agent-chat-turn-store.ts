@@ -25,6 +25,12 @@ export interface AgentChatTurnStore {
   claim(input: ClaimAgentChatTurnInput): Promise<AgentChatTurnClaimResult>;
   getByIdempotency(scope: ExecutionScope, idempotencyKey: string): Promise<AgentChatTurnRecord | null>;
   list(scope: ExecutionScope): Promise<AgentChatTurnRecord[]>;
+  update(
+    scope: ExecutionScope,
+    chatTurnId: string,
+    input: Partial<Pick<AgentChatTurnRecord,
+      "acknowledgementState" | "completedAt" | "normalizedResult" | "providerRunRef" | "state">>
+  ): Promise<AgentChatTurnRecord | null>;
 }
 
 export class InMemoryAgentChatTurnStore implements AgentChatTurnStore {
@@ -84,6 +90,21 @@ export class InMemoryAgentChatTurnStore implements AgentChatTurnStore {
       .filter((record) => record.appId === scope.appId && record.executionId === scope.executionId && record.sessionId === scope.sessionId)
       .sort((left, right) => left.sequence - right.sequence)
       .map(clone);
+  }
+
+  async update(
+    scope: ExecutionScope,
+    chatTurnId: string,
+    input: Partial<Pick<AgentChatTurnRecord,
+      "acknowledgementState" | "completedAt" | "normalizedResult" | "providerRunRef" | "state">>
+  ): Promise<AgentChatTurnRecord | null> {
+    const current = this.records.get(chatTurnId);
+    if (!current || current.appId !== scope.appId || current.executionId !== scope.executionId || current.sessionId !== scope.sessionId) {
+      return null;
+    }
+    const updated = { ...current, ...input, updatedAt: new Date() };
+    this.records.set(chatTurnId, updated);
+    return clone(updated);
   }
 }
 

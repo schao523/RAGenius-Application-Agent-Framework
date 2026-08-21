@@ -3,7 +3,9 @@ import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { hasServiceScope } from "../auth/service-auth.js";
 import {
   agentEventQuerySchema,
+  agentChatFollowUpBodySchema,
   agentInteractionResponseBodySchema,
+  endAgentChatSessionBodySchema,
   interactiveExecutionScopeQuerySchema,
   type AgentInteractionResponseBody
 } from "../schemas/interactive-agent.schema.js";
@@ -90,6 +92,72 @@ function expectedResponseKind(type: AgentInteractionRecord["type"]): AgentIntera
 }
 
 export const registerInteractiveAgentRoutes: FastifyPluginAsync = async (app) => {
+  app.get("/executions/:execution_id/chat-session", async (request, reply) => {
+    requireExecutionScope(request);
+    const executionId = (request.params as { execution_id: string }).execution_id;
+    const scope = scopeFrom(executionId, request.query);
+    if (!await app.services.executionStore.get(scope)) throw executionNotFound();
+    const session = await app.services.agentSessionStore.getByExecution(scope);
+    if (!session) throw executionNotFound();
+    const turns = await app.services.agentChatTurnStore.list(scope);
+    return reply.status(200).send({
+      agent_session_id: session.agentSessionId,
+      execution_id: executionId,
+      idle_expires_at: session.idleExpiresAt?.toISOString() ?? null,
+      session_version: session.sessionVersion,
+      state: session.state,
+      turn_sequence: session.turnSequence,
+      turns: turns.map((turn) => ({
+        acknowledgement_state: turn.acknowledgementState,
+        chat_turn_id: turn.chatTurnId,
+        completed_at: turn.completedAt?.toISOString() ?? null,
+        created_at: turn.createdAt.toISOString(),
+        kind: turn.kind,
+        result: turn.normalizedResult,
+        sequence: turn.sequence,
+        state: turn.state
+      }))
+    });
+  });
+
+  app.post("/executions/:execution_id/follow-ups", async (request, reply) => {
+    requireExecutionScope(request);
+    const executionId = (request.params as { execution_id: string }).execution_id;
+    const scope = scopeFrom(executionId, request.query);
+    if (!await app.services.executionStore.get(scope)) throw executionNotFound();
+    const body = agentChatFollowUpBodySchema.parse(request.body);
+    const result = await app.services.interactiveSessionManager.followUp({
+      ...scope,
+      expectedSessionVersion: body.expected_session_version,
+      idempotencyKey: body.idempotency_key,
+      kind: body.kind,
+      ...(body.text ? { text: body.text } : {})
+    });
+    if (result.outcome === "not_found") throw executionNotFound();
+    if (!["accepted", "replay"].includes(result.outcome)) {
+      throw conflict(`CHAT_${result.outcome.toUpperCase()}`, `Chat follow-up is ${result.outcome.replaceAll("_", " ")}.`);
+    }
+    return reply.status(result.outcome === "accepted" ? 202 : 200).send({
+      execution_id: executionId,
+      outcome: result.outcome
+    });
+  });
+
+  app.post("/executions/:execution_id/end-chat-session", async (request, reply) => {
+    requireExecutionScope(request);
+    const executionId = (request.params as { execution_id: string }).execution_id;
+    const scope = scopeFrom(executionId, request.query);
+    if (!await app.services.executionStore.get(scope)) throw executionNotFound();
+    const body = endAgentChatSessionBodySchema.parse(request.body);
+    const result = await app.services.interactiveSessionManager.endChatSession(
+      scope,
+      body.expected_session_version
+    );
+    if (result.outcome === "not_found") throw executionNotFound();
+    if (!result.ended) throw conflict("CHAT_SESSION_NOT_READY", "Chat session cannot be ended in its current state.");
+    return reply.status(200).send({ ended: true, execution_id: executionId, status: "completed" });
+  });
+
   app.get("/executions/:execution_id/interactions", async (request, reply) => {
     requireExecutionScope(request);
     const executionId = (request.params as { execution_id: string }).execution_id;

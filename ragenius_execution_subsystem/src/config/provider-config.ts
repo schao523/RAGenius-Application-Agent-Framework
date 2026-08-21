@@ -111,6 +111,7 @@ export interface OpenClawCliRuntimeConfig {
 
 export interface OpenClawGatewayProviderConfig {
   agentId: string;
+  chatLevelEnabled: boolean;
   credential?: string;
   credentialEnv: string;
   enabled: boolean;
@@ -270,6 +271,7 @@ export function buildProviderRuntimeConfig(
     },
     openClawGateway: {
       agentId: env.OPENCLAW_AGENT_ID,
+      chatLevelEnabled: env.OPENCLAW_GATEWAY_CHAT_LEVEL_ENABLED,
       credentialEnv: env.OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV,
       ...(source[env.OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV]?.trim()
         ? { credential: source[env.OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV]!.trim() }

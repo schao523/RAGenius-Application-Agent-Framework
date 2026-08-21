@@ -130,6 +130,7 @@ const envSchema = z.object({
   OPENCLAW_MAX_STDERR_BYTES: z.coerce.number().int().positive().default(65536),
   OPENCLAW_RUN_RETENTION_HOURS: z.coerce.number().int().positive().default(24),
   OPENCLAW_GATEWAY_INTERACTIVE_ENABLED: booleanEnv(false),
+  OPENCLAW_GATEWAY_CHAT_LEVEL_ENABLED: booleanEnv(false),
   OPENCLAW_GATEWAY_URL: z.string().trim().url().default("ws://127.0.0.1:18789"),
   OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV: z.string().trim().min(1).default("OPENCLAW_GATEWAY_APPROVAL_TOKEN"),
   OPENCLAW_GATEWAY_SUPPORTED_VERSIONS: z.string().default("2026.6.8"),
