@@ -17,6 +17,7 @@ import type {
   InteractiveStartInput,
   ProviderSessionHandle
 } from "../../src/core/interactive/interactive-agent-adapter.js";
+import { ProviderSessionUnavailableError } from "../../src/core/interactive/interactive-agent-adapter.js";
 import { InteractiveCapabilityService } from "../../src/core/interactive/interactive-capability-service.js";
 import { InteractiveAgentSessionManager } from "../../src/core/interactive/interactive-agent-session-manager.js";
 import { InMemoryAgentSessionStore } from "../../src/core/interactive/agent-session-store.js";
@@ -79,6 +80,7 @@ class FakeAdapter implements InteractiveAgentAdapter {
   readonly responses: string[] = [];
   readonly followUps: string[] = [];
   cancelled = false;
+  providerSessionUnavailable = false;
   capabilityOverrides: Partial<AgentInteractionCapabilities> = {};
   available = true;
   onStart?: (input: InteractiveStartInput) => void;
@@ -125,6 +127,9 @@ class FakeAdapter implements InteractiveAgentAdapter {
 
   async sendFollowUp(handle: ProviderSessionHandle, claim: { idempotencyKey: string; message: string }) {
     this.followUps.push(claim.message);
+    if (this.providerSessionUnavailable) {
+      throw new ProviderSessionUnavailableError("Provider session was deleted.");
+    }
     return { ...handle, providerRunRef: "run-follow-up", providerTurnRef: "run-follow-up" };
   }
 
@@ -200,6 +205,26 @@ describe("interactive Agent session manager", () => {
     assert.equal((await harness.sessionStore.getByExecution(scope))?.state, "ready_for_follow_up");
     assert.equal((await harness.executionStore.get(scope))?.status, "ready_for_follow_up");
     assert.equal(harness.adapter.cancelled, false);
+  });
+
+  it("fails closed without ambiguous delivery when the provider session is unavailable", async () => {
+    const harness = await createHarness();
+    harness.adapter.capabilityOverrides = { chatLevelInteraction: true };
+    await harness.manager.start({ policy, providerContext, request, requiredInteractionTypes: [], scope });
+    await harness.adapter.send({ type: "run_completed", payload: { status: "completed" } });
+    const session = await harness.sessionStore.getByExecution(scope);
+    harness.adapter.providerSessionUnavailable = true;
+
+    const result = await harness.manager.followUp({
+      ...scope,
+      expectedSessionVersion: session?.sessionVersion ?? 0,
+      idempotencyKey: "missing-provider-session",
+      kind: "continue"
+    });
+
+    assert.equal(result.outcome, "provider_session_unavailable");
+    assert.equal((await harness.sessionStore.getByExecution(scope))?.state, "failed");
+    assert.equal((await harness.executionStore.get(scope))?.status, "failed");
   });
 
   it("closes an idle chat session after its bounded TTL", async () => {
@@ -361,6 +386,19 @@ describe("interactive Agent session manager", () => {
     assert.equal(harness.adapter.cancelled, true);
     assert.equal((await harness.executionStore.get(scope))?.status, "cancelled");
     assert.equal((await harness.interactionStore.list(scope))[0]?.state, "cancelled");
+  });
+
+  it("authoritatively cancels a chat session that became idle before cancellation", async () => {
+    const harness = await createHarness();
+    harness.adapter.capabilityOverrides = { chatLevelInteraction: true };
+    await harness.manager.start({ policy, providerContext, request, requiredInteractionTypes: [], scope });
+    await harness.adapter.send({ type: "run_completed", payload: { status: "completed" } });
+
+    const result = await harness.manager.cancel(scope);
+
+    assert.equal(result.cancelled, true);
+    assert.equal((await harness.sessionStore.getByExecution(scope))?.state, "cancelled");
+    assert.equal((await harness.executionStore.get(scope))?.status, "cancelled");
   });
 
   it("fails without contacting the provider when an interaction expired", async () => {

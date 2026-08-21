@@ -192,6 +192,29 @@ describe("interactive Agent routes", () => {
     assert.equal(harness.adapter.followUpCount, 1);
   });
 
+  it("returns a stable closed-session error after an idle chat is ended", async () => {
+    const harness = await createHarness(["execution"], true);
+    await harness.adapter.complete();
+    const session = await harness.app.inject({
+      method: "GET", url: `/v1/executions/${scope.executionId}/chat-session?${scopeQuery()}`, headers: auth()
+    });
+    const ended = await harness.app.inject({
+      method: "POST", url: `/v1/executions/${scope.executionId}/end-chat-session?${scopeQuery()}`, headers: auth(),
+      payload: { expected_session_version: session.json().session_version }
+    });
+    const followUp = await harness.app.inject({
+      method: "POST", url: `/v1/executions/${scope.executionId}/follow-ups?${scopeQuery()}`, headers: auth(),
+      payload: {
+        expected_session_version: session.json().session_version + 1,
+        idempotency_key: "follow-up-after-close",
+        kind: "continue"
+      }
+    });
+    assert.equal(ended.statusCode, 200);
+    assert.equal(followUp.statusCode, 409);
+    assert.equal(followUp.json().error.code, "CHAT_SESSION_CLOSED");
+  });
+
   afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())));
 
   it("requires service authentication and execution scope", async () => {
@@ -242,6 +265,33 @@ describe("interactive Agent routes", () => {
     assert.equal(response.json().items[0].sequence, 2);
     assert.equal(response.json().items[0].type, "interaction_requested");
     assert.equal(response.json().next_after_sequence, 2);
+  });
+
+  it("recursively redacts provider references from public event payloads", async () => {
+    const harness = await createHarness();
+    await harness.agentEventStore.append({
+      ...scope,
+      occurredAt: new Date(),
+      payload: {
+        run_id: "provider-run-secret",
+        nested: { provider_session_ref: "provider-session-secret", status: "ok" }
+      },
+      providerEventRef: "provider-event-secret",
+      type: "warning"
+    });
+
+    const response = await harness.app.inject({
+      method: "GET",
+      url: `/v1/executions/${scope.executionId}/events?${scopeQuery()}&limit=100`,
+      headers: auth()
+    });
+    const serialized = JSON.stringify(response.json());
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(serialized.includes("provider-run-secret"), false);
+    assert.equal(serialized.includes("provider-session-secret"), false);
+    assert.equal(serialized.includes("provider-event-secret"), false);
+    assert.equal(serialized.includes('"status":"ok"'), true);
   });
 
   it("resolves a response once and replays the same idempotency key", async () => {

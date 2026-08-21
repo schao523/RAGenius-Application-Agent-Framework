@@ -10,6 +10,11 @@
 
 **Specs:** `docs/openclaw-chat-level-interaction-contract-addendum.md` and `docs/superpowers/specs/2026-08-21-openclaw-chat-level-interaction-design.md`.
 
+**Completion status (2026-08-21):** Tasks 1 through 7 are implemented and
+committed. Task 8 automated and live CL-01 through CL-28 acceptance passed for
+OpenClaw `2026.6.8` and the approved TaskFlow fingerprint. Final local review
+completed; the evidence commit and branch integration remain.
+
 ## Global Constraints
 
 - Keep typed `AgentInteractionRecord` handling unchanged; never parse prose into approval, clarification, or selection records.

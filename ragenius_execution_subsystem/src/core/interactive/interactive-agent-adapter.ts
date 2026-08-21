@@ -15,6 +15,13 @@ import type {
   ExecutionScope
 } from "./interactive-agent-types.js";
 
+export class ProviderSessionUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProviderSessionUnavailableError";
+  }
+}
+
 export interface InteractivePreflightInput {
   policy: AgentPolicyDecision;
   providerContext: AgentProviderExecutionContext;

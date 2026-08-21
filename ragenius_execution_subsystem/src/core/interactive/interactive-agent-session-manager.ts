@@ -17,6 +17,7 @@ import type {
   InteractiveProviderEvent,
   ProviderSessionHandle
 } from "./interactive-agent-adapter.js";
+import { ProviderSessionUnavailableError } from "./interactive-agent-adapter.js";
 import type { InteractiveCapabilityService } from "./interactive-capability-service.js";
 import type {
   AgentInteractionType,
@@ -64,7 +65,7 @@ export interface AgentChatFollowUpInput extends ExecutionScope {
 }
 
 export type AgentChatFollowUpResult = {
-  outcome: "accepted" | "replay" | "active" | "stale" | "not_ready" | "not_found" | "delivery_unknown" | "requires_new_execution";
+  outcome: "accepted" | "replay" | "active" | "closed" | "stale" | "not_ready" | "not_found" | "delivery_unknown" | "provider_session_unavailable" | "requires_new_execution";
 };
 
 interface ActiveProviderSession {
@@ -126,6 +127,9 @@ export class InteractiveAgentSessionManager {
     const session = await this.sessionStore.getByExecution(input);
     const active = this.active.get(input.executionId);
     if (!session) return { outcome: "not_found" };
+    if (["completed", "cancelled", "failed"].includes(session.state)) {
+      return { outcome: "closed" };
+    }
     const activeSession = active ?? await this.restoreIdleSession(session);
     if (!activeSession) return { outcome: "not_found" };
     if (!session.capabilitySnapshot.chatLevelInteraction || !activeSession.adapter.sendFollowUp) {
@@ -181,7 +185,21 @@ export class InteractiveAgentSessionManager {
         type: "chat_follow_up_acknowledged"
       });
       return { outcome: "accepted" };
-    } catch {
+    } catch (error) {
+      if (error instanceof ProviderSessionUnavailableError) {
+        await this.chatTurnStore.update(input, claim.record.chatTurnId, {
+          acknowledgementState: "unacknowledged",
+          completedAt: new Date(),
+          normalizedResult: { failure_code: "PROVIDER_SESSION_UNAVAILABLE" },
+          state: "failed"
+        });
+        await this.failExecution(
+          input,
+          "PROVIDER_SESSION_UNAVAILABLE",
+          "The provider session is unavailable; replacement continuation was refused."
+        );
+        return { outcome: "provider_session_unavailable" };
+      }
       await this.chatTurnStore.update(input, claim.record.chatTurnId, {
         acknowledgementState: "ambiguous",
         state: "delivery_unknown"
@@ -352,7 +370,7 @@ export class InteractiveAgentSessionManager {
       });
       await this.executionStore.transition({
         scope,
-        from: ["running", "waiting_for_interaction"],
+        from: ["ready_for_follow_up", "running", "waiting_for_interaction"],
         result: stateResult(scope.executionId, "cancelled", "Agent execution was cancelled.")
       });
       this.clearActive(scope.executionId);
@@ -603,7 +621,7 @@ export class InteractiveAgentSessionManager {
     if (session) await this.updateSessionState(scope, "failed");
     await this.executionStore.transition({
       scope,
-      from: ["running", "waiting_for_interaction"],
+      from: ["ready_for_follow_up", "running", "waiting_for_interaction"],
       result: {
         ...stateResult(scope.executionId, "failed", message),
         errors: [{

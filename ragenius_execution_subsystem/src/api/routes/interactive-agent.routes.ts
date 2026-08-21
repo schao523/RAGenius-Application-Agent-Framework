@@ -84,6 +84,18 @@ function publicInteraction(record: AgentInteractionRecord): Record<string, unkno
   };
 }
 
+const PROTECTED_EVENT_PAYLOAD_KEYS = /^(?:credential|policy_binding_hash|provider_correlation_ref|provider_event_ref|provider_run_ref|provider_session_ref|provider_turn_ref|run_id|runid|secret|session_key|sessionkey|token)$/i;
+
+function publicEventPayload(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(publicEventPayload);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !PROTECTED_EVENT_PAYLOAD_KEYS.test(key))
+      .map(([key, child]) => [key, publicEventPayload(child)])
+  );
+}
+
 function expectedResponseKind(type: AgentInteractionRecord["type"]): AgentInteractionResponseBody["response"]["kind"] {
   if (type === "approval") return "approval";
   if (type === "selection") return "selection";
@@ -137,8 +149,10 @@ export const registerInteractiveAgentRoutes: FastifyPluginAsync = async (app) =>
     if (!["accepted", "replay"].includes(result.outcome)) {
       const codes = {
         active: "CHAT_RUN_ALREADY_ACTIVE",
+        closed: "CHAT_SESSION_CLOSED",
         delivery_unknown: "CHAT_FOLLOW_UP_DELIVERY_UNKNOWN",
         not_ready: "CHAT_SESSION_NOT_READY",
+        provider_session_unavailable: "CHAT_PROVIDER_SESSION_UNAVAILABLE",
         requires_new_execution: "CHAT_FOLLOW_UP_REQUIRES_NEW_EXECUTION",
         stale: "CHAT_SESSION_VERSION_STALE"
       } as const;
@@ -198,7 +212,7 @@ export const registerInteractiveAgentRoutes: FastifyPluginAsync = async (app) =>
       items: events.map((event) => ({
         ...(event.interactionId ? { interaction_id: event.interactionId } : {}),
         occurred_at: event.occurredAt.toISOString(),
-        payload: event.payload,
+        payload: publicEventPayload(event.payload),
         sequence: event.sequence,
         type: event.type
       })),

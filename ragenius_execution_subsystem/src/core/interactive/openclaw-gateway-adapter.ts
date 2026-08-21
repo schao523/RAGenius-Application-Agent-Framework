@@ -28,6 +28,7 @@ import type {
   ProviderReconciliationResult,
   ProviderSessionHandle
 } from "./interactive-agent-adapter.js";
+import { ProviderSessionUnavailableError } from "./interactive-agent-adapter.js";
 import type { AgentSessionRecord, AgentSessionState } from "./interactive-agent-types.js";
 import {
   redactOpenClawGatewayDiagnostic,
@@ -267,6 +268,7 @@ export class OpenClawGatewayAdapter implements InteractiveAgentAdapter {
     if (!state.chatLevelInteraction) throw new Error("OpenClaw chat-level continuation is disabled.");
     if (state.state !== "completed") throw new Error("OpenClaw session already has an active run.");
     const connection = await this.connection();
+    await assertProviderSessionExists(connection, state.sessionKey, this.config.agentId);
     const response = await connection.request("agent", {
       message: claim.message,
       agentId: this.config.agentId,
@@ -299,7 +301,12 @@ export class OpenClawGatewayAdapter implements InteractiveAgentAdapter {
     if (!session.providerSessionRef || !session.policyBindingHash) {
       throw new Error("OpenClaw idle session lacks durable recovery references.");
     }
-    await this.connection();
+    const connection = await this.connection();
+    await assertProviderSessionExists(
+      connection,
+      session.providerSessionRef,
+      this.config.agentId
+    );
     const runId = session.providerRunRef || session.providerTurnRef || `idle:${session.agentSessionId}`;
     const state: OpenClawProtectedHandle = {
       chatLevelInteraction: true,
@@ -701,4 +708,24 @@ function providerSessionAliases(sessionKey: string, agentId: string): string[] {
   return sessionKey.startsWith(canonicalPrefix)
     ? [sessionKey, sessionKey.slice(canonicalPrefix.length)]
     : [sessionKey, `${canonicalPrefix}${sessionKey}`];
+}
+
+async function assertProviderSessionExists(
+  connection: OpenClawGatewayConnection,
+  sessionKey: string,
+  agentId: string
+): Promise<void> {
+  const listed = await connection.request("sessions.list", {});
+  const rawSessions = isRecord(listed) ? listed.sessions : undefined;
+  const sessions = Array.isArray(rawSessions) ? rawSessions.filter(isRecord) : [];
+  const aliases = new Set(providerSessionAliases(sessionKey, agentId));
+  const found = sessions.some((session) => {
+    const candidate = stringField(session, "key") || stringField(session, "sessionKey");
+    return aliases.has(candidate);
+  });
+  if (!found) {
+    throw new ProviderSessionUnavailableError(
+      "OpenClaw provider session is unavailable; refusing replacement continuation."
+    );
+  }
 }

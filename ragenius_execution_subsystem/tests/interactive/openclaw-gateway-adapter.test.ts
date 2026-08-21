@@ -65,6 +65,7 @@ class FakeGatewayConnection implements OpenClawGatewayConnection {
   };
   execPolicy = { security: "allowlist", ask: "on-miss", askFallback: "deny" };
   agentRequestCount = 0;
+  sessions: Array<Record<string, unknown>> = [];
   waitResponse: Record<string, unknown> = {
     runId: "run-001", status: "error", error: "aborted", stopReason: "aborted"
   };
@@ -79,6 +80,10 @@ class FakeGatewayConnection implements OpenClawGatewayConnection {
     }
     if (method === "agent") {
       this.agentRequestCount += 1;
+      const sessionKey = (params as { sessionKey?: string } | undefined)?.sessionKey ?? "";
+      if (sessionKey && !this.sessions.some((session) => session.key === sessionKey)) {
+        this.sessions.push({ key: sessionKey });
+      }
       return { runId: `run-${String(this.agentRequestCount).padStart(3, "0")}`, sessionId: "provider-session-001", status: "accepted" };
     }
     if (method === "exec.approval.resolve") return { ok: true };
@@ -86,7 +91,7 @@ class FakeGatewayConnection implements OpenClawGatewayConnection {
     if (method === "agent.wait") {
       return this.waitResponse;
     }
-    if (method === "sessions.list") return { sessions: [] };
+    if (method === "sessions.list") return { sessions: this.sessions };
     throw new Error(`Unexpected Gateway method: ${method}`);
   }
 
@@ -288,6 +293,29 @@ describe("OpenClaw Gateway adapter", () => {
         message: "Use the second title.", sessionKey: handle.providerSessionRef
       }
     });
+  });
+
+  it("refuses a follow-up when the exact provider session was deleted", async () => {
+    const factory = new FakeGatewayFactory();
+    const adapter = new OpenClawGatewayAdapter(config({ chatLevelEnabled: true }), factory, runDependencies());
+    const handle = await adapter.start({
+      ...preflightInput(), capabilities: { ...capabilities(), chatLevelInteraction: true },
+      protocolVersion: "2026.6.8", emit: async () => {}
+    });
+    await factory.connection.emit({
+      type: "event", event: "agent", seq: 1,
+      payload: { runId: "run-001", seq: 1, stream: "lifecycle", data: { phase: "end" } }
+    });
+    factory.connection.sessions = [];
+
+    await assert.rejects(
+      adapter.sendFollowUp(handle, {
+        idempotencyKey: "follow-up-missing", kind: "reply",
+        message: "Continue.", sequence: 1
+      }),
+      /refusing replacement continuation/i
+    );
+    assert.equal(factory.connection.agentRequestCount, 1);
   });
 
   it("fails precise preflight checks for version, scopes, and policy", async () => {

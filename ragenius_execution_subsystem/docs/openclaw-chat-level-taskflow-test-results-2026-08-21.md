@@ -4,10 +4,11 @@ Date: 2026-08-21
 
 ## Decision
 
-The provider-level chat workflow is feasible, but the production gate is not
-yet complete. OpenClaw chat-level interaction must remain disabled until the
-RAGenius-owned governance, concurrency, persistence, isolation, policy, and
-lifecycle cases are implemented and pass.
+The provider-level and RAGenius-owned acceptance gates passed for the exact
+OpenClaw and TaskFlow versions recorded below. Chat-level interaction remains
+disabled by default and may be enabled only with the published trusted
+projection, exact-version allowlist, Gateway credential, and an app service
+credential that includes the `execution` scope.
 
 The minimum functional proof passed on OpenClaw `2026.6.8 (844f405)`:
 
@@ -57,23 +58,23 @@ raw provider handle, or reasoning trace was retained.
 | CL-09 | Pass | A distinct revision run changed bullet 3 to audit evidence; the next run retained that revision. |
 | CL-10 | Pass | Graceful Cancel returned a bounded cancellation summary and did not claim authoritative abort. |
 | CL-11 | Pass | `chat.abort` acknowledged the exact run and `agent.wait` returned `aborted`. |
-| CL-12 | Provider pass; RAGenius pending | Repeating one provider idempotency key returned the same run id and result. Durable RAGenius normalized-outcome replay is not implemented. |
-| CL-13 | RAGenius gate pending | OpenClaw accepted both concurrent different-key submissions and created two runs. RAGenius must atomically claim one active run before provider contact. |
-| CL-14 | Implementation-dependent | The `ready_for_follow_up` API and app rehydration state do not exist yet. |
+| CL-12 | Pass | Provider replay returned one run; RAGenius returned `replay` for the same durable key without a second provider call. |
+| CL-13 | Pass | RAGenius accepted one follow-up and rejected the concurrent key with `CHAT_RUN_ALREADY_ACTIVE`; the provider-level observation still confirms OpenClaw alone does not serialize these runs. |
+| CL-14 | Pass | Scoped refresh returned `ready_for_follow_up`, five persisted turns, and no provider references. |
 | CL-15 | Pass | Closing and reconnecting the adapter while idle preserved context; the next run returned the exact marker. |
 | CL-16 | Pass | After provider acknowledgement and adapter disconnect, a new connection reconciled the accepted run as `ok` through `agent.wait`; no duplicate was sent. |
 | CL-17 | Pass | After a Gateway service restart while idle, the same session retained marker `RESTART-c3df5b33`. |
 | CL-18 | Pass, fail closed | Restart during a harmless active run reconciled as `timeout`, never success. Disposable cleanup then removed the session. Production must retain the non-success state until authoritative reconciliation or closure. |
-| CL-19 | Implementation-dependent | Durable execution-service restart rehydration for chat-level sessions is not implemented. |
-| CL-20 | RAGenius gate pending | After `sessions.delete`, OpenClaw accepted a replacement run for the same submitted key and unexpectedly still returned the old marker. RAGenius must reject a missing/deleted durable session before provider contact and must not infer provider deletion from context loss. |
+| CL-19 | Pass | After execution-service restart, the idle session rehydrated and retained marker `REHYDRATE-ac8bea94c2` in a new run. |
+| CL-20 | Pass after fail-closed correction | After deleting the exact disposable provider session, RAGenius returned `CHAT_PROVIDER_SESSION_UNAVAILABLE`, marked the execution failed, and did not create a replacement run. |
 | CL-21 | Pass | A one-second `agent.wait` returned `timeout`; correlated abort then returned `aborted`. |
-| CL-22 | Implementation-dependent | Chat follow-up scope APIs do not yet exist. |
-| CL-23 | Implementation-dependent | Follow-up policy-delta enforcement does not yet exist. |
-| CL-24 | Implementation-dependent | Artifact and selected-skill stability checks do not yet exist. |
-| CL-25 | Implementation-dependent | Durable chat-session closure does not yet exist. |
-| CL-26 | Implementation-dependent | Durable idle expiry does not yet exist. |
-| CL-27 | Implementation-dependent | Multi-run normalized history and public redaction APIs do not yet exist. |
-| CL-28 | Pass for existing preflight | The existing adapter test rejects unsupported Gateway versions before start. Chat-level capability remains absent and therefore is not advertised. |
+| CL-22 | Pass | Wrong app/session scope returned enumeration-resistant `EXECUTION_NOT_FOUND` before provider contact. |
+| CL-23 | Pass | External publication escalation returned `CHAT_FOLLOW_UP_REQUIRES_NEW_EXECUTION`. |
+| CL-24 | Pass | The strict follow-up schema rejected an added artifact reference; skill and artifact bindings cannot change in continuation. |
+| CL-25 | Pass after stable-error correction | End closed the idle session once; later continuation returned `CHAT_SESSION_CLOSED`. |
+| CL-26 | Pass | A 3-second acceptance TTL moved the idle session to completed; later continuation returned `CHAT_SESSION_CLOSED`. |
+| CL-27 | Pass after redaction correction | Public history contained five monotonic turns and 94 bounded events without provider run/session/turn/event keys. A local review found and removed raw `run_id` from public event payloads before the final live rerun. |
+| CL-28 | Pass | Unsupported-version fixtures reject chat-level capability before session creation; exact live version `2026.6.8` passed preflight. |
 
 ## Critical Findings
 
@@ -125,18 +126,31 @@ outcome so restart recovery never relies solely on provider behavior.
 
 ## Verification
 
-- Both disposable TypeScript probes compiled with `tsc --noEmit`.
-- Targeted OpenClaw discovery and Gateway adapter tests passed: 13 tests, zero
-  failures.
-- The unsupported-version preflight fixture passed.
-- A broader sandboxed test invocation produced two unrelated `spawn EPERM`
-  failures in process-supervisor tests; the targeted matrix tests passed and no
-  production source was changed by this feasibility work.
+- Provider probes passed CL-01, CL-03 through CL-12, CL-15 through CL-18, and
+  CL-21 against the live Gateway. Provider identifiers were retained only as
+  SHA-256 hashes.
+- RAGenius execution `execution_e36b2639daea` passed replay, concurrency,
+  selection, clarification, revision, Continue, isolation, policy, history,
+  and closure cases.
+- Execution `execution_6ad1f6e4fb24` passed restart rehydration; execution
+  `execution_a156fc5d2dfb` passed deleted-provider-session rejection; execution
+  `execution_7abf4b9d1b5c` passed graceful cancellation.
+- The authoritative scoped cancellation test ended with execution status
+  `cancelled` after correcting the idle-completion transition race.
+- Execution subsystem: 464 tests, 457 passed, 7 skipped, 0 failed; ESLint
+  passed; Prisma validation and generation passed.
+- Builder: 119 passed with 2 subtests and no failures.
+- App backend: 127 passed, 1 skipped, 0 failed.
+- Frontend: 155 passed across 16 files; the Vite production build passed.
 
-## Next Gate
+## Operational Requirement
 
-The provider-feasibility gate passed and implementation planning is authorized.
-The plan must explicitly close CL-12 through CL-14, CL-19, CL-20, and CL-22
-through CL-27, while preserving the observed provider behavior for CL-03
-through CL-11 and CL-15 through CL-18. CL-02 must be rerun after Builder gains
-and republishes explicit `interaction_channel: chat_level` metadata.
+TaskFlow was explicitly re-reviewed with `interaction_channel: chat_level` and
+published as Builder revision `1787309327435`. The synchronized execution
+projection matched fingerprint
+`sha256:v1:8bf1f1a1a60b10d4a6ba53deb9a0adc2244319dc1c07ebd653e9a788a3a3c5bc`.
+
+The existing app service credential initially lacked the `execution` scope and
+correctly received `SERVICE_SCOPE_REQUIRED`. Production activation must add
+`execution` to that credential's scopes; the live matrix used a process-only
+override and did not rewrite secret-bearing `.env` files.
