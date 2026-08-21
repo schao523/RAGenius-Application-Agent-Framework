@@ -1972,6 +1972,12 @@ function ChatPanel({
   onCancelAgentExecution,
   agentInteractionSubmitting,
   agentInteractionError,
+  agentChatSession,
+  onRefreshAgentChatSession,
+  onAgentChatFollowUp,
+  onEndAgentChatSession,
+  agentChatSubmitting,
+  agentChatError,
   onDeleteArtifact,
 }) {
   const [query, setQuery] = useState("");
@@ -2311,6 +2317,11 @@ function ChatPanel({
                 onCancelInteraction={onCancelAgentExecution}
                 interactionSubmitting={agentInteractionSubmitting}
                 interactionError={agentInteractionError}
+                chatSession={agentChatSession}
+                onAgentChatFollowUp={onAgentChatFollowUp}
+                onEndAgentChatSession={onEndAgentChatSession}
+                agentChatSubmitting={agentChatSubmitting}
+                agentChatError={agentChatError}
                 styles={styles}
               />
               <div style={styles.transcriptWrapper}>
@@ -2577,6 +2588,9 @@ export default function App() {
   const [agentInteractionsBySession, setAgentInteractionsBySession] = useState({});
   const [agentInteractionSubmitting, setAgentInteractionSubmitting] = useState(false);
   const [agentInteractionError, setAgentInteractionError] = useState("");
+  const [agentChatSessionsBySession, setAgentChatSessionsBySession] = useState({});
+  const [agentChatSubmitting, setAgentChatSubmitting] = useState(false);
+  const [agentChatError, setAgentChatError] = useState("");
 
   const adminTabs = useMemo(
     () => [
@@ -2610,6 +2624,7 @@ export default function App() {
     .filter((item) => item && typeof item === "object")
     .sort((left, right) => Number(right.sequence || 0) - Number(left.sequence || 0))
     .find((item) => item.state === "pending") || null;
+  const activeAgentChatSession = agentChatSessionsBySession[activeThreadKey] || null;
   const activeSelectedExportMessageIds = selectedExportMessageIdsBySession[activeThreadKey] || [];
   const currentSession = sessions.find((session) => session.id === sessionId) || null;
   const activeAgentSkillScopeKeys = ["codex_cli", "openclaw_cli"].map((backend) => [
@@ -3251,6 +3266,81 @@ export default function App() {
     }
   };
 
+  const refreshAgentChatSession = async (executionIdOverride = activeExecutionId) => {
+    const executionId = String(executionIdOverride || "").trim();
+    if (!selectedAppId || !sessionId || !userId || !executionId) return;
+    try {
+      const scope = `app_id=${encodeURIComponent(selectedAppId)}&user_id=${encodeURIComponent(userId)}`;
+      const data = await fetchJson(
+        `${baseUrl}/sessions/${sessionId}/executions/${encodeURIComponent(executionId)}/chat-session?${scope}`,
+      );
+      setAgentChatSessionsBySession((previous) => ({ ...previous, [activeThreadKey]: data }));
+      setAgentChatError("");
+    } catch (chatError) {
+      const message = String(chatError?.message || chatError || "");
+      if (message.includes("EXECUTION_NOT_FOUND") || message.includes("404")) {
+        setAgentChatSessionsBySession((previous) => ({ ...previous, [activeThreadKey]: null }));
+        return;
+      }
+      setAgentChatError(message);
+    }
+  };
+
+  const submitAgentChatFollowUp = async ({ kind, text }) => {
+    if (!activeExecutionId || !activeAgentChatSession) return;
+    setAgentChatSubmitting(true);
+    setAgentChatError("");
+    try {
+      const idempotencyKey = globalThis.crypto?.randomUUID?.() || `chat-follow-up-${Date.now()}`;
+      await fetchJson(
+        `${baseUrl}/sessions/${sessionId}/executions/${encodeURIComponent(activeExecutionId)}/follow-ups`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            app_id: selectedAppId,
+            user_id: userId,
+            expected_session_version: activeAgentChatSession.session_version,
+            idempotency_key: idempotencyKey,
+            kind,
+            ...(text ? { text } : {}),
+          }),
+        },
+      );
+      await refreshAgentChatSession(activeExecutionId);
+    } catch (chatError) {
+      setAgentChatError(String(chatError?.message || chatError));
+      await refreshAgentChatSession(activeExecutionId);
+    } finally {
+      setAgentChatSubmitting(false);
+    }
+  };
+
+  const endAgentChatSession = async () => {
+    if (!activeExecutionId || !activeAgentChatSession) return;
+    setAgentChatSubmitting(true);
+    setAgentChatError("");
+    try {
+      await fetchJson(
+        `${baseUrl}/sessions/${sessionId}/executions/${encodeURIComponent(activeExecutionId)}/end-chat-session`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            app_id: selectedAppId,
+            user_id: userId,
+            expected_session_version: activeAgentChatSession.session_version,
+          }),
+        },
+      );
+      await refreshAgentChatSession(activeExecutionId);
+    } catch (chatError) {
+      setAgentChatError(String(chatError?.message || chatError));
+    } finally {
+      setAgentChatSubmitting(false);
+    }
+  };
+
   const cancelAgentExecution = async () => {
     if (!activeExecutionId) return;
     setAgentInteractionSubmitting(true);
@@ -3661,6 +3751,7 @@ export default function App() {
     const poll = async () => {
       if (cancelled) return;
       await refreshAgentInteraction(activeExecutionId);
+      await refreshAgentChatSession(activeExecutionId);
       const shouldContinue = activeAgentInteraction || [
         "queued",
         "running",
@@ -3836,6 +3927,12 @@ export default function App() {
               onCancelAgentExecution={cancelAgentExecution}
               agentInteractionSubmitting={agentInteractionSubmitting}
               agentInteractionError={agentInteractionError}
+              agentChatSession={activeAgentChatSession}
+              onRefreshAgentChatSession={refreshAgentChatSession}
+              onAgentChatFollowUp={submitAgentChatFollowUp}
+              onEndAgentChatSession={endAgentChatSession}
+              agentChatSubmitting={agentChatSubmitting}
+              agentChatError={agentChatError}
               onSelectApprovedContent={selectApprovedContentForSession}
               toolInventory={execToolInventory}
               skillInventory={execSkillInventory}

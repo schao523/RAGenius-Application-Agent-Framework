@@ -1,5 +1,6 @@
 import React from "react";
 import AgentInteractionCard from "./AgentInteractionCard";
+import AgentChatFollowUpPanel from "./AgentChatFollowUpPanel";
 
 function resolveExecutionStatus(executionLaneState) {
   const latestResult = executionLaneState?.latest_execution_result;
@@ -90,6 +91,11 @@ export default function ExecutionLaneStatusCard({
   onRefreshInteraction,
   interactionSubmitting,
   interactionError,
+  chatSession,
+  onAgentChatFollowUp,
+  onEndAgentChatSession,
+  agentChatSubmitting,
+  agentChatError,
   styles,
 }) {
   const contentLane = sessionLaneState?.content_lane || {};
@@ -223,6 +229,15 @@ export default function ExecutionLaneStatusCard({
         onRefresh={onRefreshInteraction}
         submitting={interactionSubmitting}
         error={interactionError}
+        styles={styles}
+      />
+      <AgentChatFollowUpPanel
+        chatSession={chatSession}
+        error={agentChatError}
+        onCancel={onCancelInteraction}
+        onEnd={onEndAgentChatSession}
+        onFollowUp={onAgentChatFollowUp}
+        submitting={agentChatSubmitting}
         styles={styles}
       />
     </section>

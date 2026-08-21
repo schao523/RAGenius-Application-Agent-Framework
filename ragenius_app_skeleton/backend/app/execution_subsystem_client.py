@@ -324,6 +324,39 @@ class ExecutionSubsystemClient:
             query={"app_id": app_id, "session_id": session_id},
         )
 
+    def get_agent_chat_session(self, execution_id: str, *, app_id: str, session_id: str) -> dict[str, Any]:
+        return self._json_request(
+            "GET", f"/executions/{execution_id}/chat-session",
+            query={"app_id": app_id, "session_id": session_id},
+        )
+
+    def submit_agent_follow_up(
+        self, execution_id: str, *, app_id: str, session_id: str,
+        expected_session_version: int, idempotency_key: str, kind: str,
+        text: str | None = None,
+    ) -> dict[str, Any]:
+        body = {
+            "expected_session_version": expected_session_version,
+            "idempotency_key": idempotency_key,
+            "kind": kind,
+        }
+        if text:
+            body["text"] = text
+        return self._json_request(
+            "POST", f"/executions/{execution_id}/follow-ups", body,
+            query={"app_id": app_id, "session_id": session_id},
+        )
+
+    def end_agent_chat_session(
+        self, execution_id: str, *, app_id: str, session_id: str,
+        expected_session_version: int,
+    ) -> dict[str, Any]:
+        return self._json_request(
+            "POST", f"/executions/{execution_id}/end-chat-session",
+            {"expected_session_version": expected_session_version},
+            query={"app_id": app_id, "session_id": session_id},
+        )
+
     def get_agent_events(
         self,
         execution_id: str,

@@ -4084,6 +4084,54 @@ async def list_session_agent_interactions(
     return {**public_result, "session_lane_state": lane_state}
 
 
+@app.get("/sessions/{session_id}/executions/{execution_id}/chat-session")
+async def get_session_agent_chat(
+    session_id: str, execution_id: str, app_id: str, user_id: str,
+):
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    result = await run_in_threadpool(
+        execution_client.get_agent_chat_session, execution_id,
+        app_id=app_id, session_id=session_id,
+    )
+    _require_successful_execution_proxy(result)
+    return _redact_provider_handles(result)
+
+
+@app.post("/sessions/{session_id}/executions/{execution_id}/follow-ups")
+async def submit_session_agent_follow_up(
+    session_id: str, execution_id: str, payload: dict,
+):
+    app_id = str(payload.get("app_id") or "")
+    user_id = str(payload.get("user_id") or "")
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    result = await run_in_threadpool(
+        execution_client.submit_agent_follow_up, execution_id,
+        app_id=app_id, session_id=session_id,
+        expected_session_version=int(payload.get("expected_session_version") or 0),
+        idempotency_key=str(payload.get("idempotency_key") or ""),
+        kind=str(payload.get("kind") or ""),
+        text=payload.get("text"),
+    )
+    _require_successful_execution_proxy(result)
+    return _redact_provider_handles(result)
+
+
+@app.post("/sessions/{session_id}/executions/{execution_id}/end-chat-session")
+async def end_session_agent_chat(
+    session_id: str, execution_id: str, payload: dict,
+):
+    app_id = str(payload.get("app_id") or "")
+    user_id = str(payload.get("user_id") or "")
+    _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    result = await run_in_threadpool(
+        execution_client.end_agent_chat_session, execution_id,
+        app_id=app_id, session_id=session_id,
+        expected_session_version=int(payload.get("expected_session_version") or 0),
+    )
+    _require_successful_execution_proxy(result)
+    return _redact_provider_handles(result)
+
+
 @app.get("/sessions/{session_id}/executions/{execution_id}/events")
 async def list_session_agent_events(
     session_id: str,

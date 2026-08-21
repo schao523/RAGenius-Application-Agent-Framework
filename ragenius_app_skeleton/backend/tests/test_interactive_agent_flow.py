@@ -118,3 +118,67 @@ def test_openclaw_waiting_execution_can_be_cancelled(monkeypatch, tmp_path):
     assert response.json()["cancelled"] is True
     lane = repo.get_runtime_state("session-1")["session_lane_state"]["execution_lane"]
     assert lane["latest_execution_status"] == "cancelled"
+
+
+def test_openclaw_chat_follow_up_is_scoped_and_redacts_provider_refs(monkeypatch, tmp_path):
+    _session(monkeypatch, tmp_path)
+
+    class FakeExecutionClient:
+        def get_agent_chat_session(self, execution_id, **scope):
+            assert scope == {"app_id": "app-1", "session_id": "session-1"}
+            return {
+                "execution_id": execution_id,
+                "state": "ready_for_follow_up",
+                "session_version": 2,
+                "provider_session_ref": "must-not-leak",
+                "turns": [],
+            }
+
+        def submit_agent_follow_up(self, execution_id, **values):
+            assert values == {
+                "app_id": "app-1", "session_id": "session-1",
+                "expected_session_version": 2,
+                "idempotency_key": "follow-up-1", "kind": "reply",
+                "text": "Use title two.",
+            }
+            return {"execution_id": execution_id, "outcome": "accepted"}
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    client = TestClient(app)
+    base = "/sessions/session-1/executions/execution-openclaw"
+    scope = {"app_id": "app-1", "user_id": "user-1"}
+    session = client.get(f"{base}/chat-session", params=scope)
+    assert session.status_code == 200
+    assert "provider_session_ref" not in session.json()
+
+    response = client.post(
+        f"{base}/follow-ups",
+        json={
+            **scope,
+            "expected_session_version": 2,
+            "idempotency_key": "follow-up-1",
+            "kind": "reply",
+            "text": "Use title two.",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["outcome"] == "accepted"
+
+
+def test_openclaw_chat_follow_up_rejects_wrong_user_before_provider_contact(monkeypatch, tmp_path):
+    _session(monkeypatch, tmp_path)
+
+    class FakeExecutionClient:
+        def submit_agent_follow_up(self, *_args, **_values):
+            raise AssertionError("provider must not be contacted")
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    response = TestClient(app).post(
+        "/sessions/session-1/executions/execution-openclaw/follow-ups",
+        json={
+            "app_id": "app-1", "user_id": "another-user",
+            "expected_session_version": 2,
+            "idempotency_key": "follow-up-1", "kind": "continue",
+        },
+    )
+    assert response.status_code == 404
