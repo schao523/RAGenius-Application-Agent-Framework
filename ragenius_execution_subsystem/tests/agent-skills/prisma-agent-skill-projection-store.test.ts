@@ -20,6 +20,7 @@ function binding(): ProjectedAgentSkillGovernance {
     direct_tool_dispatch: false,
     display_name: "Persisted Skill",
     interaction_policy: {
+      interaction_channel: "none",
       interaction_requirement: "autonomous",
       supported_interaction_types: [],
       required_transport: "one_shot",

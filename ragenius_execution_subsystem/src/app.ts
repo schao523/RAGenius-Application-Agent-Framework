@@ -240,6 +240,7 @@ export function createAppServices(
       chatTurnStore: agentChatTurnStore,
       eventStore: agentEventStore,
       executionStore,
+      idleTtlMs: openClawGatewayConfig.chatIdleTtlMs,
       interactionStore: agentInteractionStore,
       sessionStore: agentSessionStore
     });

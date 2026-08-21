@@ -186,6 +186,27 @@ class AgentSkillProjectionTests(unittest.TestCase):
             },
         )
 
+    def test_chat_level_channel_is_explicitly_approved_and_projected(self) -> None:
+        self._populate()
+        skill = self.store.list_agent_skill_catalog()[0]
+        self.store.approve_agent_skill(
+            agent_skill_id=skill["id"],
+            expected_fingerprint=skill["content_fingerprint"],
+            approved_by="admin-1",
+            interaction_policy={
+                "interaction_channel": "chat_level",
+                "interaction_requirement": "autonomous",
+                "supported_interaction_types": [],
+                "required_transport": "interactive",
+                "recovery_class": "session_resumable",
+            },
+        )
+        projection = build_agent_skill_projection(self.store, "builder-test")
+        self.assertEqual(
+            projection["items"][0]["interaction_policy"]["interaction_channel"],
+            "chat_level",
+        )
+
     def test_invalid_interaction_policy_is_rejected(self) -> None:
         self._populate()
         skill = self.store.list_agent_skill_catalog()[0]

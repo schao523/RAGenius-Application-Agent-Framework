@@ -12,7 +12,8 @@ export type CreateAgentSessionInput = Omit<
   | "sessionVersion"
   | "turnSequence"
   | "updatedAt"
->;
+  | "policyBindingHash"
+> & { policyBindingHash?: string };
 
 export interface AgentSessionScope extends ExecutionScope {
   agentSessionId: string;
@@ -66,6 +67,7 @@ export class InMemoryAgentSessionStore implements AgentSessionStore {
       createdAt: now,
       idleExpiresAt: null,
       lastEventSeq: 0,
+      policyBindingHash: input.policyBindingHash ?? "",
       sessionVersion: 1,
       turnSequence: 0,
       updatedAt: now
@@ -88,7 +90,7 @@ export class InMemoryAgentSessionStore implements AgentSessionStore {
 
   async listNonTerminal(): Promise<AgentSessionRecord[]> {
     return [...this.records.values()]
-      .filter((record) => ["starting", "running", "waiting_for_interaction"].includes(record.state))
+      .filter((record) => ["starting", "running", "waiting_for_interaction", "ready_for_follow_up"].includes(record.state))
       .map(cloneSession);
   }
 

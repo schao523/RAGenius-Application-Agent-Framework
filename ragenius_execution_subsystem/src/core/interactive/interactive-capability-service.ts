@@ -26,6 +26,10 @@ export class InteractiveCapabilityService {
     );
   }
 
+  adapterFor(backend: AgentBackend): InteractiveAgentAdapter | undefined {
+    return this.adapters.get(backend);
+  }
+
   async preflight(input: InteractivePreflightInput): Promise<InteractiveCapabilityDecision> {
     const adapter = this.adapters.get(input.request.agent_backend);
     if (!adapter) {

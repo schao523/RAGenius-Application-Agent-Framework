@@ -32,6 +32,10 @@ function Test-Enabled([string]$Value) {
 
 $codexInteractive = Test-Enabled $env:CODEX_APP_SERVER_INTERACTIVE_ENABLED
 $openClawInteractive = Test-Enabled $env:OPENCLAW_GATEWAY_INTERACTIVE_ENABLED
+$openClawChatLevel = Test-Enabled $env:OPENCLAW_GATEWAY_CHAT_LEVEL_ENABLED
+if ($openClawChatLevel -and -not $openClawInteractive) {
+    throw "OPENCLAW_GATEWAY_CHAT_LEVEL_ENABLED requires OPENCLAW_GATEWAY_INTERACTIVE_ENABLED=true."
+}
 if ($openClawInteractive) {
     $credentialName = if ($env:OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV) {
         $env:OPENCLAW_GATEWAY_APPROVAL_CREDENTIAL_ENV
@@ -44,7 +48,7 @@ if ($openClawInteractive) {
     }
 }
 
-Write-Host "Interactive Agent transports: Codex=$codexInteractive OpenClaw=$openClawInteractive"
+Write-Host "Interactive Agent transports: Codex=$codexInteractive OpenClaw=$openClawInteractive OpenClawChatLevel=$openClawChatLevel"
 if ($openClawInteractive) {
     Write-Host "OpenClaw policy is not changed by this script. Verify the administrator-selected effective profile before accepting traffic."
 }

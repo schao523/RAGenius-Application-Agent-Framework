@@ -134,7 +134,10 @@ class FakeAdapter implements InteractiveAgentAdapter {
   }
 }
 
-async function createHarness(initialStatus: "running" | "pending_confirmation" = "running") {
+async function createHarness(
+  initialStatus: "running" | "pending_confirmation" = "running",
+  idleTtlMs = 900_000
+) {
   const executionStore = new InMemoryExecutionStore();
   const sessionStore = new InMemoryAgentSessionStore();
   const interactionStore = new InMemoryAgentInteractionStore();
@@ -152,6 +155,7 @@ async function createHarness(initialStatus: "running" | "pending_confirmation" =
     eventStore,
     executionStore,
     interactionStore,
+    idleTtlMs,
     sessionStore
   });
   return { adapter, chatTurnStore, eventStore, executionStore, interactionStore, manager, sessionStore };
@@ -183,6 +187,32 @@ describe("interactive Agent session manager", () => {
     assert.deepEqual(harness.adapter.followUps, ["Use the second title."]);
     assert.equal((await harness.executionStore.get(scope))?.status, "running");
     assert.equal((await harness.sessionStore.getByExecution(scope))?.providerRunRef, "run-follow-up");
+  });
+
+  it("preserves an idle chat session during orderly shutdown", async () => {
+    const harness = await createHarness();
+    harness.adapter.capabilityOverrides = { chatLevelInteraction: true };
+    await harness.manager.start({ policy, providerContext, request, requiredInteractionTypes: [], scope });
+    await harness.adapter.send({ type: "run_completed", payload: { status: "completed" } });
+
+    await harness.manager.shutdown();
+
+    assert.equal((await harness.sessionStore.getByExecution(scope))?.state, "ready_for_follow_up");
+    assert.equal((await harness.executionStore.get(scope))?.status, "ready_for_follow_up");
+    assert.equal(harness.adapter.cancelled, false);
+  });
+
+  it("closes an idle chat session after its bounded TTL", async () => {
+    const harness = await createHarness("running", 20);
+    harness.adapter.capabilityOverrides = { chatLevelInteraction: true };
+    await harness.manager.start({ policy, providerContext, request, requiredInteractionTypes: [], scope });
+    await harness.adapter.send({ type: "run_completed", payload: { status: "completed" } });
+    assert.ok((await harness.sessionStore.getByExecution(scope))?.idleExpiresAt);
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.equal((await harness.sessionStore.getByExecution(scope))?.state, "completed");
+    assert.equal((await harness.executionStore.get(scope))?.status, "completed");
   });
 
   it("persists the provider handle before processing an early interaction", async () => {

@@ -38,7 +38,11 @@ export type AgentExecutionEventType =
   | "warning"
   | "error"
   | "run_completed"
-  | "run_cancelled";
+  | "run_cancelled"
+  | "chat_follow_up_claimed"
+  | "chat_follow_up_acknowledged"
+  | "chat_follow_up_delivery_unknown"
+  | "chat_session_closed";
 
 export interface ExecutionScope {
   appId: string;
@@ -69,6 +73,7 @@ export interface AgentSessionRecord extends ExecutionScope {
   idleExpiresAt: Date | null;
   lastEventSeq: number;
   protocolVersion: string;
+  policyBindingHash: string;
   providerRunRef: string | null;
   providerSessionRef: string;
   providerTurnRef: string | null;

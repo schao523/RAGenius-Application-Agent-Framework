@@ -3,6 +3,8 @@ ALTER TABLE "agent_sessions"
   ADD COLUMN "turn_sequence" INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN "active_chat_turn_id" TEXT,
   ADD COLUMN "idle_expires_at" TIMESTAMP(3);
+ALTER TABLE "agent_sessions"
+  ADD COLUMN "policy_binding_hash" TEXT NOT NULL DEFAULT '';
 
 ALTER TABLE "projected_agent_skill_governance"
   ADD COLUMN "interaction_channel" TEXT NOT NULL DEFAULT 'none';

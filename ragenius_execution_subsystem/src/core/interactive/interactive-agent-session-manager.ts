@@ -64,7 +64,7 @@ export interface AgentChatFollowUpInput extends ExecutionScope {
 }
 
 export type AgentChatFollowUpResult = {
-  outcome: "accepted" | "replay" | "active" | "stale" | "not_ready" | "not_found" | "delivery_unknown";
+  outcome: "accepted" | "replay" | "active" | "stale" | "not_ready" | "not_found" | "delivery_unknown" | "requires_new_execution";
 };
 
 interface ActiveProviderSession {
@@ -95,14 +95,17 @@ export class InteractiveAgentSessionManager {
   private readonly eventStore: AgentEventStore;
   private readonly executionStore: ExecutionStore;
   private readonly interactionStore: AgentInteractionStore;
+  private readonly idleTtlMs: number;
   private readonly sessionStore: AgentSessionStore;
   private readonly active = new Map<string, ActiveProviderSession>();
+  private readonly idleTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(options: {
     capabilityService: InteractiveCapabilityService;
     chatTurnStore?: AgentChatTurnStore;
     eventStore: AgentEventStore;
     executionStore: ExecutionStore;
+    idleTtlMs?: number;
     interactionStore: AgentInteractionStore;
     sessionStore: AgentSessionStore;
   }) {
@@ -110,16 +113,22 @@ export class InteractiveAgentSessionManager {
     this.chatTurnStore = options.chatTurnStore;
     this.eventStore = options.eventStore;
     this.executionStore = options.executionStore;
+    this.idleTtlMs = options.idleTtlMs ?? 900_000;
     this.interactionStore = options.interactionStore;
     this.sessionStore = options.sessionStore;
   }
 
   async followUp(input: AgentChatFollowUpInput): Promise<AgentChatFollowUpResult> {
     if (!this.chatTurnStore) return { outcome: "not_ready" };
+    if (input.text && requiresNewExecution(input.text)) {
+      return { outcome: "requires_new_execution" };
+    }
     const session = await this.sessionStore.getByExecution(input);
     const active = this.active.get(input.executionId);
-    if (!session || !active) return { outcome: "not_found" };
-    if (!session.capabilitySnapshot.chatLevelInteraction || !active.adapter.sendFollowUp) {
+    if (!session) return { outcome: "not_found" };
+    const activeSession = active ?? await this.restoreIdleSession(session);
+    if (!activeSession) return { outcome: "not_found" };
+    if (!session.capabilitySnapshot.chatLevelInteraction || !activeSession.adapter.sendFollowUp) {
       return { outcome: "not_ready" };
     }
     const message = followUpMessage(input);
@@ -134,8 +143,15 @@ export class InteractiveAgentSessionManager {
         outcome: claim.outcome === "claimed" ? "not_ready" : claim.outcome
       };
     }
+    this.clearIdleExpiry(input.executionId);
+    await this.eventStore.append({
+      ...input,
+      occurredAt: new Date(),
+      payload: { chat_turn_id: claim.record.chatTurnId, kind: claim.record.kind, sequence: claim.record.sequence },
+      type: "chat_follow_up_claimed"
+    });
     try {
-      active.handle = await active.adapter.sendFollowUp(active.handle, {
+      activeSession.handle = await activeSession.adapter.sendFollowUp(activeSession.handle, {
         idempotencyKey: input.idempotencyKey,
         kind: input.kind,
         message,
@@ -143,14 +159,14 @@ export class InteractiveAgentSessionManager {
       });
       await this.chatTurnStore.update(input, claim.record.chatTurnId, {
         acknowledgementState: "acknowledged",
-        providerRunRef: active.handle.providerRunRef,
+        providerRunRef: activeSession.handle.providerRunRef,
         state: "running"
       });
       await this.sessionStore.update(
         { ...input, agentSessionId: session.agentSessionId },
         {
-          providerRunRef: active.handle.providerRunRef,
-          providerTurnRef: active.handle.providerTurnRef
+          providerRunRef: activeSession.handle.providerRunRef,
+          providerTurnRef: activeSession.handle.providerTurnRef
         }
       );
       await this.executionStore.transition({
@@ -158,11 +174,23 @@ export class InteractiveAgentSessionManager {
         from: ["ready_for_follow_up"],
         result: stateResult(input.executionId, "running", "Agent follow-up started.")
       });
+      await this.eventStore.append({
+        ...input,
+        occurredAt: new Date(),
+        payload: { chat_turn_id: claim.record.chatTurnId, sequence: claim.record.sequence },
+        type: "chat_follow_up_acknowledged"
+      });
       return { outcome: "accepted" };
     } catch {
       await this.chatTurnStore.update(input, claim.record.chatTurnId, {
         acknowledgementState: "ambiguous",
         state: "delivery_unknown"
+      });
+      await this.eventStore.append({
+        ...input,
+        occurredAt: new Date(),
+        payload: { chat_turn_id: claim.record.chatTurnId, sequence: claim.record.sequence },
+        type: "chat_follow_up_delivery_unknown"
       });
       return { outcome: "delivery_unknown" };
     }
@@ -210,6 +238,7 @@ export class InteractiveAgentSessionManager {
         ? "same_turn"
         : "same_session_new_turn",
       protocolVersion: decision.preflight.protocolVersion,
+      policyBindingHash: input.providerContext.authorization.policy_fingerprint,
       providerRunRef: handle.providerRunRef,
       providerSessionRef: handle.providerSessionRef,
       providerTurnRef: handle.providerTurnRef,
@@ -356,13 +385,25 @@ export class InteractiveAgentSessionManager {
       from: ["ready_for_follow_up"],
       result: stateResult(scope.executionId, "completed", "Agent chat session ended.")
     });
+    await this.eventStore.append({
+      ...scope,
+      occurredAt: new Date(),
+      payload: { reason: session.idleExpiresAt && session.idleExpiresAt.getTime() <= Date.now() ? "idle_expired" : "user_ended" },
+      type: "chat_session_closed"
+    });
     this.clearActive(scope.executionId);
+    this.clearIdleExpiry(scope.executionId);
     return { ended: true, outcome: "ended" };
   }
 
   async shutdown(): Promise<void> {
     const activeSessions = [...this.active.values()];
     await Promise.all(activeSessions.map(async (active) => {
+      const session = await this.sessionStore.getByExecution(active.scope);
+      if (session?.state === "ready_for_follow_up") {
+        this.clearActive(active.scope.executionId);
+        return;
+      }
       await this.interactionStore.cancelPending(active.scope, new Date());
       await this.failExecution(
         active.scope,
@@ -386,6 +427,15 @@ export class InteractiveAgentSessionManager {
         sessionId: session.sessionId
       };
       const now = new Date();
+      if (session.state === "ready_for_follow_up" && session.capabilitySnapshot.chatLevelInteraction) {
+        const restored = await this.restoreIdleSession(session);
+        if (restored) {
+          if (session.idleExpiresAt) {
+            this.scheduleIdleExpiry(scope, session.sessionVersion, session.idleExpiresAt);
+          }
+          continue;
+        }
+      }
       await this.interactionStore.cancelPending(scope, now);
       await this.sessionStore.update(
         { ...scope, agentSessionId: session.agentSessionId },
@@ -511,9 +561,10 @@ export class InteractiveAgentSessionManager {
             state: "completed"
           });
         }
+        const idleExpiresAt = new Date(Date.now() + this.idleTtlMs);
         await this.sessionStore.update(
           { ...scope, agentSessionId: session.agentSessionId },
-          { activeChatTurnId: null, state: "ready_for_follow_up" }
+          { activeChatTurnId: null, idleExpiresAt, state: "ready_for_follow_up" }
         );
         await this.executionStore.transition({
           scope,
@@ -523,6 +574,7 @@ export class InteractiveAgentSessionManager {
             result: { ...event.payload }
           }
         });
+        this.scheduleIdleExpiry(scope, session.sessionVersion, idleExpiresAt);
         return;
       }
       await this.updateSessionState(scope, status === "failed" ? "failed" : "completed");
@@ -622,10 +674,48 @@ export class InteractiveAgentSessionManager {
     this.active.delete(executionId);
   }
 
+  private scheduleIdleExpiry(
+    scope: ExecutionScope,
+    sessionVersion: number,
+    idleExpiresAt: Date
+  ): void {
+    this.clearIdleExpiry(scope.executionId);
+    const timer = setTimeout(() => {
+      void this.endChatSession(scope, sessionVersion);
+    }, Math.max(0, idleExpiresAt.getTime() - Date.now()));
+    timer.unref();
+    this.idleTimers.set(scope.executionId, timer);
+  }
+
+  private clearIdleExpiry(executionId: string): void {
+    const timer = this.idleTimers.get(executionId);
+    if (timer) clearTimeout(timer);
+    this.idleTimers.delete(executionId);
+  }
+
   private async requireSession(scope: ExecutionScope): Promise<AgentSessionRecord> {
     const session = await this.sessionStore.getByExecution(scope);
     if (!session) throw new Error("Interactive Agent session was not persisted.");
     return session;
+  }
+
+  private async restoreIdleSession(session: AgentSessionRecord): Promise<ActiveProviderSession | null> {
+    if (session.state !== "ready_for_follow_up" || !session.policyBindingHash) return null;
+    const adapter = this.capabilityService.adapterFor(session.backend);
+    if (!adapter?.restore) return null;
+    const scope = { appId: session.appId, executionId: session.executionId, sessionId: session.sessionId };
+    const emit = async (event: InteractiveProviderEvent): Promise<void> => {
+      if (!this.active.has(scope.executionId)) return;
+      await this.consumeEvent(scope, event);
+    };
+    try {
+      const handle = await adapter.restore(session, emit);
+      const restored = { adapter, expiryTimers: new Map(), handle, scope };
+      this.active.set(scope.executionId, restored);
+      return restored;
+    } catch {
+      return null;
+    }
   }
 
   private async updateSessionState(
@@ -646,6 +736,10 @@ function followUpMessage(input: AgentChatFollowUpInput): string {
   const text = input.text?.trim();
   if (!text) throw new Error(`${input.kind} requires text.`);
   return text;
+}
+
+function requiresNewExecution(text: string): boolean {
+  return /\b(?:publish|upload|install|bind|switch\s+skills?|use\s+(?:a\s+)?different\s+skill|add\s+(?:a\s+)?new\s+artifact|delete\s+(?:the\s+)?file|move\s+(?:the\s+)?file|send\b.{0,80}\bto\b)\b/i.test(text);
 }
 
 function serializedBytes(value: Record<string, unknown>): number {

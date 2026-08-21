@@ -4,11 +4,13 @@ import { describe, it } from "node:test";
 import type { ExecuteAgentRequest } from "../../src/api/schemas/execution-request.schema.js";
 import { InMemoryExecutionStore } from "../../src/core/execution/execution-store.js";
 import { InMemoryAgentEventStore } from "../../src/core/interactive/agent-event-store.js";
+import { InMemoryAgentChatTurnStore } from "../../src/core/interactive/agent-chat-turn-store.js";
 import { InMemoryAgentInteractionStore } from "../../src/core/interactive/agent-interaction-store.js";
 import { InMemoryAgentSessionStore } from "../../src/core/interactive/agent-session-store.js";
 import { InteractiveCapabilityService } from "../../src/core/interactive/interactive-capability-service.js";
 import { InteractiveAgentSessionManager } from "../../src/core/interactive/interactive-agent-session-manager.js";
 import type { AgentSessionState, ExecutionScope } from "../../src/core/interactive/interactive-agent-types.js";
+import type { InteractiveAgentAdapter, ProviderSessionHandle } from "../../src/core/interactive/interactive-agent-adapter.js";
 
 const scopes: ExecutionScope[] = [
   { appId: "app_1", executionId: "execution_starting", sessionId: "session_1" },
@@ -25,6 +27,55 @@ const request = (scope: ExecutionScope): ExecuteAgentRequest => ({
 });
 
 describe("interactive Agent restart recovery", () => {
+  it("rehydrates a compatible idle chat session and accepts a follow-up", async () => {
+    const executionStore = new InMemoryExecutionStore();
+    const sessionStore = new InMemoryAgentSessionStore();
+    const interactionStore = new InMemoryAgentInteractionStore();
+    const eventStore = new InMemoryAgentEventStore();
+    const chatTurnStore = new InMemoryAgentChatTurnStore(sessionStore);
+    const scope = { appId: "app_1", executionId: "execution_idle", sessionId: "session_1" };
+    await executionStore.save({ executionId: scope.executionId, request: { ...request(scope), agent_backend: "openclaw_cli" }, result: result(scope.executionId, "ready_for_follow_up") });
+    await sessionStore.create({
+      ...scope, agentSessionId: "agent_session_idle", backend: "openclaw_cli",
+      capabilitySnapshot: {
+        cancellation: true, chatLevelInteraction: true, eventReplay: "none",
+        interactionTypes: [], protocolTransport: true, reconnectReconciliation: true,
+        sameSessionContinuation: true, sameTurnResume: false
+      },
+      continuationMode: "same_session_new_turn", policyBindingHash: "policy-binding",
+      protocolVersion: "2026.6.8", providerRunRef: "run_done",
+      providerSessionRef: "session-stable", providerTurnRef: "run_done",
+      state: "ready_for_follow_up", transport: "openclaw_gateway"
+    });
+    const adapter: InteractiveAgentAdapter = {
+      backend: "openclaw_cli",
+      async preflight() { throw new Error("not used"); },
+      async start() { throw new Error("not used"); },
+      async respond() { throw new Error("not used"); },
+      async cancel() { return { cancelled: true }; },
+      async reconcile() { return { state: "completed" }; },
+      async restore() {
+        return { providerRunRef: "run_done", providerSessionRef: "session-stable", providerTurnRef: "run_done", protectedHandle: {} };
+      },
+      async sendFollowUp(handle: ProviderSessionHandle) {
+        return { ...handle, providerRunRef: "run_next", providerTurnRef: "run_next" };
+      }
+    };
+    const manager = new InteractiveAgentSessionManager({
+      capabilityService: new InteractiveCapabilityService([adapter]), chatTurnStore,
+      eventStore, executionStore, interactionStore, sessionStore
+    });
+
+    await manager.reconcileInterrupted();
+    const response = await manager.followUp({
+      ...scope, expectedSessionVersion: 1, idempotencyKey: "follow-up-restart",
+      kind: "continue"
+    });
+
+    assert.equal(response.outcome, "accepted");
+    assert.equal((await sessionStore.getByExecution(scope))?.providerRunRef, "run_next");
+  });
+
   it("fails interrupted durable sessions without replaying pending input", async () => {
     const executionStore = new InMemoryExecutionStore();
     const sessionStore = new InMemoryAgentSessionStore();
@@ -137,7 +188,7 @@ describe("interactive Agent restart recovery", () => {
   });
 });
 
-function result(executionId: string, status: "running" | "waiting_for_interaction" | "completed") {
+function result(executionId: string, status: "running" | "waiting_for_interaction" | "ready_for_follow_up" | "completed") {
   return {
     execution_id: executionId,
     status,

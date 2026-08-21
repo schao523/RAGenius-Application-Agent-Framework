@@ -10,6 +10,7 @@ import type {
   AgentInteractionRecord,
   AgentInteractionType,
   AgentSessionState,
+  AgentSessionRecord,
   AgentTransport,
   ExecutionScope
 } from "./interactive-agent-types.js";
@@ -106,6 +107,10 @@ export interface InteractiveAgentAdapter {
   respond(handle: ProviderSessionHandle, claim: ClaimedInteraction): Promise<void>;
   cancel(handle: ProviderSessionHandle): Promise<ProviderCancellationResult>;
   reconcile(handle: ProviderSessionHandle): Promise<ProviderReconciliationResult>;
+  restore?(
+    session: AgentSessionRecord,
+    emit: (event: InteractiveProviderEvent) => Promise<void>
+  ): Promise<ProviderSessionHandle>;
   sendFollowUp?(
     handle: ProviderSessionHandle,
     claim: ClaimedChatFollowUp

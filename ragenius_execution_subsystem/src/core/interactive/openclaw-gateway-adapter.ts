@@ -28,7 +28,7 @@ import type {
   ProviderReconciliationResult,
   ProviderSessionHandle
 } from "./interactive-agent-adapter.js";
-import type { AgentSessionState } from "./interactive-agent-types.js";
+import type { AgentSessionRecord, AgentSessionState } from "./interactive-agent-types.js";
 import {
   redactOpenClawGatewayDiagnostic,
   type OpenClawGatewayHello
@@ -44,6 +44,7 @@ import {
 export interface OpenClawGatewayInteractiveConfig {
   agentId: string;
   chatLevelEnabled: boolean;
+  chatIdleTtlMs: number;
   credential?: string;
   credentialEnv: string;
   enabled: boolean;
@@ -281,6 +282,38 @@ export class OpenClawGatewayAdapter implements InteractiveAgentAdapter {
     state.messageTruncated = false;
     state.state = "running";
     this.activeByRun.set(runId, state);
+    for (const key of providerSessionAliases(state.sessionKey, this.config.agentId)) {
+      this.activeBySession.set(key, state);
+    }
+    return handleFor(state);
+  }
+
+  async restore(
+    session: AgentSessionRecord,
+    emit: (event: InteractiveProviderEvent) => Promise<void>
+  ): Promise<ProviderSessionHandle> {
+    if (!this.config.chatLevelEnabled) throw new Error("OpenClaw chat-level continuation is disabled.");
+    if (session.protocolVersion && !this.config.supportedVersions.includes(session.protocolVersion)) {
+      throw new Error(`OpenClaw Gateway version ${session.protocolVersion} is not supported.`);
+    }
+    if (!session.providerSessionRef || !session.policyBindingHash) {
+      throw new Error("OpenClaw idle session lacks durable recovery references.");
+    }
+    await this.connection();
+    const runId = session.providerRunRef || session.providerTurnRef || `idle:${session.agentSessionId}`;
+    const state: OpenClawProtectedHandle = {
+      chatLevelInteraction: true,
+      emit,
+      expectedOutputs: [],
+      messageText: "",
+      messageTruncated: false,
+      pendingApprovals: new Map(),
+      policyBindingHash: session.policyBindingHash,
+      runId,
+      sessionKey: session.providerSessionRef,
+      state: "completed",
+      workspaceRoot: buildOpenClawRunWorkspaceRoot(this.config.workspaceRoot, session.executionId)
+    };
     for (const key of providerSessionAliases(state.sessionKey, this.config.agentId)) {
       this.activeBySession.set(key, state);
     }

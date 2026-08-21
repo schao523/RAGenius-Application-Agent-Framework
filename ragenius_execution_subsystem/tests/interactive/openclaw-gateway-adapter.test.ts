@@ -442,6 +442,7 @@ function config(overrides: Record<string, unknown> = {}) {
     credential: "gateway-secret",
     credentialEnv: "OPENCLAW_GATEWAY_APPROVAL_TOKEN",
     chatLevelEnabled: false,
+    chatIdleTtlMs: 900000,
     enabled: true,
     gatewayUrl: "ws://127.0.0.1:18789",
     interactionTtlMs: 60000,

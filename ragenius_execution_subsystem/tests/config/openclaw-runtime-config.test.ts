@@ -22,6 +22,8 @@ describe("OpenClaw runtime config", () => {
     assert.equal(runtimeConfig.providers.openClaw.timeoutMs, 120000);
     assert.deepEqual(runtimeConfig.providers.openClawGateway, {
       agentId: "main",
+      chatIdleTtlMs: 900000,
+      chatLevelEnabled: false,
       credentialEnv: "OPENCLAW_GATEWAY_APPROVAL_TOKEN",
       enabled: false,
       gatewayUrl: "ws://127.0.0.1:18789",

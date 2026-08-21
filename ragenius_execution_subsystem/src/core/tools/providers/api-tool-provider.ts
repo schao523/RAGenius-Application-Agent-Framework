@@ -58,6 +58,7 @@ export class MockApiToolProvider implements ApiToolProvider {
       openClawGateway: {
         agentId: "main",
         chatLevelEnabled: false,
+        chatIdleTtlMs: 900000,
         credentialEnv: "OPENCLAW_GATEWAY_APPROVAL_TOKEN",
         enabled: false,
         gatewayUrl: "ws://127.0.0.1:18789",

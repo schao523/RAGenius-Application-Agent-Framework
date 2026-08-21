@@ -99,7 +99,7 @@ export const registerInteractiveAgentRoutes: FastifyPluginAsync = async (app) =>
     if (!await app.services.executionStore.get(scope)) throw executionNotFound();
     const session = await app.services.agentSessionStore.getByExecution(scope);
     if (!session) throw executionNotFound();
-    const turns = await app.services.agentChatTurnStore.list(scope);
+    const turns = (await app.services.agentChatTurnStore.list(scope)).slice(-100);
     return reply.status(200).send({
       agent_session_id: session.agentSessionId,
       execution_id: executionId,
@@ -135,7 +135,15 @@ export const registerInteractiveAgentRoutes: FastifyPluginAsync = async (app) =>
     });
     if (result.outcome === "not_found") throw executionNotFound();
     if (!["accepted", "replay"].includes(result.outcome)) {
-      throw conflict(`CHAT_${result.outcome.toUpperCase()}`, `Chat follow-up is ${result.outcome.replaceAll("_", " ")}.`);
+      const codes = {
+        active: "CHAT_RUN_ALREADY_ACTIVE",
+        delivery_unknown: "CHAT_FOLLOW_UP_DELIVERY_UNKNOWN",
+        not_ready: "CHAT_SESSION_NOT_READY",
+        requires_new_execution: "CHAT_FOLLOW_UP_REQUIRES_NEW_EXECUTION",
+        stale: "CHAT_SESSION_VERSION_STALE"
+      } as const;
+      const outcome = result.outcome as keyof typeof codes;
+      throw conflict(codes[outcome] ?? "CHAT_SESSION_NOT_READY", `Chat follow-up is ${result.outcome.replaceAll("_", " ")}.`);
     }
     return reply.status(result.outcome === "accepted" ? 202 : 200).send({
       execution_id: executionId,

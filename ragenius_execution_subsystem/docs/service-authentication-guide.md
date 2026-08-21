@@ -122,15 +122,26 @@ The health check should continue to succeed without authentication:
 Invoke-RestMethod http://localhost:3001/healthz
 ```
 
-## Current `.env` Limitation
+## `.env` Loading
 
-The current execution-subsystem PowerShell script checks that `.env` exists,
-but it does not load `.env` values into the PowerShell environment.
+The execution-subsystem PowerShell script loads values from its local `.env`
+when the same process variable has not already been set. Explicit `$env:`
+values therefore override `.env`. Restart the service after changing either.
 
-For now, setting the variables with `$env:` before starting each service is the
-reliable activation method. Adding the variables only to `.env` will not
-activate authentication unless the startup process is updated to load that
-file.
+## OpenClaw Chat-Level Continuation
+
+Chat-level continuation is independently disabled by default. Development
+testing requires both flags and an exact supported Gateway version:
+
+```powershell
+$env:OPENCLAW_GATEWAY_INTERACTIVE_ENABLED = "true"
+$env:OPENCLAW_GATEWAY_CHAT_LEVEL_ENABLED = "true"
+$env:OPENCLAW_GATEWAY_CHAT_IDLE_TTL_MS = "900000"
+```
+
+The startup script rejects chat-level mode when the base Gateway interactive
+transport is disabled. Keep chat-level mode off for production until the full
+CL-01 through CL-28 acceptance matrix passes.
 
 ## Disable Authentication for Local Development
 

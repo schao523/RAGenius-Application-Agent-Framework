@@ -22,6 +22,7 @@ export interface AgentSessionRow {
   id: string;
   lastEventSeq: number;
   protocolVersion: string;
+  policyBindingHash?: string;
   sessionVersion?: number;
   providerRunRef: string | null;
   providerSessionRef: string;
@@ -68,6 +69,7 @@ export class PrismaAgentSessionStore implements AgentSessionStore {
         providerTurnRef: input.providerTurnRef,
         continuationMode: input.continuationMode,
         protocolVersion: input.protocolVersion,
+        policyBindingHash: input.policyBindingHash ?? "",
         capabilitySnapshot: input.capabilitySnapshot
       },
       update: {}
@@ -94,7 +96,7 @@ export class PrismaAgentSessionStore implements AgentSessionStore {
 
   async listNonTerminal(): Promise<AgentSessionRecord[]> {
     const rows = await this.prisma.agentSession.findMany({
-      where: { state: { in: ["starting", "running", "waiting_for_interaction"] } }
+      where: { state: { in: ["starting", "running", "waiting_for_interaction", "ready_for_follow_up"] } }
     });
     return rows.map(toRecord);
   }
@@ -148,6 +150,7 @@ function toRecord(row: AgentSessionRow): AgentSessionRecord {
     idleExpiresAt: row.idleExpiresAt ?? null,
     lastEventSeq: row.lastEventSeq,
     protocolVersion: row.protocolVersion,
+    policyBindingHash: row.policyBindingHash ?? "",
     providerRunRef: row.providerRunRef,
     providerSessionRef: row.providerSessionRef,
     providerTurnRef: row.providerTurnRef,

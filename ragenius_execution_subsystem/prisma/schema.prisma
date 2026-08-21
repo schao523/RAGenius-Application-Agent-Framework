@@ -56,6 +56,7 @@ model AgentSession {
   providerTurnRef    String?  @map("provider_turn_ref")
   continuationMode   String   @map("continuation_mode")
   protocolVersion    String   @map("protocol_version")
+  policyBindingHash  String   @default("") @map("policy_binding_hash")
   capabilitySnapshot Json     @map("capability_snapshot")
   lastInteractionSeq Int      @default(0) @map("last_interaction_seq")
   lastEventSeq       Int      @default(0) @map("last_event_seq")
