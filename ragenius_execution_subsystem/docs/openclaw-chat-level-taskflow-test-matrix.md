@@ -7,6 +7,11 @@ Date: 2026-08-21
 Pre-implementation live feasibility and acceptance matrix. Passing this matrix
 does not authorize typed OpenClaw clarification or selection.
 
+Live results are recorded in
+`openclaw-chat-level-taskflow-test-results-2026-08-21.md`. Provider feasibility
+passed, but the production gate remains incomplete pending the RAGenius-owned
+governance, persistence, concurrency, isolation, and lifecycle cases.
+
 ## Safety Profile
 
 - Use the exact administrator-approved local OpenClaw and TaskFlow versions.
