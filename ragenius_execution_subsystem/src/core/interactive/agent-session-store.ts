@@ -5,7 +5,13 @@ import type {
 
 export type CreateAgentSessionInput = Omit<
   AgentSessionRecord,
-  "createdAt" | "lastEventSeq" | "updatedAt"
+  | "activeChatTurnId"
+  | "createdAt"
+  | "idleExpiresAt"
+  | "lastEventSeq"
+  | "sessionVersion"
+  | "turnSequence"
+  | "updatedAt"
 >;
 
 export interface AgentSessionScope extends ExecutionScope {
@@ -16,11 +22,15 @@ export type UpdateAgentSessionInput = Partial<
   Pick<
     AgentSessionRecord,
     | "capabilitySnapshot"
+    | "activeChatTurnId"
+    | "idleExpiresAt"
     | "lastEventSeq"
     | "providerRunRef"
     | "providerSessionRef"
     | "providerTurnRef"
+    | "sessionVersion"
     | "state"
+    | "turnSequence"
   >
 >;
 
@@ -51,9 +61,13 @@ export class InMemoryAgentSessionStore implements AgentSessionStore {
     const now = new Date();
     const record: AgentSessionRecord = {
       ...input,
+      activeChatTurnId: null,
       capabilitySnapshot: cloneCapabilities(input.capabilitySnapshot),
       createdAt: now,
+      idleExpiresAt: null,
       lastEventSeq: 0,
+      sessionVersion: 1,
+      turnSequence: 0,
       updatedAt: now
     };
     this.records.set(record.agentSessionId, record);

@@ -59,15 +59,47 @@ model AgentSession {
   capabilitySnapshot Json     @map("capability_snapshot")
   lastInteractionSeq Int      @default(0) @map("last_interaction_seq")
   lastEventSeq       Int      @default(0) @map("last_event_seq")
+  sessionVersion     Int      @default(1) @map("session_version")
+  turnSequence       Int      @default(0) @map("turn_sequence")
+  activeChatTurnId   String?  @map("active_chat_turn_id")
+  idleExpiresAt      DateTime? @map("idle_expires_at")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
   execution    Execution          @relation(fields: [executionId], references: [id], onDelete: Cascade)
   interactions AgentInteraction[]
+  chatTurns    AgentChatTurn[]
 
   @@index([appId, sessionId], map: "idx_agent_sessions_app_session")
   @@index([state], map: "idx_agent_sessions_state")
   @@map("agent_sessions")
+}
+
+model AgentChatTurn {
+  id                   String    @id
+  agentSessionId       String    @map("agent_session_id")
+  executionId          String    @map("execution_id")
+  appId                String    @map("app_id")
+  sessionId            String    @map("session_id")
+  sequence             Int
+  idempotencyKey       String    @map("idempotency_key")
+  kind                 String
+  state                String
+  acknowledgementState String    @default("unacknowledged") @map("acknowledgement_state")
+  requestSummary       Json      @map("request_summary")
+  providerRunRef       String?   @map("provider_run_ref")
+  normalizedResult     Json?     @map("normalized_result")
+  completedAt          DateTime? @map("completed_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  agentSession AgentSession @relation(fields: [agentSessionId], references: [id], onDelete: Cascade)
+
+  @@unique([agentSessionId, sequence], map: "agent_chat_turns_session_sequence_key")
+  @@unique([agentSessionId, idempotencyKey], map: "agent_chat_turns_session_idempotency_key")
+  @@index([appId, sessionId, executionId], map: "idx_agent_chat_turns_scope")
+  @@index([state], map: "idx_agent_chat_turns_state")
+  @@map("agent_chat_turns")
 }
 
 model AgentInteraction {

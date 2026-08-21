@@ -101,6 +101,14 @@ import {
   PrismaAgentEventStore,
   type AgentEventPrismaClient
 } from "./core/interactive/prisma-agent-event-store.js";
+import {
+  InMemoryAgentChatTurnStore,
+  type AgentChatTurnStore
+} from "./core/interactive/agent-chat-turn-store.js";
+import {
+  PrismaAgentChatTurnStore,
+  type AgentChatTurnPrismaClient
+} from "./core/interactive/prisma-agent-chat-turn-store.js";
 import { InteractiveCapabilityService } from "./core/interactive/interactive-capability-service.js";
 import { InteractiveAgentSessionManager } from "./core/interactive/interactive-agent-session-manager.js";
 import { CodexAppServerAdapter } from "./core/interactive/codex-app-server-adapter.js";
@@ -122,6 +130,7 @@ export interface McpDiscoveryState {
 }
 
 export interface AppServices {
+  agentChatTurnStore: AgentChatTurnStore;
   agentEventStore: AgentEventStore;
   agentExecutionQueue: AgentExecutionQueue;
   agentInteractionStore: AgentInteractionStore;
@@ -188,6 +197,13 @@ export function createAppServices(
           dependencies.prismaClient as unknown as AgentInteractionPrismaClient
         )
       : new InMemoryAgentInteractionStore());
+  const agentChatTurnStore =
+    overrides.agentChatTurnStore ??
+    (dependencies.prismaClient
+      ? new PrismaAgentChatTurnStore(
+          dependencies.prismaClient as unknown as AgentChatTurnPrismaClient
+        )
+      : new InMemoryAgentChatTurnStore(agentSessionStore));
   const agentEventStore =
     overrides.agentEventStore ??
     (dependencies.prismaClient
@@ -444,6 +460,7 @@ export function createAppServices(
   };
 
   return {
+    agentChatTurnStore,
     agentEventStore,
     agentExecutionQueue,
     agentInteractionStore,

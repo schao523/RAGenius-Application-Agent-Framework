@@ -18,6 +18,7 @@ export const executionStatusSchema = z.enum([
   "blocked",
   "pending_confirmation",
   "waiting_for_interaction",
+  "ready_for_follow_up",
   "cancelled"
 ]);
 

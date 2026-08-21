@@ -6,6 +6,7 @@ export type AgentSessionState =
   | "starting"
   | "running"
   | "waiting_for_interaction"
+  | "ready_for_follow_up"
   | "completed"
   | "failed"
   | "cancelled";
@@ -56,18 +57,48 @@ export interface AgentInteractionCapabilities {
 }
 
 export interface AgentSessionRecord extends ExecutionScope {
+  activeChatTurnId: string | null;
   agentSessionId: string;
   backend: AgentBackend;
   capabilitySnapshot: AgentInteractionCapabilities;
   continuationMode: "same_turn" | "same_session_new_turn";
   createdAt: Date;
+  idleExpiresAt: Date | null;
   lastEventSeq: number;
   protocolVersion: string;
   providerRunRef: string | null;
   providerSessionRef: string;
   providerTurnRef: string | null;
+  sessionVersion: number;
   state: AgentSessionState;
   transport: AgentTransport;
+  turnSequence: number;
+  updatedAt: Date;
+}
+
+export type AgentChatFollowUpKind = "reply" | "continue" | "revise" | "graceful_cancel";
+export type AgentChatTurnState =
+  | "claimed"
+  | "submitted"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "delivery_unknown";
+
+export interface AgentChatTurnRecord extends ExecutionScope {
+  acknowledgementState: "unacknowledged" | "acknowledged" | "ambiguous";
+  agentSessionId: string;
+  chatTurnId: string;
+  completedAt: Date | null;
+  createdAt: Date;
+  idempotencyKey: string;
+  kind: AgentChatFollowUpKind;
+  normalizedResult: Record<string, unknown> | null;
+  providerRunRef: string | null;
+  requestSummary: Record<string, unknown>;
+  sequence: number;
+  state: AgentChatTurnState;
   updatedAt: Date;
 }
 

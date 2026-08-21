@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { InMemoryAgentEventStore } from "../../src/core/interactive/agent-event-store.js";
 import { InMemoryAgentInteractionStore } from "../../src/core/interactive/agent-interaction-store.js";
 import { InMemoryAgentSessionStore } from "../../src/core/interactive/agent-session-store.js";
+import { InMemoryAgentChatTurnStore } from "../../src/core/interactive/agent-chat-turn-store.js";
 import {
   PrismaAgentEventStore,
   type AgentEventPrismaClient
@@ -38,6 +39,50 @@ const capabilities: AgentInteractionCapabilities = {
 };
 
 describe("interactive agent stores", () => {
+  it("claims one chat turn by session version and replays the same idempotency key", async () => {
+    const sessions = new InMemoryAgentSessionStore();
+    await sessions.create({
+      ...scope,
+      agentSessionId: "agent_session_chat",
+      backend: "openclaw_cli",
+      capabilitySnapshot: capabilities,
+      continuationMode: "same_session_new_turn",
+      protocolVersion: "2026.6.8",
+      providerRunRef: null,
+      providerSessionRef: "protected-session-ref",
+      providerTurnRef: null,
+      state: "ready_for_follow_up",
+      transport: "openclaw_gateway"
+    });
+    const turns = new InMemoryAgentChatTurnStore(sessions);
+    const input = {
+      ...scope,
+      agentSessionId: "agent_session_chat",
+      expectedSessionVersion: 1,
+      idempotencyKey: "follow-up-001",
+      kind: "reply" as const,
+      requestSummary: { text: "Use the second title." },
+      now: new Date("2026-08-21T10:00:00.000Z")
+    };
+
+    const first = await turns.claim(input);
+    const replay = await turns.claim(input);
+    const concurrent = await turns.claim({
+      ...input,
+      expectedSessionVersion: 2,
+      idempotencyKey: "follow-up-002"
+    });
+
+    assert.equal(first.outcome, "claimed");
+    assert.equal(first.record?.sequence, 1);
+    assert.equal(replay.outcome, "replay");
+    assert.equal(replay.record?.chatTurnId, first.record?.chatTurnId);
+    assert.equal(concurrent.outcome, "active");
+    const session = await sessions.getByExecution(scope);
+    assert.equal(session?.sessionVersion, 2);
+    assert.equal(session?.activeChatTurnId, first.record?.chatTurnId);
+  });
+
   it("creates one scoped session per execution and updates provider state", async () => {
     const store = new InMemoryAgentSessionStore();
     const created = await store.create({

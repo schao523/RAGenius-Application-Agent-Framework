@@ -11,21 +11,25 @@ import type {
 } from "./interactive-agent-types.js";
 
 export interface AgentSessionRow {
+  activeChatTurnId?: string | null;
   appId: string;
   backend: string;
   capabilitySnapshot: unknown;
   continuationMode: string;
   createdAt: Date;
   executionId: string;
+  idleExpiresAt?: Date | null;
   id: string;
   lastEventSeq: number;
   protocolVersion: string;
+  sessionVersion?: number;
   providerRunRef: string | null;
   providerSessionRef: string;
   providerTurnRef: string | null;
   sessionId: string;
   state: string;
   transport: string;
+  turnSequence?: number;
   updatedAt: Date;
 }
 
@@ -133,6 +137,7 @@ function asCapabilities(value: unknown): AgentInteractionCapabilities {
 
 function toRecord(row: AgentSessionRow): AgentSessionRecord {
   return {
+    activeChatTurnId: row.activeChatTurnId ?? null,
     agentSessionId: row.id,
     appId: row.appId,
     backend: row.backend as AgentSessionRecord["backend"],
@@ -140,14 +145,17 @@ function toRecord(row: AgentSessionRow): AgentSessionRecord {
     continuationMode: row.continuationMode as AgentSessionRecord["continuationMode"],
     createdAt: row.createdAt,
     executionId: row.executionId,
+    idleExpiresAt: row.idleExpiresAt ?? null,
     lastEventSeq: row.lastEventSeq,
     protocolVersion: row.protocolVersion,
     providerRunRef: row.providerRunRef,
     providerSessionRef: row.providerSessionRef,
     providerTurnRef: row.providerTurnRef,
     sessionId: row.sessionId,
+    sessionVersion: row.sessionVersion ?? 1,
     state: row.state as AgentSessionRecord["state"],
     transport: row.transport as AgentSessionRecord["transport"],
+    turnSequence: row.turnSequence ?? 0,
     updatedAt: row.updatedAt
   };
 }
