@@ -531,6 +531,34 @@ class AgentSkillAdminRouteTests(unittest.TestCase):
             "AGENT_SKILL_INTERACTION_POLICY_INVALID",
         )
 
+    def test_review_page_explains_recommendation_and_form_persists_typed_policy(self) -> None:
+        _, skill = self._create_and_discover()
+
+        page = self.client.get(f"/agent-skills/{skill['id']}")
+        approved = self.client.post(
+            f"/agent-skills/{skill['id']}/approve",
+            data={
+                "expected_fingerprint": skill["content_fingerprint"],
+                "interaction_channel": "typed",
+                "interaction_requirement": "conditional",
+                "supported_interaction_types": ["clarification", "selection"],
+            },
+        )
+
+        body = page.get_data(as_text=True)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Advisory recommendation", body)
+        self.assertIn("Administrator confirmation is required", body)
+        self.assertIn("Structured clarification or selection", body)
+        self.assertEqual(approved.status_code, 302)
+        stored = self.store.get_agent_skill_catalog_item(skill["id"])["approval"]
+        self.assertEqual(stored["interaction_channel"], "typed")
+        self.assertEqual(stored["interaction_requirement"], "conditional")
+        self.assertEqual(
+            stored["supported_interaction_types_json"],
+            '["clarification", "selection"]',
+        )
+
     def test_agent_skill_mutations_do_not_accept_get(self) -> None:
         _, skill = self._create_and_discover()
 

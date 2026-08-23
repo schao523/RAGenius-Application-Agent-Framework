@@ -27,6 +27,7 @@ class GraphState(TypedDict, total=False):
 
     # user input / context
     user_query: str
+    attached_artifact_refs: List[Dict[str, Any]]
     turn_input_type: str
     session_upload_event_ids: List[str]
     pending_upload_analysis: bool
@@ -123,6 +124,7 @@ class GraphStateModel(BaseModel):
     template_version: Optional[int] = None
 
     user_query: Optional[str] = None
+    attached_artifact_refs: Optional[List[Dict[str, Any]]] = None
     turn_input_type: Optional[str] = None
     session_upload_event_ids: Optional[List[str]] = None
     pending_upload_analysis: Optional[bool] = None

@@ -546,7 +546,21 @@ def run(state: GraphState) -> GraphState:
 
     if chat_repo is not None and state.get("session_id"):
         if state.get("user_query") and turn_input_type != "session_upload":
-            chat_repo.append(state["session_id"], "user", state["user_query"])
+            attached_artifact_refs = [
+                ref
+                for ref in (state.get("attached_artifact_refs") or [])
+                if isinstance(ref, dict) and str(ref.get("artifact_id") or "").strip()
+            ]
+            chat_repo.append(
+                state["session_id"],
+                "user",
+                state["user_query"],
+                retrieval_summary=(
+                    {"attached_artifact_refs": attached_artifact_refs}
+                    if attached_artifact_refs
+                    else None
+                ),
+            )
         final = state.get("final_answer", {})
         if isinstance(final, dict):
             chat_repo.append(

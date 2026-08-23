@@ -157,6 +157,11 @@ must label that trust model and must not claim exactly-once enforcement.
 ## Cancellation And Closure
 
 - `graceful_cancel` is an ordinary follow-up and may produce a final summary.
+- When a completed `graceful_cancel` turn contains a bounded final summary, the
+  app backend persists that summary exactly once as an assistant chat message
+  linked to the execution, then closes the local chat-level Agent session.
+  This presentation lifecycle does not make the request an authorization or
+  imply authoritative provider cancellation.
 - Authoritative cancellation uses `chat.abort` with the exact active run and
   session, followed by `agent.wait` reconciliation.
 - `End session` is accepted only with no active run. It closes local
@@ -191,9 +196,20 @@ to every exact discovered skill directory.
 
 ## App UX
 
+Execution Composer exposes OpenClaw under `Interactive Agent` and submits
+`interaction_requirements: { transport: "interactive", style: "chat" }`.
+Preflight requires the version-gated `chat_level_interaction` capability; no
+typed clarification or selection capability is advertised.
+
 The app displays completed Agent output followed by a chat follow-up composer
-with `Reply`, `Continue`, `Revise`, `Graceful cancel`, `Cancel current run`, and
-`End session` as state-appropriate actions.
+with `Reply`, `Continue without reply`, `Revise`, `Stop and summarize`,
+`Cancel current run`, and `Cancel interaction` as state-appropriate actions.
+Long Agent output is confined to an independently scrollable response region;
+the reply field and state-appropriate actions remain outside that region and
+visible. After `Stop and summarize` completes, the final summary is projected
+into the normal chat transcript and the follow-up composer closes. A bounded
+`Finish and close` fallback may be shown if automatic finalization must be
+retried.
 
 The app must say that follow-ups start a new Agent run in the same OpenClaw
 session. It must not say that OpenClaw is paused, that an option is formally

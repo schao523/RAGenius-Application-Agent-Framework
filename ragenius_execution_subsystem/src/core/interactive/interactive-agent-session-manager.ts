@@ -5,6 +5,11 @@ import type { NormalizedExecutionResult } from "../../api/schemas/common-respons
 import { providerInteractionRequestSchema } from "../../api/schemas/interactive-agent.schema.js";
 import type { AgentPolicyDecision } from "../agents/agent-policy.js";
 import type { AgentProviderExecutionContext } from "../agents/agent-provider-context.js";
+import {
+  planAgentExpectedOutputs,
+  type PlannedAgentExpectedOutput
+} from "../agents/agent-expected-output-planner.js";
+import type { PersistedAgentOutputArtifact } from "../agents/agent-output-artifact-persister.js";
 import type { AgentSkillRecoveryClass } from "../agent-skills/agent-skill-types.js";
 import type { ExecutionStore } from "../execution/execution-store.js";
 
@@ -29,7 +34,10 @@ export interface StartInteractiveAgentInput {
   policy: AgentPolicyDecision;
   providerContext: AgentProviderExecutionContext;
   request: ExecuteAgentRequest;
+  inferredInteractionTypes?: AgentInteractionType[];
+  requiredChatLevelInteraction?: boolean;
   requiredInteractionTypes: AgentInteractionType[];
+  requiredOccurrenceTypes?: AgentInteractionType[];
   requiredRecoveryClass?: AgentSkillRecoveryClass;
   scope: ExecutionScope;
 }
@@ -72,10 +80,16 @@ interface ActiveProviderSession {
   adapter: InteractiveAgentAdapter;
   expiryTimers: Map<string, NodeJS.Timeout>;
   handle: ProviderSessionHandle;
+  finalResponseText: string;
+  finalResponseTruncated: boolean;
+  inferredInteractionTypes: AgentInteractionType[];
+  request: ExecuteAgentRequest;
+  requiredOccurrenceTypes: Set<AgentInteractionType>;
   scope: ExecutionScope;
 }
 
 const MAX_NORMALIZED_PROVIDER_EVENT_BYTES = 65_536;
+const MAX_FINAL_RESPONSE_BYTES = 65_536;
 const PROVIDER_EVENT_TYPES = new Set<InteractiveProviderEvent["type"]>([
   "error",
   "warning",
@@ -96,6 +110,12 @@ export class InteractiveAgentSessionManager {
   private readonly eventStore: AgentEventStore;
   private readonly executionStore: ExecutionStore;
   private readonly interactionStore: AgentInteractionStore;
+  private readonly persistFinalResponse: ((input: {
+    executionId: string;
+    output: PlannedAgentExpectedOutput;
+    request: ExecuteAgentRequest;
+    text: string;
+  }) => Promise<PersistedAgentOutputArtifact>) | undefined;
   private readonly idleTtlMs: number;
   private readonly sessionStore: AgentSessionStore;
   private readonly active = new Map<string, ActiveProviderSession>();
@@ -108,6 +128,12 @@ export class InteractiveAgentSessionManager {
     executionStore: ExecutionStore;
     idleTtlMs?: number;
     interactionStore: AgentInteractionStore;
+    persistFinalResponse?: (input: {
+      executionId: string;
+      output: PlannedAgentExpectedOutput;
+      request: ExecuteAgentRequest;
+      text: string;
+    }) => Promise<PersistedAgentOutputArtifact>;
     sessionStore: AgentSessionStore;
   }) {
     this.capabilityService = options.capabilityService;
@@ -116,6 +142,7 @@ export class InteractiveAgentSessionManager {
     this.executionStore = options.executionStore;
     this.idleTtlMs = options.idleTtlMs ?? 900_000;
     this.interactionStore = options.interactionStore;
+    this.persistFinalResponse = options.persistFinalResponse;
     this.sessionStore = options.sessionStore;
   }
 
@@ -266,7 +293,12 @@ export class InteractiveAgentSessionManager {
     this.active.set(input.scope.executionId, {
       adapter: decision.adapter,
       expiryTimers: new Map(),
+      finalResponseText: "",
+      finalResponseTruncated: false,
       handle,
+      inferredInteractionTypes: [...(input.inferredInteractionTypes ?? [])],
+      request: input.request,
+      requiredOccurrenceTypes: new Set(input.requiredOccurrenceTypes ?? []),
       scope: input.scope
     });
     await this.eventStore.append({
@@ -504,6 +536,10 @@ export class InteractiveAgentSessionManager {
       );
       return;
     }
+    const activeSession = this.active.get(scope.executionId);
+    if (event.type === "message_delta" && activeSession) {
+      appendFinalResponse(activeSession, event.payload.delta);
+    }
     if (event.type === "interaction_requested") {
       if (!event.interaction) {
         await this.failAndTerminate(
@@ -534,6 +570,11 @@ export class InteractiveAgentSessionManager {
           ...(option.description ? { description: option.description } : {})
         }))
       });
+      if (activeSession) {
+        activeSession.finalResponseText = "";
+        activeSession.finalResponseTruncated = false;
+      }
+      this.active.get(scope.executionId)?.requiredOccurrenceTypes.delete(interaction.type);
       this.scheduleInteractionExpiry(scope, interaction.interactionId, interaction.expiresAt);
       await this.eventStore.append({
         ...scope,
@@ -568,6 +609,28 @@ export class InteractiveAgentSessionManager {
     });
     if (event.type === "run_completed") {
       const status = terminalStatus(event.payload.status);
+      const pendingInteractions = (await this.interactionStore.list(scope)).filter(
+        (interaction) => interaction.state === "pending"
+      );
+      if (status === "completed" && pendingInteractions.length > 0) {
+        await this.failAndTerminate(
+          scope,
+          "PROVIDER_COMPLETED_WITH_PENDING_INTERACTION",
+          "The Agent provider completed while user input was still pending."
+        );
+        return;
+      }
+      const missingRequiredInteractions = [
+        ...(this.active.get(scope.executionId)?.requiredOccurrenceTypes ?? [])
+      ];
+      if (status === "completed" && missingRequiredInteractions.length > 0) {
+        await this.failAndTerminate(
+          scope,
+          "REQUIRED_INTERACTION_NOT_OBSERVED",
+          `The Agent completed without requesting required interaction types: ${missingRequiredInteractions.join(", ")}.`
+        );
+        return;
+      }
       const session = await this.requireSession(scope);
       if (status === "completed" && session.capabilitySnapshot.chatLevelInteraction) {
         const activeTurnId = session.activeChatTurnId;
@@ -595,13 +658,65 @@ export class InteractiveAgentSessionManager {
         this.scheduleIdleExpiry(scope, session.sessionVersion, idleExpiresAt);
         return;
       }
+      const outputText = activeSession?.finalResponseText.trim() ?? "";
+      const persistenceOutputs = activeSession
+        ? planAgentExpectedOutputs({ request: activeSession.request }).filter((output) =>
+            output.persist_as_artifact === true &&
+            output.required !== true &&
+            output.artifact_type === "agent_output"
+          )
+        : [];
+      const artifacts: PersistedAgentOutputArtifact[] = [];
+      if (status === "completed" && persistenceOutputs.length > 0) {
+        if (!outputText || !this.persistFinalResponse) {
+          await this.failExecution(
+            scope,
+            !outputText ? "AGENT_OUTPUT_EMPTY" : "AGENT_OUTPUT_PERSISTENCE_UNAVAILABLE",
+            !outputText
+              ? "The interactive Agent completed without a final response to save."
+              : "Interactive Agent output persistence is unavailable."
+          );
+          return;
+        }
+        try {
+          for (const output of persistenceOutputs) {
+            artifacts.push(await this.persistFinalResponse({
+              executionId: scope.executionId,
+              output,
+              request: activeSession!.request,
+              text: outputText
+            }));
+          }
+        } catch (error) {
+          await this.failExecution(
+            scope,
+            "AGENT_OUTPUT_PERSIST_FAILED",
+            error instanceof Error ? error.message : "Interactive Agent output persistence failed."
+          );
+          return;
+        }
+      }
       await this.updateSessionState(scope, status === "failed" ? "failed" : "completed");
       await this.executionStore.transition({
         scope,
         from: ["running", "waiting_for_interaction"],
         result: {
           ...stateResult(scope.executionId, status, summary(event.payload)),
-          result: { ...event.payload }
+          result: {
+            ...event.payload,
+            output_text: outputText,
+            ...(activeSession?.finalResponseTruncated
+              ? { output_text_truncated: true }
+              : {}),
+            artifacts,
+            ...(activeSession?.inferredInteractionTypes.length
+              ? {
+                  interaction_requirements: {
+                    inferred_types: activeSession.inferredInteractionTypes
+                  }
+                }
+              : {})
+          }
         }
       });
       this.clearActive(scope.executionId);
@@ -727,8 +842,20 @@ export class InteractiveAgentSessionManager {
       await this.consumeEvent(scope, event);
     };
     try {
+      const request = await this.executionStore.getRequest(scope);
+      if (!request || request.request_type !== "execute_agent") return null;
       const handle = await adapter.restore(session, emit);
-      const restored = { adapter, expiryTimers: new Map(), handle, scope };
+      const restored = {
+        adapter,
+        expiryTimers: new Map(),
+        finalResponseText: "",
+        finalResponseTruncated: false,
+        handle,
+        inferredInteractionTypes: [],
+        request,
+        requiredOccurrenceTypes: new Set<AgentInteractionType>(),
+        scope
+      };
       this.active.set(scope.executionId, restored);
       return restored;
     } catch {
@@ -747,6 +874,23 @@ export class InteractiveAgentSessionManager {
     );
   }
 }
+
+function appendFinalResponse(
+  active: Pick<ActiveProviderSession, "finalResponseText" | "finalResponseTruncated">,
+  value: unknown
+): void {
+  if (typeof value !== "string" || value.length === 0) return;
+  const bytes = Buffer.from(`${active.finalResponseText}${value}`, "utf8");
+  if (bytes.byteLength <= MAX_FINAL_RESPONSE_BYTES) {
+    active.finalResponseText = bytes.toString("utf8");
+    return;
+  }
+  active.finalResponseText = bytes
+    .subarray(bytes.byteLength - MAX_FINAL_RESPONSE_BYTES)
+    .toString("utf8");
+  active.finalResponseTruncated = true;
+}
+
 
 function followUpMessage(input: AgentChatFollowUpInput): string {
   if (input.kind === "continue") return input.text?.trim() || "Continue with the current task.";

@@ -156,6 +156,48 @@ describe("agent output artifact persister", () => {
     assert.equal(loaded.size_bytes, expectedBytes.byteLength);
   });
 
+  it("persists a captured interactive response without a provider-created file", async () => {
+    const store = new ArtifactStore(createArtifactRoot());
+    const persister = new AgentOutputArtifactPersister(store, {
+      readOutputBytes: async () => {
+        throw new Error("Interactive response persistence must not read a workspace file.");
+      }
+    });
+
+    const artifact = await persister.persistText({
+      request: {
+        request_type: "execute_agent",
+        app_id: "app_001",
+        session_id: "session_001",
+        agent_backend: "codex_cli",
+        agent_query: "Answer after asking for a format."
+      },
+      executionId: "execution_interactive",
+      output: {
+        output_id: "agent_output",
+        display_name: "agent_output.md",
+        media_type: "text/markdown",
+        persist_as_artifact: true,
+        artifact_type: "agent_output"
+      },
+      text: "# Answer\nMarkdown selected."
+    });
+
+    const loaded = await store.load("app_001", artifact.artifact_id);
+    assert.equal(loaded.session_id, "session_001");
+    assert.equal(loaded.created_by_execution_id, "execution_interactive");
+    assert.equal(loaded.provider_origin, "codex_cli");
+    assert.equal(loaded.mime_type, "text/markdown");
+    assert.equal(
+      (await new ArtifactResolver(store).resolve(
+        "app_001",
+        artifact.artifact_id,
+        { requiredMode: "inline_text" }
+      )).payload.text_content,
+      "# Answer\nMarkdown selected."
+    );
+  });
+
   it("generates collision-resistant ids for concurrent saves", async () => {
     const store = new ArtifactStore(createArtifactRoot());
     const saved = await Promise.all(

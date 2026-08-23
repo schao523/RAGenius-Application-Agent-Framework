@@ -29,6 +29,10 @@ from agent_skill_publication import (
     build_publication_preview,
     publish_agent_skill_revision,
 )
+from agent_skill_interaction_review import (
+    build_agent_skill_interaction_recommendation,
+    interaction_policy_from_form,
+)
 from instruction_model_adapter import InstructionModelAdapter
 from policy import get_template_family_policy
 from skill_normalization import AUTHOR_TOOL_ALIAS_MAP, EXPLICIT_REQUIRED_TOOL_TEMPLATE_MAP
@@ -1690,28 +1694,39 @@ def agent_skill_detail(agent_skill_id):
         for binding in store.list_app_agent_skill_bindings(app_id):
             if binding["agent_skill_id"] == agent_skill_id:
                 bindings.append({**binding, "app_name": app_obj["name"]})
+    interaction_recommendation = build_agent_skill_interaction_recommendation(skill)
+    selected_interaction_policy = interaction_recommendation["policy"]
+    if skill.get("approval"):
+        approval = skill["approval"]
+        selected_interaction_policy = {
+            "interaction_channel": approval["interaction_channel"],
+            "interaction_requirement": approval["interaction_requirement"],
+            "supported_interaction_types": json.loads(
+                approval["supported_interaction_types_json"]
+            ),
+            "required_transport": approval["required_transport"],
+            "recovery_class": approval["recovery_class"],
+        }
     return render_template(
         "agent_skill_detail.html",
         agent_skill=_public_agent_skill(skill),
         bindings=bindings,
         apps=list(apps_by_id.values()),
         projection_state=store.get_agent_skill_projection_state(),
+        interaction_recommendation=interaction_recommendation,
+        selected_interaction_policy=selected_interaction_policy,
     )
 
 
 @app.route("/agent-skills/<agent_skill_id>/approve", methods=["POST"])
 def approve_agent_skill_form(agent_skill_id):
     try:
-        interaction_channel = (request.form.get("interaction_channel") or "none").strip()
-        interaction_policy = None
-        if interaction_channel == "chat_level":
-            interaction_policy = {
-                "interaction_channel": "chat_level",
-                "interaction_requirement": "autonomous",
-                "supported_interaction_types": [],
-                "required_transport": "interactive",
-                "recovery_class": "session_resumable",
-            }
+        skill = store.get_agent_skill_catalog_item(agent_skill_id)
+        if not skill:
+            abort(404)
+        interaction_policy = interaction_policy_from_form(
+            request.form, backend=skill["backend"]
+        )
         store.approve_agent_skill(
             agent_skill_id=agent_skill_id,
             expected_fingerprint=(request.form.get("expected_fingerprint") or "").strip(),

@@ -211,6 +211,9 @@ function selectedMetaLines(selected, commandKind) {
 }
 
 function helperCopyForMode(commandKind) {
+  if (commandKind === "interactive_agent") {
+    return "Start an interactive Agent session that may ask clarifying or selection questions.";
+  }
   if (commandKind === "agent") {
     return "Describe the task in natural language and optionally select an approved Agent Skill.";
   }
@@ -218,6 +221,10 @@ function helperCopyForMode(commandKind) {
     return "Choose a runtime tool and fill the required arguments.";
   }
   return "Choose an app skill or runtime workflow and fill the required arguments.";
+}
+
+function isAgentCommandKind(commandKind) {
+  return commandKind === "agent" || commandKind === "interactive_agent";
 }
 
 function classifyAgentRisk(requestText) {
@@ -412,7 +419,7 @@ export default function ExecutionComposer({
   onClose,
   styles,
 }) {
-  const normalizedInitialCommandKind = ["tool", "skill", "agent"].includes(String(initialCommandKind || "").trim())
+  const normalizedInitialCommandKind = ["tool", "skill", "agent", "interactive_agent"].includes(String(initialCommandKind || "").trim())
     ? String(initialCommandKind || "").trim()
     : "tool";
   const normalizedInitialAgentBackend = String(initialAgentBackend || "").trim() === "openclaw_cli"
@@ -436,7 +443,7 @@ export default function ExecutionComposer({
   const [agentBackend, setAgentBackend] = useState(normalizedInitialAgentBackend);
   const [selectedAgentSkillId, setSelectedAgentSkillId] = useState("");
   const [agentArtifactIds, setAgentArtifactIds] = useState(
-    normalizedInitialCommandKind === "agent" ? initialAgentArtifactIds : [],
+    isAgentCommandKind(normalizedInitialCommandKind) ? initialAgentArtifactIds : [],
   );
   const [persistAgentOutput, setPersistAgentOutput] = useState(false);
   const [preparedArtifactsByUploadId, setPreparedArtifactsByUploadId] = useState({});
@@ -627,7 +634,7 @@ export default function ExecutionComposer({
     [selectedAgentArtifacts],
   );
   useEffect(() => {
-    if (commandKind === "agent") {
+    if (isAgentCommandKind(commandKind)) {
       setTargetId("");
       setFormState({});
       setError("");
@@ -648,7 +655,7 @@ export default function ExecutionComposer({
   }, [commandKind, compatibleToolTargetIds, initialTargetId, toolInventory, skillInventory, items]);
 
   useEffect(() => {
-    if (commandKind === "agent") {
+    if (isAgentCommandKind(commandKind)) {
       return;
     }
     const nextState = {};
@@ -1139,7 +1146,7 @@ export default function ExecutionComposer({
   };
 
   const validate = () => {
-    if (commandKind === "agent") {
+    if (isAgentCommandKind(commandKind)) {
       if (!String(agentRequest || "").trim()) {
         return "Agent request is required.";
       }
@@ -1183,12 +1190,12 @@ export default function ExecutionComposer({
       setError(validationError);
       return;
     }
-    if (commandKind === "agent") {
+    if (isAgentCommandKind(commandKind)) {
       setError("");
       setSubmitting(true);
       try {
         await onSubmit?.({
-          commandKind,
+          commandKind: "agent",
           targetId: agentBackend,
           executionMode,
           args: {
@@ -1205,6 +1212,18 @@ export default function ExecutionComposer({
                 }
               : {}),
             ...(agentArtifactRefs.length > 0 ? { artifactRefs: agentArtifactRefs } : {}),
+            ...(commandKind === "interactive_agent"
+              ? {
+                  interactionRequirements: agentBackend === "openclaw_cli"
+                    ? { transport: "interactive", style: "chat" }
+                    : {
+                        transport: "interactive",
+                        style: "structured",
+                        allowed_types: ["clarification", "selection"],
+                        required_types: [],
+                      },
+                }
+              : {}),
             ...(persistAgentOutput ? { expectedOutputs: buildDefaultAgentExpectedOutputs(true) } : {}),
           },
         });
@@ -1267,13 +1286,22 @@ export default function ExecutionComposer({
       <div style={styles.formGrid}>
         <label>
           <div style={styles.label}>Mode</div>
-          <select style={styles.select} value={commandKind} onChange={(e) => setCommandKind(e.target.value)} aria-label="Mode">
+          <select
+            style={styles.select}
+            value={commandKind}
+            onChange={(e) => {
+              const nextCommandKind = e.target.value;
+              setCommandKind(nextCommandKind);
+            }}
+            aria-label="Mode"
+          >
             <option value="tool">Tool</option>
             <option value="skill">Skill</option>
             <option value="agent">Agent</option>
+            <option value="interactive_agent">Interactive Agent</option>
           </select>
         </label>
-        {commandKind === "agent" ? (
+        {isAgentCommandKind(commandKind) ? (
           <>
             <label>
               <div style={styles.label}>Agent Backend</div>
@@ -1356,10 +1384,14 @@ export default function ExecutionComposer({
         </label>
       </div>
 
-      {commandKind === "agent" ? (
+      {isAgentCommandKind(commandKind) ? (
         <>
           <div style={styles.compactNote}>
-            {agentBackend === "openclaw_cli"
+            {commandKind === "interactive_agent"
+              ? agentBackend === "openclaw_cli"
+                ? "OpenClaw chat interaction keeps the provider session available after each completed run. Replies and revisions start a new run in that same session; they are not typed approvals."
+                : "Codex structured interaction may pause the active turn for clarification or selection. Conversational responses do not authorize external actions."
+              : agentBackend === "openclaw_cli"
               ? "OpenClaw agent mode runs the request through the `openclaw_cli` backend. Workspace staging and verification are handled by the execution subsystem."
               : "Codex agent mode runs a natural-language task through the `codex_cli` backend."}
           </div>
@@ -1453,7 +1485,7 @@ export default function ExecutionComposer({
           type="button"
           style={styles.button}
           onClick={handleSubmit}
-          disabled={(commandKind !== "agent" && !selected) || submitting || (commandKind === "agent" && uploadBusy)}
+          disabled={(!isAgentCommandKind(commandKind) && !selected) || submitting || (isAgentCommandKind(commandKind) && uploadBusy)}
         >
           {submitting ? "Running..." : "Run"}
         </button>

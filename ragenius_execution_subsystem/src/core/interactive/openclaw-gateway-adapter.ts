@@ -454,6 +454,14 @@ export class OpenClawGatewayAdapter implements InteractiveAgentAdapter {
         const verificationResults = await this.verifyRun(state);
         const requiredFailure = verificationResults.some((result) => result.required && !result.verified);
         const failed = phase === "error" || requiredFailure;
+        const providerError = phase === "error"
+          ? this.safeMessage(
+              stringField(data, "error")
+              || stringField(data, "errorMessage")
+              || stringField(data, "message")
+              || "OpenClaw provider failed."
+            ).slice(0, 2048)
+          : "";
         state.state = failed ? "failed" : "completed";
         await state.emit({
           type: "run_completed",
@@ -462,7 +470,13 @@ export class OpenClawGatewayAdapter implements InteractiveAgentAdapter {
             verification_results: verificationResults,
             output_text: state.messageText,
             output_truncated: state.messageTruncated,
-            ...(requiredFailure ? { failure_code: "missing_output" } : {})
+            ...(requiredFailure ? { failure_code: "missing_output" } : {}),
+            ...(providerError
+              ? {
+                  failure_code: "OPENCLAW_PROVIDER_ERROR",
+                  summary: providerError
+                }
+              : {})
           },
           providerEventRef
         });

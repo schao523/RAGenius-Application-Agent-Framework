@@ -207,6 +207,11 @@ export default function ChatMessageCard({
   onViewArtifactLibrary,
 }) {
   const isAssistant = message.role === "assistant";
+  const attachedArtifactRefs = Array.isArray(message?.retrievalSummary?.attached_artifact_refs)
+    ? message.retrievalSummary.attached_artifact_refs.filter((ref) => (
+        ref && String(ref.artifact_id || "").trim()
+      ))
+    : [];
   const isExecutionTurn = Boolean(message?.retrievalSummary?.execution_override);
   const isApprovalTurn = Boolean(message?.retrievalSummary?.approval_event);
   const exportSelectable = Boolean(selectable && onToggleSelectedForExport);
@@ -276,6 +281,16 @@ export default function ChatMessageCard({
         {showExportSelectionAction && selectedForExport && <span style={{ ...styles.pill, ...styles.statusOk }}>Selected for reuse</span>}
       </div>
       <div style={styles.messageBodyText}>{message.content}</div>
+      {!isAssistant && attachedArtifactRefs.length > 0 && (
+        <div style={{ ...styles.actionRow, marginTop: 8 }} aria-label="Message attachments">
+          {attachedArtifactRefs.map((artifact) => (
+            <span key={artifact.artifact_id} style={styles.pill}>
+              {artifact.display_name || artifact.artifact_id}
+              <span style={{ marginLeft: 6, opacity: 0.72 }}>Attached</span>
+            </span>
+          ))}
+        </div>
+      )}
       {isAssistant && (
         <>
           {executionResultPreview && <div style={styles.compactNote}>{executionResultPreview}</div>}

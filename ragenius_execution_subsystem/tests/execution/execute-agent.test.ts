@@ -58,6 +58,101 @@ describe("execute_agent requests", () => {
     );
   });
 
+  it("accepts explicit bounded clarification and selection requirements", () => {
+    const parsed = executionRequestSchema.parse({
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "codex_cli",
+      agent_query: "Ask me to choose a format before answering.",
+      interaction_requirements: { required_types: ["selection"] }
+    });
+
+    assert.deepEqual(
+      parsed.request_type === "execute_agent"
+        ? parsed.interaction_requirements?.required_types
+        : undefined,
+      ["selection"]
+    );
+  });
+
+  it("accepts an interactive transport that allows both conversational interaction types", () => {
+    const parsed = executionRequestSchema.parse({
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "codex_cli",
+      agent_query: "Work with me interactively.",
+      interaction_requirements: {
+        transport: "interactive",
+        allowed_types: ["clarification", "selection"],
+        required_types: []
+      }
+    });
+
+    assert.deepEqual(
+      parsed.request_type === "execute_agent"
+        ? parsed.interaction_requirements
+        : undefined,
+      {
+        transport: "interactive",
+        allowed_types: ["clarification", "selection"],
+        required_types: []
+      }
+    );
+  });
+
+  it("accepts OpenClaw chat-level interactive transport without typed interactions", () => {
+    const parsed = executionRequestSchema.parse({
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "openclaw_cli",
+      agent_query: "Work with me across follow-up turns.",
+      interaction_requirements: {
+        transport: "interactive",
+        style: "chat"
+      }
+    });
+
+    assert.deepEqual(
+      parsed.request_type === "execute_agent"
+        ? parsed.interaction_requirements
+        : undefined,
+      { transport: "interactive", style: "chat" }
+    );
+  });
+
+  it("rejects empty, duplicate, authorizing, and unknown interaction requirements", () => {
+    for (const requiredTypes of [
+      [],
+      ["selection", "selection"],
+      ["approval"],
+      ["unknown"]
+    ]) {
+      assert.throws(() => executionRequestSchema.parse({
+        request_type: "execute_agent",
+        app_id: "app_001",
+        session_id: "sess_001",
+        agent_backend: "codex_cli",
+        agent_query: "Ask before answering.",
+        interaction_requirements: { required_types: requiredTypes }
+      }));
+    }
+    assert.throws(() => executionRequestSchema.parse({
+      request_type: "execute_agent",
+      app_id: "app_001",
+      session_id: "sess_001",
+      agent_backend: "openclaw_cli",
+      agent_query: "Invalid mixed interaction style.",
+      interaction_requirements: {
+        transport: "interactive",
+        style: "chat",
+        allowed_types: ["selection"]
+      }
+    }));
+  });
+
   it("accepts session-scoped artifact refs and provider-neutral expected outputs", () => {
     const parsed = executionRequestSchema.parse({
       request_type: "execute_agent",

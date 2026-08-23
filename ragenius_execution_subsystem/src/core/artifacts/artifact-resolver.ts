@@ -26,6 +26,13 @@ function normalizeMetadata(content: unknown): Record<string, unknown> {
   return {};
 }
 
+function declaredFileSha256(value: unknown): string | undefined {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return /^sha256:[0-9a-f]{64}$/.test(normalized)
+    ? normalized.slice("sha256:".length)
+    : undefined;
+}
+
 export class ArtifactResolver {
   constructor(private readonly artifactStore: ArtifactStore) {}
 
@@ -102,12 +109,11 @@ export class ArtifactResolver {
     artifact: StoredArtifactRecord,
     mode: ArtifactConsumptionMode
   ): Promise<ResolvedArtifact["payload"]> {
+    const fileSha256 = declaredFileSha256(artifact.content_hash);
     const metadata: Record<string, unknown> = {
       ...normalizeMetadata(artifact.content),
       ...(typeof artifact.size_bytes === "number" ? { size_bytes: artifact.size_bytes } : {}),
-      ...(artifact.content_hash
-        ? { sha256: artifact.content_hash.replace(/^sha256:/i, "").toLowerCase() }
-        : {})
+      ...(fileSha256 ? { sha256: fileSha256 } : {})
     };
     const mimeType =
       typeof artifact.mime_type === "string" && artifact.mime_type.length > 0

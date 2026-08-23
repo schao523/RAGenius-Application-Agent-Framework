@@ -108,14 +108,21 @@ export const registerInteractiveAgentRoutes: FastifyPluginAsync = async (app) =>
     requireExecutionScope(request);
     const executionId = (request.params as { execution_id: string }).execution_id;
     const scope = scopeFrom(executionId, request.query);
-    if (!await app.services.executionStore.get(scope)) throw executionNotFound();
+    const execution = await app.services.executionStore.get(scope);
+    if (!execution) throw executionNotFound();
     const session = await app.services.agentSessionStore.getByExecution(scope);
     if (!session) throw executionNotFound();
     const turns = (await app.services.agentChatTurnStore.list(scope)).slice(-100);
+    const executionResult = execution.result && typeof execution.result === "object"
+      ? execution.result as Record<string, unknown>
+      : {};
     return reply.status(200).send({
       agent_session_id: session.agentSessionId,
       execution_id: executionId,
       idle_expires_at: session.idleExpiresAt?.toISOString() ?? null,
+      latest_output_text: typeof executionResult.output_text === "string"
+        ? executionResult.output_text
+        : "",
       session_version: session.sessionVersion,
       state: session.state,
       turn_sequence: session.turnSequence,

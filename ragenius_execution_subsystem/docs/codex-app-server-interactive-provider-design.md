@@ -54,10 +54,39 @@ supervisor reference. It contains no user-facing path or credential.
 3. Send `initialize`, then `initialized`.
 4. Send `thread/start` with scoped cwd, sandbox, approval policy, reviewer
    `user`, and `ephemeral: true` for the initial release.
-5. Supply `ragenius_request_input` as a dynamic tool when the execution allows
-   clarification or selection.
-6. Send `turn/start` and persist thread/turn identifiers before processing
+5. Resolve and stage selected artifacts into the execution-owned workspace.
+6. Supply `ragenius_request_input` as a dynamic tool when the execution allows
+   clarification or selection, and prepend trusted protocol guidance that
+   requires the tool whenever such user input is needed.
+7. Build the turn input from the trusted protocol guidance, staged artifact
+   manifest, expected-output instructions, and delimited user query.
+8. Send `turn/start` and persist thread/turn identifiers before processing
    subsequent events.
+
+## Explicit Request Routing
+
+`ExecuteAgentRequest.interaction_requirements` is the provider-neutral signal
+for interactive transport. Codex consumes only structured style. Composer's
+Interactive Agent mode allows both
+clarification and selection without requiring either. Advanced callers may
+also supply `required_types`. The execution engine combines both arrays with
+governed skill policy before adapter preflight:
+
+- capability requirements are the union of allowed and required request types
+  and all interaction
+  types required by the selected skill transport;
+- fulfillment requirements are only explicit required types plus the selected
+  skill's supported types only when its interaction requirement is `required`;
+- any non-empty capability requirement routes Codex through app-server;
+- completion fails with `REQUIRED_INTERACTION_NOT_OBSERVED` when a fulfillment
+  requirement was never emitted as a typed `ragenius_request_input` call.
+
+The one-shot `codex exec` provider is not eligible for these requests. The
+execution subsystem applies only conservative high-confidence inference for
+explicit imperatives such as "ask me to select" and "ask me for
+clarification". It does not attempt general semantic classification. Resolved
+requirements are persisted in execution metadata and required occurrences are
+enforced at completion.
 
 ## Interaction Mapping
 
@@ -106,7 +135,12 @@ execution subsystem validates arguments again before creating an interaction.
 Thread, turn, item, message delta, tool, warning, error, and completion messages
 become provider-neutral events. JSON-RPC request ids are stored only as
 protected correlation references. Raw reasoning is discarded. Message deltas
-are coalesced and bounded before persistence.
+are coalesced, bounded, and accumulated into the normalized final assistant
+response. When an expected output requests artifact persistence, the session
+manager persists that final response through the shared Agent output artifact
+persister and includes the resulting artifact reference in the terminal
+execution result. Explicit provider-created file outputs retain workspace
+verification requirements and are not satisfied by response capture.
 
 ## Cancellation
 
@@ -141,6 +175,16 @@ synthetic normalized recovery event.
   bounds.
 - Multiple approvals in one turn and single-use responses.
 - Dynamic interaction tool selection and free-text responses.
+- Interactive Agent mode without an Agent Skill, with clarification and
+  selection both available.
+- Required-interaction completion failure when Codex never calls the dynamic
+  tool.
+- Explicit selection wording raises a required selection without requiring the
+  user to name `ragenius_request_input`.
+- Selected artifacts are staged and referenced by safe workspace-relative
+  paths.
+- Final response is returned conversationally with persistence off and becomes
+  a reusable `agent_output` artifact with persistence on.
 - Cancellation before and during tool execution.
 - Interaction expiry and process-tree cleanup.
 - Protocol version mismatch and autonomous fallback eligibility.

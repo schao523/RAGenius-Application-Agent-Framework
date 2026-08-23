@@ -1,6 +1,5 @@
 import React from "react";
 import AgentInteractionCard from "./AgentInteractionCard";
-import AgentChatFollowUpPanel from "./AgentChatFollowUpPanel";
 
 function resolveExecutionStatus(executionLaneState) {
   const latestResult = executionLaneState?.latest_execution_result;
@@ -75,6 +74,20 @@ function resolveFallbackSummary(executionPayload) {
     : `Yes (${fallbackCount})`;
 }
 
+function resolveInferredInteractionTypes(executionPayload) {
+  const result = executionPayload?.result && typeof executionPayload.result === "object"
+    ? executionPayload.result
+    : {};
+  const requirements = result.interaction_requirements
+    && typeof result.interaction_requirements === "object"
+    ? result.interaction_requirements
+    : {};
+  const inferredTypes = Array.isArray(requirements.inferred_types)
+    ? requirements.inferred_types
+    : [];
+  return [...new Set(inferredTypes.map((item) => String(item || "").trim()).filter(Boolean))];
+}
+
 export default function ExecutionLaneStatusCard({
   selectedApprovedContent,
   sessionLaneState,
@@ -91,11 +104,6 @@ export default function ExecutionLaneStatusCard({
   onRefreshInteraction,
   interactionSubmitting,
   interactionError,
-  chatSession,
-  onAgentChatFollowUp,
-  onEndAgentChatSession,
-  agentChatSubmitting,
-  agentChatError,
   styles,
 }) {
   const contentLane = sessionLaneState?.content_lane || {};
@@ -114,6 +122,7 @@ export default function ExecutionLaneStatusCard({
   const latestExecutionPayload = resolveLatestExecutionPayload(executionLane);
   const displayStatus = resolveDisplayExecutionStatus(latestExecutionPayload, latestStatus);
   const executionPaths = resolveExecutionPaths(latestExecutionPayload);
+  const inferredInteractionTypes = resolveInferredInteractionTypes(latestExecutionPayload);
   const executionPathLabel = executionPaths.length > 0 ? executionPaths.join(", ") : "Unknown";
   const fallbackSummary = resolveFallbackSummary(latestExecutionPayload);
   const approvedRevisionLabel =
@@ -134,7 +143,7 @@ export default function ExecutionLaneStatusCard({
   );
 
   return (
-    <section style={styles.executionLaneShell}>
+    <section id="execution-lane" style={styles.executionLaneShell}>
       <div style={styles.executionLaneHeader}>
         <div>
           <div style={styles.sidebarSectionTitle}>Execution Lane</div>
@@ -204,6 +213,11 @@ export default function ExecutionLaneStatusCard({
               <span style={styles.pill}>Task: {latestAsyncTaskStatus}</span>
             )}
             {executionPathLabel !== "Unknown" && <span style={styles.pill}>Path: {executionPathLabel}</span>}
+            {inferredInteractionTypes.length > 0 && (
+              <span style={styles.pill}>
+                Interaction inferred: {inferredInteractionTypes.join(", ")}
+              </span>
+            )}
             {fallbackSummary !== "No" && <span style={{ ...styles.pill, ...styles.statusWarn }}>Fallback: {fallbackSummary}</span>}
           </div>
           {latestExecutionMode === "async" && (
@@ -229,15 +243,6 @@ export default function ExecutionLaneStatusCard({
         onRefresh={onRefreshInteraction}
         submitting={interactionSubmitting}
         error={interactionError}
-        styles={styles}
-      />
-      <AgentChatFollowUpPanel
-        chatSession={chatSession}
-        error={agentChatError}
-        onCancel={onCancelInteraction}
-        onEnd={onEndAgentChatSession}
-        onFollowUp={onAgentChatFollowUp}
-        submitting={agentChatSubmitting}
         styles={styles}
       />
     </section>

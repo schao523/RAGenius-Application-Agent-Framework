@@ -26,7 +26,9 @@ export interface InteractivePreflightInput {
   policy: AgentPolicyDecision;
   providerContext: AgentProviderExecutionContext;
   request: ExecuteAgentRequest;
+  requiredChatLevelInteraction?: boolean;
   requiredInteractionTypes: AgentInteractionType[];
+  requiredOccurrenceTypes?: AgentInteractionType[];
   requiredRecoveryClass?: AgentSkillRecoveryClass;
   scope: ExecutionScope;
 }

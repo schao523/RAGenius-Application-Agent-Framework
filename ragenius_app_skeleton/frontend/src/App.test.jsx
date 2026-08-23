@@ -20,7 +20,23 @@ import {
   mergeTaskModelDiagnostics,
   resolveActiveAppDisplay,
   resolveInstructionUnderstandingState,
+  shouldPollAgentActivity,
 } from "./App";
+
+describe("shouldPollAgentActivity", () => {
+  it("keeps polling while the cached chat continuation is running", () => {
+    expect(shouldPollAgentActivity({
+      agentChatState: "running",
+      executionStatus: "ready_for_follow_up",
+      hasPendingInteraction: false,
+    })).toBe(true);
+    expect(shouldPollAgentActivity({
+      agentChatState: "ready_for_follow_up",
+      executionStatus: "ready_for_follow_up",
+      hasPendingInteraction: false,
+    })).toBe(false);
+  });
+});
 
 describe("createSessionId", () => {
   it("creates UUID session identifiers", () => {
@@ -90,6 +106,8 @@ function buildAppFetchMock({
   agentEventsResponse,
   agentInteractionSubmitResponse,
   agentCancelResponse,
+  agentChatSessionResponse,
+  agentChatFollowUpResponse,
   instructionPreview = { compiled_id: "compiled-test" },
   messages = [],
   sessionUploads = [],
@@ -182,6 +200,16 @@ function buildAppFetchMock({
         ? agentCancelResponse(normalizedUrl, options)
         : mockJsonResponse(agentCancelResponse || { cancelled: true, status: "cancelled", session_lane_state: sessionLaneState });
     }
+    if (normalizedUrl.includes("/executions/") && normalizedUrl.includes("/chat-session?") && options.method !== "POST") {
+      return typeof agentChatSessionResponse === "function"
+        ? agentChatSessionResponse(normalizedUrl, options)
+        : mockJsonResponse(agentChatSessionResponse || {});
+    }
+    if (normalizedUrl.includes("/executions/") && normalizedUrl.endsWith("/follow-ups") && options.method === "POST") {
+      return typeof agentChatFollowUpResponse === "function"
+        ? agentChatFollowUpResponse(normalizedUrl, options)
+        : mockJsonResponse(agentChatFollowUpResponse || { outcome: "accepted" });
+    }
     if (normalizedUrl.includes("/sessions/") && normalizedUrl.includes("/artifacts?")) {
       if (typeof artifactResponse === "function") {
         return artifactResponse(normalizedUrl);
@@ -243,6 +271,11 @@ describe("interactive Agent execution", () => {
     render(<App />);
 
     expect(await screen.findByText(/allow this external action/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /show execution lane/i })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: /show execution lane/i }));
+    const interactionSurface = screen.getByRole("region", { name: /agent interaction required/i });
+    const executionLane = document.getElementById("execution-lane");
+    expect(interactionSurface.compareDocumentPosition(executionLane) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /allow once/i }));
 
     await waitFor(() => {
@@ -870,6 +903,7 @@ describe("App artifact fetch propagation", () => {
 
     render(<App />);
 
+    fireEvent.click(await screen.findByRole("button", { name: /show artifact library/i }));
     expect(await screen.findByRole("heading", { name: /artifact library/i })).toBeInTheDocument();
     await waitFor(() => {
       expect(requests.some((url) => url.includes("/apps/app-1/sessions?"))).toBe(true);
@@ -881,6 +915,7 @@ describe("App artifact fetch propagation", () => {
   it("shows the artifact fetch failure inside Artifact Library", async () => {
     render(<App />);
 
+    fireEvent.click(await screen.findByRole("button", { name: /show artifact library/i }));
     expect(await screen.findByRole("heading", { name: /artifact library/i })).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByText(/unable to load artifacts: artifact backend unavailable\./i)).toBeInTheDocument();
@@ -898,6 +933,7 @@ describe("App artifact fetch propagation", () => {
 
     render(<App />);
 
+    fireEvent.click(await screen.findByRole("button", { name: /show artifact library/i }));
     expect(await screen.findByRole("heading", { name: /artifact library/i })).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByText(/unable to load artifacts: execution subsystem is unavailable\./i)).toBeInTheDocument();
@@ -913,6 +949,7 @@ describe("App artifact fetch propagation", () => {
 
     render(<App />);
 
+    fireEvent.click(await screen.findByRole("button", { name: /show artifact library/i }));
     expect(await screen.findByRole("heading", { name: /artifact library/i })).toBeInTheDocument();
     expect(await screen.findByText(/loading session artifacts/i)).toBeInTheDocument();
 
@@ -933,6 +970,7 @@ describe("App artifact fetch propagation", () => {
 
     render(<App />);
 
+    fireEvent.click(await screen.findByRole("button", { name: /show artifact library/i }));
     expect(await screen.findByRole("heading", { name: /artifact library/i })).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByText(/no artifacts have been saved in this session yet/i)).toBeInTheDocument();
@@ -1066,7 +1104,7 @@ describe("App artifact fetch propagation", () => {
     expect(JSON.stringify(chatBody)).not.toMatch(/C:\\\\|\/mnt\//);
   });
 
-  it("uses the canonical normal-query upload without rendering a session-file inventory", async () => {
+  it("attaches a canonical upload to the next normal query", async () => {
     const requests = [];
     uploadArtifactMock.mockResolvedValue({
       status: "ready",
@@ -1083,13 +1121,31 @@ describe("App artifact fetch propagation", () => {
     render(<App />);
     const file = new File(["notes"], "notes.txt", { type: "text/plain" });
 
-    fireEvent.change(await screen.findByLabelText("Upload artifact"), { target: { files: [file] } });
+    const toolbar = await screen.findByRole("toolbar", { name: /chat actions/i });
+    expect(toolbar).toContainElement(screen.getByRole("button", { name: /upload artifact/i }));
+    fireEvent.change(screen.getByLabelText("Upload artifact"), { target: { files: [file] } });
 
     await waitFor(() => expect(uploadArtifactMock).toHaveBeenCalledWith(expect.objectContaining({
       analysisMode: "normal_query", file,
     })));
     expect(screen.queryByText("Session Artifact Upload")).toBeNull();
     expect(screen.queryByText("Session files")).toBeNull();
+    expect(await screen.findByText(/notes\.txt.*ready/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText(/ask anything|type your next message/i), {
+      target: { value: "Summarize the attached notes." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+    await waitFor(() => expect(requests.some((request) => request.url.endsWith("/chat"))).toBe(true));
+    const chatBody = JSON.parse(requests.find((request) => request.url.endsWith("/chat")).options.body);
+    expect(chatBody.artifact_refs).toEqual([{
+      artifact_id: "artifact_notes",
+      display_name: "notes.txt",
+      mime_type: "text/plain",
+      role: "attachment",
+    }]);
+    expect(screen.queryByText(/attached to next message/i)).not.toBeInTheDocument();
     await waitFor(() => expect(requests.filter((request) => request.url.includes("/artifacts?")).length).toBeGreaterThan(1));
   });
 
@@ -1352,5 +1408,251 @@ describe("App artifact fetch propagation", () => {
     expect(screen.getByLabelText("Agent Backend")).toHaveValue("openclaw_cli");
     expect(screen.getByText(/selected artifacts \(1\)/i)).toBeInTheDocument();
     expect(screen.getByText(/agent output - study notes\.md \(inline text\)/i)).toBeInTheDocument();
+  });
+
+  it("builds structured execution metadata for Interactive Agent mode", () => {
+    const executionRequest = buildExecutionRequestForComposer({
+      commandKind: "agent",
+      targetId: "codex_cli",
+      executionMode: "sync",
+      args: {
+        request: "Ask me to choose a format.",
+        interactionRequirements: {
+          transport: "interactive",
+          style: "structured",
+          allowed_types: ["clarification", "selection"],
+          required_types: [],
+        },
+      },
+    });
+
+    expect(executionRequest).toEqual({
+      request_type: "execute_agent",
+      agent_backend: "codex_cli",
+      execution_mode: "sync",
+      interaction_requirements: {
+        transport: "interactive",
+        style: "structured",
+        allowed_types: ["clarification", "selection"],
+        required_types: [],
+      },
+    });
+  });
+
+  it("builds chat-level execution metadata for Interactive OpenClaw", () => {
+    const executionRequest = buildExecutionRequestForComposer({
+      commandKind: "agent",
+      targetId: "openclaw_cli",
+      executionMode: "sync",
+      args: {
+        request: "Continue through chat follow-ups.",
+        interactionRequirements: { transport: "interactive", style: "chat" },
+      },
+    });
+
+    expect(executionRequest).toEqual({
+      request_type: "execute_agent",
+      agent_backend: "openclaw_cli",
+      execution_mode: "sync",
+      interaction_requirements: { transport: "interactive", style: "chat" },
+    });
+  });
+});
+
+describe("chat workspace UX", () => {
+  beforeEach(() => {
+    vi.stubGlobal("crypto", {
+      ...globalThis.crypto,
+      randomUUID: vi.fn(() => "session-1"),
+    });
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [
+        { id: "session-1", title: "First session" },
+        { id: "session-2", title: "Second session" },
+      ],
+      messages: [
+        { id: "msg_1", role: "assistant", content: "Completed turn.", retrieval_summary: {} },
+      ],
+      sessionLaneState: {
+        execution_lane: {
+          latest_execution_id: "execution_1",
+          latest_execution_request_skill_id: "codex_cli",
+          latest_status_result: { status: "completed" },
+        },
+      },
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the Execution Lane hidden until the user reveals it", async () => {
+    render(<App />);
+
+    expect(await screen.findByText("Completed turn.")).toBeInTheDocument();
+    expect(screen.queryByText("Execution Lane")).not.toBeInTheDocument();
+
+    const showLane = screen.getByRole("button", { name: /show execution lane/i });
+    expect(showLane).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(showLane);
+
+    expect(screen.getByText("Execution Lane")).toBeInTheDocument();
+    const hideLane = screen.getByRole("button", { name: /hide execution lane/i });
+    expect(hideLane).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("shows OpenClaw chat follow-up beside the composer without opening Execution Lane", async () => {
+    const requests = [];
+    vi.stubGlobal("fetch", buildAppFetchMock({
+      sessions: [{ id: "session-1", title: "First session" }],
+      messages: [{ id: "msg_1", role: "assistant", content: "Please choose 1, 2, or 3.", retrieval_summary: {} }],
+      sessionLaneState: {
+        execution_lane: {
+          latest_execution_id: "execution_openclaw_1",
+          latest_execution_request_skill_id: "openclaw_cli",
+          latest_status_result: { status: "running", result: {} },
+        },
+      },
+      agentChatSessionResponse: {
+        execution_id: "execution_openclaw_1",
+        latest_output_text: [
+          "Choose one title:",
+          "1. First title",
+          "2. Second title",
+          "3. Third title",
+          "Please reply 1, 2, or 3.",
+        ].join("\n"),
+        state: "ready_for_follow_up",
+        session_version: 1,
+      },
+      onRequest: (url, options) => requests.push({ url: String(url || ""), options }),
+    }));
+
+    render(<App />);
+
+    expect(await screen.findByText("Please choose 1, 2, or 3.")).toBeInTheDocument();
+    expect(screen.queryByText("Execution Lane")).not.toBeInTheDocument();
+    const followUp = await screen.findByLabelText("OpenClaw follow-up");
+    expect(screen.queryByPlaceholderText("Type your next message.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /2\. second title/i }));
+    expect(followUp).toHaveValue("2");
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+
+    await waitFor(() => expect(requests.some((request) => (
+      request.url.endsWith("/executions/execution_openclaw_1/follow-ups")
+      && request.options.method === "POST"
+      && JSON.parse(request.options.body).text === "2"
+    ))).toBe(true));
+  });
+
+  it("keeps Approved Content hidden until the user reveals it", async () => {
+    render(<App />);
+
+    expect(await screen.findByText("Completed turn.")).toBeInTheDocument();
+    expect(screen.queryByText("Approved Content")).not.toBeInTheDocument();
+
+    const showApprovedContent = screen.getByRole("button", { name: /show approved content/i });
+    expect(showApprovedContent).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(showApprovedContent);
+
+    expect(screen.getByText("Approved Content")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /hide approved content/i })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("shows only one utility view at a time and closes the active view", async () => {
+    render(<App />);
+
+    const showLane = await screen.findByRole("button", { name: /show execution lane/i });
+    fireEvent.click(showLane);
+    expect(screen.getByText("Execution Lane")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /show approved content/i }));
+    expect(screen.getByText("Approved Content")).toBeInTheDocument();
+    expect(screen.queryByText("Execution Lane")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /hide approved content/i }));
+    expect(screen.queryByRole("region", { name: /utility workspace/i })).not.toBeInTheDocument();
+  });
+
+  it("collapses the utility workspace when the user switches sessions", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /show execution lane/i }));
+    expect(screen.getByText("Execution Lane")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /second session/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Execution Lane")).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /show execution lane/i })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: /show approved content/i })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("uses the viewport height for the chat session workspace", async () => {
+    render(<App />);
+
+    const workspace = await screen.findByRole("region", { name: /chat session/i });
+    expect(workspace).toHaveStyle({ height: "calc(100vh - 32px)" });
+    expect(workspace).not.toHaveStyle({ maxHeight: "calc(100vh - 32px)" });
+    expect(workspace).toHaveStyle({ gridTemplateRows: "auto minmax(0, 1fr) auto auto" });
+  });
+
+  it("groups panel toggles with the chat actions", async () => {
+    render(<App />);
+
+    const toolbar = await screen.findByRole("toolbar", { name: /chat actions/i });
+    expect(toolbar).toContainElement(screen.getByRole("button", { name: /show approved content/i }));
+    expect(toolbar).toContainElement(screen.getByRole("button", { name: /show execution lane/i }));
+    expect(toolbar).toContainElement(screen.getByRole("button", { name: /show artifact library/i }));
+    expect(toolbar).toContainElement(screen.getByRole("button", { name: /create reuse artifact/i }));
+  });
+
+  it("renders the utility workspace after the query controls", async () => {
+    render(<App />);
+
+    const queryField = await screen.findByPlaceholderText(/type your next message/i);
+    fireEvent.click(screen.getByRole("button", { name: /show approved content/i }));
+    const utilityWorkspace = screen.getByRole("region", { name: /utility workspace/i });
+
+    expect(queryField.compareDocumentPosition(utilityWorkspace) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("preserves Composer input while switching utility views", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /run tool or skill/i }));
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "agent" } });
+    await waitFor(() => {
+      expect(screen.queryByText(/loading approved agent skills/i)).not.toBeInTheDocument();
+    });
+    const request = screen.getByLabelText("Agent Request");
+    fireEvent.change(request, { target: { value: "Keep this draft request." } });
+
+    fireEvent.click(screen.getByRole("button", { name: /show artifact library/i }));
+    expect(screen.getByRole("heading", { name: /artifact library/i })).toBeVisible();
+    expect(screen.getByRole("region", { name: /execution composer/i, hidden: true })).not.toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: /run tool or skill/i }));
+    await waitFor(() => {
+      expect(screen.queryByText(/loading approved agent skills/i)).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("region", { name: /execution composer/i })).toBeVisible();
+    expect(screen.getByLabelText("Agent Request")).toHaveValue("Keep this draft request.");
+  });
+
+  it("contains the conversation transcript inside its grid row", async () => {
+    render(<App />);
+
+    const transcript = await screen.findByRole("region", { name: /conversation transcript/i });
+    expect(transcript).toHaveStyle({ boxSizing: "border-box", overflowY: "auto" });
+  });
+
+  it("uses a compact vertically resizable query field", async () => {
+    render(<App />);
+
+    const queryField = await screen.findByPlaceholderText(/type your next message/i);
+    expect(queryField).toHaveStyle({ minHeight: "76px", resize: "vertical" });
   });
 });

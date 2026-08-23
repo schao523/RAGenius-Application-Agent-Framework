@@ -267,6 +267,39 @@ def test_normal_turn_without_exec_prefix_uses_existing_chat_pipeline(monkeypatch
     assert response.headers["content-type"].startswith("application/json; charset=utf-8")
 
 
+def test_normal_turn_passes_attached_artifact_refs_to_chat_state(monkeypatch):
+    _install_temp_repos(monkeypatch)
+    captured = {}
+
+    def fake_run_chat_pipeline(state, **_kwargs):
+        captured.update(state)
+        return {"content": "normal-path", "workflow_progress": {}, "session_execution_state": {}}
+
+    monkeypatch.setattr(app_main, "run_chat_pipeline", fake_run_chat_pipeline)
+    response = TestClient(app).post(
+        "/sessions/session-1/chat",
+        json={
+            "user_id": "user-1",
+            "app_id": "app-1",
+            "user_query": "Summarize the attached notes.",
+            "artifact_refs": [{
+                "artifact_id": "artifact-notes",
+                "display_name": "notes.txt",
+                "mime_type": "text/plain",
+                "role": "attachment",
+            }],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["attached_artifact_refs"] == [{
+        "artifact_id": "artifact-notes",
+        "display_name": "notes.txt",
+        "mime_type": "text/plain",
+        "role": "attachment",
+    }]
+
+
 def test_exec_skill_turn_submits_execution_intent(monkeypatch):
     session_repo, chat_repo = _install_temp_repos(monkeypatch)
     session_repo.get_or_create(
@@ -934,6 +967,10 @@ def test_exec_openclaw_turn_passes_structured_artifact_refs_and_expected_outputs
             "app_id": "app-1",
             "user_query": '@exec openclaw "Create a reusable study note."',
             "execution_request": {
+                "interaction_requirements": {
+                    "transport": "interactive",
+                    "style": "chat",
+                },
                 "artifact_refs": [
                     {
                         "artifact_id": "artifact_chat_1",
@@ -963,6 +1000,10 @@ def test_exec_openclaw_turn_passes_structured_artifact_refs_and_expected_outputs
     assert captured["artifact_refs"][0]["reuse_mode"] == "inline_text"
     assert captured["expected_outputs"][0]["output_id"] == "agent_answer"
     assert captured["expected_outputs"][0]["persist_as_artifact"] is True
+    assert captured["interaction_requirements"] == {
+        "transport": "interactive",
+        "style": "chat",
+    }
 
 
 def test_exec_openclaw_turn_enriches_persisted_agent_output_artifacts(monkeypatch):
@@ -2083,6 +2124,7 @@ def test_confirm_session_execution_returns_updated_status(monkeypatch):
                 "result": {
                     "id": "draft_123",
                     "status": "draft_created",
+                    "output_text": "The confirmed Agent response.",
                     "artifacts": [
                         {
                             "artifact_id": "artifact_123",
@@ -2121,7 +2163,10 @@ def test_confirm_session_execution_returns_updated_status(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
-    assert "confirmed and completed" in payload["content"].lower()
+    assert payload["content"] == (
+        "Execution `execution_123` confirmed and completed.\n\n"
+        "The confirmed Agent response."
+    )
     assert payload["execution_override"]["command"] == "confirm"
     assert payload["execution_override"]["execution_id"] == "execution_123"
     assert payload["execution_override"]["status_result"]["status"] == "completed"
@@ -2499,6 +2544,7 @@ def test_exec_status_turn_does_not_invoke_normal_chat_pipeline(monkeypatch):
                 "execution_id": execution_id,
                 "status": "completed",
                 "result": {
+                    "output_text": "Here are the answers in Markdown.",
                     "artifacts": [
                         {
                             "artifact_id": "artifact_123",
@@ -2543,7 +2589,10 @@ def test_exec_status_turn_does_not_invoke_normal_chat_pipeline(monkeypatch):
     assert artifact["routes"]["open"].startswith(
         "/sessions/session-1/artifacts/artifact_123/file"
     )
-    assert payload["content"] == "Execution status for `execution_123` is completed."
+    assert payload["content"] == (
+        "Execution status for `execution_123` is completed.\n\n"
+        "Here are the answers in Markdown."
+    )
     persisted = chat_repo.history("session-1")[-1]["retrievalSummary"]
     assert persisted["execution_status_result"]["result"]["artifacts"][0][
         "artifact_id"

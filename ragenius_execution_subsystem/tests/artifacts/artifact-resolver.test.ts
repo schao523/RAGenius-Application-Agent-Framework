@@ -106,6 +106,42 @@ describe("artifact resolver", () => {
     assert.equal(inline.payload.text_content, "# Exported chat");
   });
 
+  it("does not expose a semantic content hash as a file SHA-256 digest", async () => {
+    const store = new ArtifactStore(createArtifactRoot());
+    const saved = await store.save(
+      "app_alpha",
+      "chat_export",
+      "session-chat-export.md",
+      { content: "## 1. Assistant\n\nExported chat" },
+      { contentHash: "a".repeat(64) }
+    );
+
+    const resolver = new ArtifactResolver(store);
+    const resolved = await resolver.resolve("app_alpha", String(saved.artifact_id));
+
+    assert.equal(resolved.payload.metadata.sha256, undefined);
+  });
+
+  it("exposes an explicitly prefixed file SHA-256 digest", async () => {
+    const store = new ArtifactStore(createArtifactRoot());
+    const fileSha256 = "b".repeat(64);
+    const saved = await store.save(
+      "app_alpha",
+      "session_upload",
+      "source.txt",
+      { name: "source.txt" },
+      {
+        contentHash: `sha256:${fileSha256}`,
+        fileTextContent: "source bytes"
+      }
+    );
+
+    const resolver = new ArtifactResolver(store);
+    const resolved = await resolver.resolve("app_alpha", String(saved.artifact_id));
+
+    assert.equal(resolved.payload.metadata.sha256, fileSha256);
+  });
+
   it("resolves notebooklm_report to file-backed and inline text modes", async () => {
     const store = new ArtifactStore(createArtifactRoot());
     const saved = await store.save(

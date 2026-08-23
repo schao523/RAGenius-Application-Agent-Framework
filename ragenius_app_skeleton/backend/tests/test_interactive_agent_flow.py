@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from ragenius_app_skeleton.backend.app.chat_repos import SessionRepo
+from ragenius_app_skeleton.backend.app.chat_repos import ChatRepo, SessionRepo
 from ragenius_app_skeleton.backend.app.main import app
 import ragenius_app_skeleton.backend.app.main as app_main
 
@@ -100,6 +100,50 @@ def test_codex_approval_then_clarification_then_completion_survives_refresh(monk
     assert "prompt" not in lane
 
 
+def test_interactive_completion_refresh_enriches_persisted_output_artifact(monkeypatch, tmp_path):
+    _session(monkeypatch, tmp_path)
+
+    class FakeExecutionClient:
+        def get_execution_status(self, execution_id, **_scope):
+            return {
+                "execution_id": execution_id,
+                "status": "completed",
+                "result": {
+                    "output_text": "Markdown answer.",
+                    "artifacts": [{
+                        "artifact_id": "artifact_interactive_1",
+                        "artifact_type": "agent_output",
+                        "display_name": "agent_output.md",
+                    }],
+                },
+            }
+
+        def get_artifact_inventory(self, **_scope):
+            return {"items": [{
+                "artifact_id": "artifact_interactive_1",
+                "artifact_type": "agent_output",
+                "display_name": "agent_output.md",
+                "session_id": "session-1",
+                "app_id": "app-1",
+                "status": "ready",
+                "file_path": __file__,
+            }]}
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    response = TestClient(app).get(
+        "/sessions/session-1/executions/execution-interactive",
+        params={"app_id": "app-1", "user_id": "user-1"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    result = payload["status_result"]["result"]
+    assert result["output_text"] == "Markdown answer."
+    assert result["artifacts"][0]["routes"]["open"].startswith(
+        "/sessions/session-1/artifacts/artifact_interactive_1/file"
+    )
+
+
 def test_openclaw_waiting_execution_can_be_cancelled(monkeypatch, tmp_path):
     repo = _session(monkeypatch, tmp_path)
 
@@ -182,3 +226,41 @@ def test_openclaw_chat_follow_up_rejects_wrong_user_before_provider_contact(monk
         },
     )
     assert response.status_code == 404
+
+
+def test_finishing_openclaw_chat_persists_final_summary(monkeypatch, tmp_path):
+    _session(monkeypatch, tmp_path)
+    chat_repo = ChatRepo(db_path=tmp_path / "runtime_state.db")
+    monkeypatch.setattr(app_main, "chat_repo", chat_repo)
+
+    class FakeExecutionClient:
+        def get_agent_chat_session(self, execution_id, **scope):
+            assert scope == {"app_id": "app-1", "session_id": "session-1"}
+            return {
+                "execution_id": execution_id,
+                "state": "ready_for_follow_up",
+                "session_version": 8,
+                "latest_output_text": "Final TaskFlow summary.",
+            }
+
+        def end_agent_chat_session(self, execution_id, **values):
+            assert values == {
+                "app_id": "app-1", "session_id": "session-1",
+                "expected_session_version": 8,
+            }
+            return {"ended": True, "execution_id": execution_id, "status": "completed"}
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    response = TestClient(app).post(
+        "/sessions/session-1/executions/execution-openclaw/end-chat-session",
+        json={
+            "app_id": "app-1",
+            "user_id": "user-1",
+            "expected_session_version": 8,
+            "persist_final_output": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["final_message"]["content"] == "Final TaskFlow summary."
+    assert chat_repo.history("session-1")[-1]["content"] == "Final TaskFlow summary."

@@ -529,6 +529,79 @@ describe("ExecutionComposer", () => {
     expect(screen.queryByRole("option", { name: "NotebookLM" })).not.toBeInTheDocument();
   });
 
+  it("offers Interactive Agent mode and submits both conversational capabilities", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <ExecutionComposer
+        toolInventory={[]}
+        skillInventory={[]}
+        initialCommandKind="agent"
+        onSubmit={onSubmit}
+        onClose={vi.fn()}
+        styles={styles}
+      />,
+    );
+
+    expect(screen.getByRole("option", { name: "Interactive Agent" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Mode"), {
+      target: { value: "interactive_agent" },
+    });
+    fireEvent.change(screen.getByLabelText("Agent Request"), {
+      target: { value: "Ask me to select Markdown or plain text before answering." },
+    });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Run" })));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      commandKind: "agent",
+      targetId: "codex_cli",
+      executionMode: "sync",
+      args: {
+        request: "Ask me to select Markdown or plain text before answering.",
+        interactionRequirements: {
+          transport: "interactive",
+          style: "structured",
+          allowed_types: ["clarification", "selection"],
+          required_types: [],
+        },
+      },
+    });
+    expect(screen.queryByLabelText("Interaction Requirement")).toBeNull();
+    expect(screen.getByRole("option", { name: "OpenClaw CLI" })).not.toBeDisabled();
+  });
+
+  it("submits chat-level capabilities for Interactive OpenClaw", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <ExecutionComposer
+        toolInventory={[]}
+        skillInventory={[]}
+        initialCommandKind="agent"
+        initialAgentBackend="openclaw_cli"
+        onSubmit={onSubmit}
+        onClose={vi.fn()}
+        styles={styles}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Mode"), {
+      target: { value: "interactive_agent" },
+    });
+    fireEvent.change(screen.getByLabelText("Agent Request"), {
+      target: { value: "Draft a title, then wait for my follow-up." },
+    });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Run" })));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      commandKind: "agent",
+      targetId: "openclaw_cli",
+      executionMode: "sync",
+      args: {
+        request: "Draft a title, then wait for my follow-up.",
+        interactionRequirements: { transport: "interactive", style: "chat" },
+      },
+    });
+  });
+
   it("keeps reusable Agent output persistence opt-in", async () => {
     const onSubmit = vi.fn();
     render(

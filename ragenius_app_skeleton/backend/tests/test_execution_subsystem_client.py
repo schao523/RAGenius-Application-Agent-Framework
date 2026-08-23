@@ -163,6 +163,11 @@ def test_execute_agent_forwards_public_artifact_fields_without_trusted_context(m
             "output_id": "study_report",
             "required": True,
         }],
+        interaction_requirements={
+            "transport": "interactive",
+            "allowed_types": ["clarification", "selection"],
+            "required_types": [],
+        },
         context_payload={"safe_note": "Use concise language."},
         execution_mode="async",
     )
@@ -170,6 +175,11 @@ def test_execute_agent_forwards_public_artifact_fields_without_trusted_context(m
     payload = json.loads(captured[0].data.decode("utf-8"))
     assert payload["artifact_refs"][0]["artifact_id"] == "artifact_123"
     assert payload["expected_outputs"][0]["output_id"] == "study_report"
+    assert payload["interaction_requirements"] == {
+        "transport": "interactive",
+        "allowed_types": ["clarification", "selection"],
+        "required_types": [],
+    }
     assert payload["context"] == {"safe_note": "Use concise language."}
     assert payload["execution_options"] == {"mode": "async"}
     assert "authorization" not in payload

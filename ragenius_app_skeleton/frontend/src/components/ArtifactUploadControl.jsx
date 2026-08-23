@@ -9,7 +9,7 @@ function formatBytes(value) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function ArtifactUploadControl({ onUpload, onRetry, onReady, onStatusChange, disabled = false }) {
+export default function ArtifactUploadControl({ onUpload, onRetry, onReady, onStatusChange, disabled = false, compact = false }) {
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState("idle");
   const [progress, setProgress] = useState(null);
@@ -88,25 +88,35 @@ export default function ArtifactUploadControl({ onUpload, onRetry, onReady, onSt
 
   return (
     <div className="artifact-upload-control">
-      <label>
-        <span>Upload artifact</span>
-        <input
-          ref={inputRef}
-          aria-label="Upload artifact"
-          type="file"
+      <input
+        ref={inputRef}
+        aria-label="Upload artifact"
+        style={compact ? { display: "none" } : undefined}
+        type="file"
+        disabled={disabled || status === "uploading" || status === "preparing"}
+        onChange={(event) => {
+          const selected = event.target.files?.[0] || null;
+          setFile(selected);
+          void run(selected);
+        }}
+      />
+      {compact && (
+        <button
+          type="button"
           disabled={disabled || status === "uploading" || status === "preparing"}
-          onChange={(event) => {
-            const selected = event.target.files?.[0] || null;
-            setFile(selected);
-            void run(selected);
-          }}
-        />
-      </label>
-      {file && <div>{file.name} | {file.type || "application/octet-stream"} | {formatBytes(file.size)}</div>}
+          onClick={() => inputRef.current?.click()}
+        >
+          Upload Artifact
+        </button>
+      )}
+      {!compact && <span>Upload artifact</span>}
+      {file && (!compact || status !== "ready") && (
+        <div>{file.name} | {file.type || "application/octet-stream"} | {formatBytes(file.size)}</div>
+      )}
       <div aria-live="polite">
         {status === "uploading" && (progress == null ? "Uploading" : `Uploading ${progress}%`)}
         {status === "preparing" && "Preparing artifact"}
-        {status === "ready" && "Ready"}
+        {status === "ready" && !compact && "Ready"}
         {status === "failed" && "Upload failed. Retry this file."}
         {status === "cancelled" && "Upload cancelled."}
       </div>
@@ -116,7 +126,7 @@ export default function ArtifactUploadControl({ onUpload, onRetry, onReady, onSt
       {status === "failed" && (
         <button type="button" onClick={() => void retry()}>Retry upload</button>
       )}
-      {file && status !== "uploading" && status !== "preparing" && (
+      {file && !compact && status !== "uploading" && status !== "preparing" && (
         <button type="button" onClick={removeLocalUpload}>Remove upload</button>
       )}
     </div>

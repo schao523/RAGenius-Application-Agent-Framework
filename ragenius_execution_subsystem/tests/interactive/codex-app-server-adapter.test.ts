@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 
 import type { ExecuteAgentRequest } from "../../src/api/schemas/execution-request.schema.js";
@@ -27,7 +30,13 @@ const request: ExecuteAgentRequest = {
   app_id: "app_001",
   session_id: "session_001",
   agent_backend: "codex_cli",
-  agent_query: "Create a report and ask which format to use."
+  agent_query: "Create a report and ask which format to use.",
+  interaction_requirements: {
+    transport: "interactive",
+    style: "structured",
+    allowed_types: ["clarification", "selection"],
+    required_types: []
+  }
 };
 const policy: AgentPolicyDecision = {
   matchedTerms: [],
@@ -215,6 +224,14 @@ describe("Codex app-server adapter", () => {
     assert.equal(threadParams.ephemeral, true);
     assert.equal((threadParams.dynamicTools as Array<{ name: string }>)[0]?.name, "ragenius_request_input");
     assert.match(String(threadParams.cwd), /codex-interactive-tests[\\/]execution_001$/);
+    const turnParams = factory.transport.requests[2]?.params as {
+      input: Array<{ text: string; type: string }>;
+    };
+    const turnText = turnParams.input[0]?.text ?? "";
+    assert.match(turnText, /MUST use `ragenius_request_input`/);
+    assert.match(turnText, /Do not ask for that input only in assistant prose/);
+    assert.match(turnText, /Allowed interaction types: clarification, selection/);
+    assert.match(turnText, /Create a report and ask which format to use\./);
 
     await factory.transport.emit({
       method: "turn/started", params: { threadId: "thread-1", turn: { id: "turn-1" } }
@@ -232,6 +249,27 @@ describe("Codex app-server adapter", () => {
       "run_started", "message_delta", "run_completed"
     ]);
     assert.equal(events[1]?.payload.delta, "Working");
+  });
+
+  it("guides Codex from resolved skill policy when request metadata is absent", async () => {
+    const factory = new FakeFactory();
+    const adapter = new CodexAppServerAdapter(config(), factory);
+    await adapter.start({
+      ...preflightInput(),
+      request: { ...request, interaction_requirements: undefined },
+      requiredInteractionTypes: ["selection"],
+      requiredOccurrenceTypes: ["selection"],
+      capabilities: capabilities(),
+      protocolVersion: "0.146.0",
+      emit: async () => undefined
+    });
+
+    const turnParams = factory.transport.requests[2]?.params as {
+      input: Array<{ text: string; type: string }>;
+    };
+    const turnText = turnParams.input[0]?.text ?? "";
+    assert.match(turnText, /Allowed interaction types: selection/);
+    assert.match(turnText, /MUST use `ragenius_request_input`/);
   });
 
   it("maps multiple approvals and resolves only one-time decisions", async () => {
@@ -284,6 +322,60 @@ describe("Codex app-server adapter", () => {
       id: "tool-1",
       result: { success: true, contentItems: [{ type: "inputText", text: "Beta" }] }
     });
+  });
+
+  it("stages selected artifacts and references only their workspace-relative paths", async () => {
+    const runRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ragenius-codex-interactive-"));
+    try {
+      const factory = new FakeFactory();
+      const adapter = new CodexAppServerAdapter(config({ runRoot }), factory);
+      await adapter.start({
+        ...preflightInput(),
+        capabilities: capabilities(),
+        protocolVersion: "0.146.0",
+        emit: async () => undefined,
+        providerContext: {
+          ...providerContext,
+          resolved_artifacts: [{
+            artifact_id: "artifact_123",
+            artifact_type: "session_export",
+            display_name: "Questions.md",
+            app_id: request.app_id,
+            status: "ready",
+            role: "source",
+            requested_reuse_mode: "inline_text",
+            consumption: {
+              default_mode: "inline_text",
+              supported_modes: ["inline_text"],
+              resolved_mode: "inline_text"
+            },
+            payload: { text_content: "# Questions\n1. What is grace?", metadata: {} },
+            provenance: { provider_origin: "ragenius_app" }
+          }]
+        },
+        scope: {
+          appId: request.app_id,
+          executionId: "execution_artifact",
+          sessionId: request.session_id
+        }
+      });
+
+      const stagedPath = path.join(
+        runRoot,
+        "execution_artifact",
+        "inputs",
+        "artifact_123-Questions.md"
+      );
+      assert.equal(await fs.readFile(stagedPath, "utf8"), "# Questions\n1. What is grace?");
+      const turnParams = factory.transport.requests[2]?.params as {
+        input: Array<{ text: string }>;
+      };
+      const turnText = turnParams.input[0]?.text ?? "";
+      assert.match(turnText, /inputs\/artifact_123-Questions\.md/);
+      assert.doesNotMatch(turnText, new RegExp(runRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    } finally {
+      await fs.rm(runRoot, { recursive: true, force: true });
+    }
   });
 
   it("declines provider permission expansion without offering it to the user", async () => {
@@ -434,9 +526,10 @@ function preflightInput() {
     policy,
     providerContext,
     request,
-    requiredInteractionTypes: ["approval", "selection"] as Array<
-      "approval" | "selection"
+    requiredInteractionTypes: ["approval", "clarification", "selection"] as Array<
+      "approval" | "clarification" | "selection"
     >,
+    requiredOccurrenceTypes: ["selection"] as Array<"selection">,
     scope: { appId: request.app_id, executionId: "execution_001", sessionId: request.session_id }
   };
 }

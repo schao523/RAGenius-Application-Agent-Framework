@@ -111,6 +111,7 @@ import {
 } from "./core/interactive/prisma-agent-chat-turn-store.js";
 import { InteractiveCapabilityService } from "./core/interactive/interactive-capability-service.js";
 import { InteractiveAgentSessionManager } from "./core/interactive/interactive-agent-session-manager.js";
+import { resolveInteractiveRequirements } from "./core/interactive/interactive-requirement-resolver.js";
 import { CodexAppServerAdapter } from "./core/interactive/codex-app-server-adapter.js";
 import { CodexAppServerProcessFactory } from "./core/interactive/codex-app-server-process.js";
 import { OpenClawGatewayAdapter } from "./core/interactive/openclaw-gateway-adapter.js";
@@ -168,6 +169,10 @@ export function createAppServices(
   const permissionEngine =
     overrides.permissionEngine ?? new PermissionEngine();
   const artifactStore = overrides.artifactStore ?? new ArtifactStore(runtimeConfig.artifactStore.rootDir);
+  const codexOutputArtifactPersister = new AgentOutputArtifactPersister(
+    artifactStore,
+    { readOutputBytes: (workspaceAbsolutePath) => fs.readFile(workspaceAbsolutePath) }
+  );
   const artifactReferenceCoordinator =
     overrides.artifactReferenceCoordinator ?? new ArtifactReferenceCoordinator();
   const sessionUploadArtifactImporter =
@@ -242,6 +247,7 @@ export function createAppServices(
       executionStore,
       idleTtlMs: openClawGatewayConfig.chatIdleTtlMs,
       interactionStore: agentInteractionStore,
+      persistFinalResponse: (input) => codexOutputArtifactPersister.persistText(input),
       sessionStore: agentSessionStore
     });
   const agentSkillProjectionStore =
@@ -339,10 +345,6 @@ export function createAppServices(
     overrides.workflowOrchestrator ??
     new WorkflowOrchestrator(toolRegistry, toolEngine);
   const agentArtifactResolver = new AgentArtifactResolver(artifactStore);
-  const codexOutputArtifactPersister = new AgentOutputArtifactPersister(
-    artifactStore,
-    { readOutputBytes: (workspaceAbsolutePath) => fs.readFile(workspaceAbsolutePath) }
-  );
   const openClawOutputArtifactPersister = new AgentOutputArtifactPersister(
     artifactStore,
     {
@@ -385,14 +387,7 @@ export function createAppServices(
         (await artifactStore.resolveScopedFile(input)).absolute_path,
       notebookLmProfile: runtimeConfig.providers.notebooklm.profile ?? "default",
       executionStore,
-      interactiveRequirementResolver: ({ selection }) => {
-        const policy = selection?.interaction_policy;
-        if (!policy || policy.required_transport === "one_shot") return null;
-        return {
-          requiredInteractionTypes: [...policy.supported_interaction_types],
-          requiredRecoveryClass: policy.recovery_class
-        };
-      },
+      interactiveRequirementResolver: resolveInteractiveRequirements,
       interactiveSessionManager,
       permissionEngine,
       skillRegistry,

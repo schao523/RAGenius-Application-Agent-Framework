@@ -130,6 +130,60 @@ Capabilities come from the active adapter's tested protocol version and
 runtime preflight. Skill metadata may require or raise capabilities but may not
 claim that an unavailable provider capability exists.
 
+## Request-Side Interaction Requirements
+
+An `execute_agent` request may explicitly require a bounded non-authorizing
+interaction even when `agent_skill_ref` is omitted:
+
+```ts
+type AgentRequestInteractionRequirements = {
+  transport?: "interactive";
+  style?: "structured" | "chat";
+  allowed_types?: Array<"clarification" | "selection">;
+  required_types?: Array<"clarification" | "selection">;
+};
+```
+
+Rules:
+
+- Omission means the request does not itself require interactive transport.
+  Existing governed skill policy can still require it.
+- Structured style has at least one allowed or required type. Both arrays are
+  unique and limited to `clarification` and `selection`. A required type is
+  implicitly allowed.
+- Chat style advertises no typed interaction types. It requires the adapter's
+  tested `chat_level_interaction` capability and preserves a provider session
+  across completed runs.
+- `allowed_types` advertises interaction capabilities that may be used without
+  requiring any of them to occur. `required_types` additionally requires each
+  listed type to be observed before successful completion.
+- Presence forces capability preflight and interactive transport. It never
+  falls back to a one-shot provider.
+- Runtime requirements are the strict union of explicit request requirements
+  and the selected skill's administrator-reviewed interaction policy. A
+  request may raise requirements but cannot weaken skill governance.
+- Every explicitly required type must be observed as a typed provider
+  interaction before successful terminal completion. If the provider finishes
+  without requesting it, the execution fails with
+  `REQUIRED_INTERACTION_NOT_OBSERVED`.
+- Requirement resolution uses this precedence: administrator-reviewed skill
+  policy, explicit request metadata, then conservative high-confidence query
+  inference. Query inference may only raise requirements for unambiguous
+  imperative phrases such as "ask me to select/choose" or "ask me for
+  clarification". Ambiguous collaborative wording must not create a required
+  type. Inferred requirements are recorded in normalized execution metadata.
+- Interactive Agent mode in Composer sends structured style with clarification
+  and selection allowed for Codex, and chat style for OpenClaw. Advanced
+  structured clients may supply `required_types`; callers cannot use explicit
+  metadata to weaken skill policy or an unambiguous inferred requirement.
+- When structured interaction is enabled, the Codex adapter supplies trusted
+  protocol guidance requiring `ragenius_request_input` for any allowed user
+  input. It must not force a tool call when input is unnecessary, and Codex
+  must not represent a required interaction using ordinary assistant prose.
+- A clarification or selection response remains content input only. It cannot
+  authorize filesystem, network, credential, destructive, or external-write
+  operations.
+
 The initial verified profiles are:
 
 - Codex app-server: approvals, clarification/selection through the managed
@@ -214,6 +268,32 @@ amendments, and session-wide approval are excluded from the initial release.
 Ordinary clarification and selection responses cannot authorize filesystem,
 network, credential, external-write, or destructive operations.
 
+## Interactive Inputs And Final Outputs
+
+- Selected artifact references are resolved under the existing app/session
+  scope and staged into the execution-owned interactive workspace before the
+  provider turn starts. The trusted prompt identifies only staged relative
+  paths; browser-local and artifact-store paths are never exposed.
+- Interactive message deltas are bounded and accumulated into one normalized
+  final assistant response. Completion status alone is not a user result.
+- When an interactive provider session is explicitly finished, the app backend
+  may project the normalized final assistant response into session chat history.
+  That projection must be idempotent by execution and final-turn identity and
+  must preserve its Agent backend provenance. Refresh or retry must not create
+  duplicate assistant messages.
+- A terminal or explicitly closed Agent session must not continue presenting an
+  actionable interaction composer. Provider prose cannot keep or reopen an
+  interaction after authoritative session state becomes terminal.
+- `persist_as_artifact: true` on an expected output persists the normalized
+  final assistant response as an `agent_output` artifact when the request is
+  conversational and does not require a provider-created file.
+- A request that explicitly requires a named file or byte-level verification
+  continues to use workspace output planning, path confinement, verification,
+  and then artifact persistence. Capturing response text must not falsely
+  satisfy a required provider-created file.
+- If persistence was not requested, the final response remains execution
+  result content and no reusable artifact is created.
+
 ## Authentication And User Action
 
 Authentication is a handoff, not an input form. The interaction may provide a
@@ -289,6 +369,7 @@ Before starting an interactive transport, the execution subsystem validates:
 - required transport and authentication state;
 - adapter capability profile;
 - selected skill interaction requirements;
+- explicit request-side interaction requirements;
 - required binaries, platform, workspace, and staged artifacts;
 - Gateway scope requirements. OpenClaw 2026.6.8 external approval mediation
   requires both `operator.admin` and `operator.approvals`;

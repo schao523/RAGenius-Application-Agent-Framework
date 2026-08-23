@@ -49,14 +49,41 @@ export class AgentOutputArtifactPersister {
     const bytes = await this.dependencies.readOutputBytes(
       input.verification.workspace_absolute_path
     );
-    const content = {
+    return this.saveBytes(input, bytes, {
       output_id: input.output.output_id,
       role: input.output.artifact_role ?? "final",
       workspace_relative_path: input.verification.workspace_relative_path,
       size_bytes: input.verification.size_bytes,
       sha256: input.verification.sha256,
       media_type: input.output.media_type
-    };
+    });
+  }
+
+  async persistText(input: {
+    request: ExecuteAgentRequest;
+    executionId: string;
+    output: AgentOutputPersistenceSpec;
+    text: string;
+  }): Promise<PersistedAgentOutputArtifact> {
+    const bytes = Buffer.from(input.text, "utf8");
+    return this.saveBytes(input, bytes, {
+      output_id: input.output.output_id,
+      role: input.output.artifact_role ?? "final",
+      capture_source: "interactive_final_response",
+      size_bytes: bytes.byteLength,
+      media_type: input.output.media_type
+    });
+  }
+
+  private async saveBytes(
+    input: {
+      request: ExecuteAgentRequest;
+      executionId: string;
+      output: AgentOutputPersistenceSpec;
+    },
+    bytes: Buffer,
+    content: Record<string, unknown>
+  ): Promise<PersistedAgentOutputArtifact> {
     const isTextOutput =
       input.output.media_type.startsWith("text/") ||
       input.output.media_type === "application/json" ||

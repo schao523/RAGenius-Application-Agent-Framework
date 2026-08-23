@@ -47,15 +47,15 @@
 - Produces: `AgentSessionStore`, `AgentInteractionStore`, `AgentEventStore` and the exact record types from `docs/interactive-agent-execution-contract.md`.
 - Consumes: existing execution scope and Prisma client patterns.
 
-- [ ] **Step 1: Write failing in-memory store tests**
+- [x] **Step 1: Write failing in-memory store tests**
 
 Cover one active session per execution, monotonically increasing interaction/event sequences, scoped reads, atomic interaction claim by version, duplicate idempotency replay, expiry, and multiple interactions in one execution.
 
-- [ ] **Step 2: Run the focused tests and confirm missing-module failures**
+- [x] **Step 2: Run the focused tests and confirm missing-module failures**
 
 Run: `npm test -- tests/interactive/interactive-stores.test.ts`
 
-- [ ] **Step 3: Add the shared types and in-memory stores**
+- [x] **Step 3: Add the shared types and in-memory stores**
 
 Use these core signatures:
 
@@ -69,19 +69,19 @@ interface AgentInteractionStore {
 }
 ```
 
-- [ ] **Step 4: Add Prisma tables and migration**
+- [x] **Step 4: Add Prisma tables and migration**
 
 Create `agent_sessions`, `agent_interactions`, and `agent_execution_events` with foreign keys to `executions`, unique execution/sequence constraints, scope indexes, expiry indexes, and cascade deletion. Store provider references in non-public columns and response summaries as JSON.
 
-- [ ] **Step 5: Implement Prisma stores with conditional updates**
+- [x] **Step 5: Implement Prisma stores with conditional updates**
 
 Interaction claims must update only records matching pending state, expected version, scope, and unexpired timestamp. Duplicate idempotency keys return the prior resolution rather than contacting a provider twice.
 
-- [ ] **Step 6: Test both in-memory and mocked Prisma behavior**
+- [x] **Step 6: Test both in-memory and mocked Prisma behavior**
 
 Run: `npm test -- tests/interactive/interactive-stores.test.ts`
 
-- [ ] **Step 7: Validate Prisma and commit**
+- [x] **Step 7: Validate Prisma and commit**
 
 Run: `npx prisma validate`
 
@@ -104,15 +104,15 @@ git commit -m "feat: persist interactive agent sessions"
 - Consumes: stores from Task 1 and existing `AgentProviderExecutionContext`.
 - Produces: `InteractiveAgentAdapter` with `preflight`, `start`, `respond`, `cancel`, and `reconcile`.
 
-- [ ] **Step 1: Write failing lifecycle and preflight tests**
+- [x] **Step 1: Write failing lifecycle and preflight tests**
 
 Test `running -> waiting_for_interaction -> running -> completed`, multiple interactions, unsupported capability failure, cancellation, expired interaction failure, and preservation of pre-run `pending_confirmation`.
 
-- [ ] **Step 2: Run focused tests**
+- [x] **Step 2: Run focused tests**
 
 Run: `npm test -- tests/interactive/interactive-agent-session-manager.test.ts`
 
-- [ ] **Step 3: Implement adapter and capability interfaces**
+- [x] **Step 3: Implement adapter and capability interfaces**
 
 ```ts
 interface InteractiveAgentAdapter {
@@ -125,19 +125,19 @@ interface InteractiveAgentAdapter {
 }
 ```
 
-- [ ] **Step 4: Implement session orchestration**
+- [x] **Step 4: Implement session orchestration**
 
 Persist the provider handle before consuming subsequent events, normalize events through one append-only path, create interactions only from typed adapter events, and transition execution status atomically.
 
-- [ ] **Step 5: Extend status normalization**
+- [x] **Step 5: Extend status normalization**
 
 Add `waiting_for_interaction` and `cancelled` to schemas and active-status recovery logic. Keep timeout and unclean restart behavior consistent with the lifecycle contract.
 
-- [ ] **Step 6: Integrate feature-gated interactive dispatch**
+- [x] **Step 6: Integrate feature-gated interactive dispatch**
 
 Select interactive dispatch only when requested/required capabilities pass preflight. Autonomous requests continue using the existing `AgentProvider.execute` path.
 
-- [ ] **Step 7: Run tests and commit**
+- [x] **Step 7: Run tests and commit**
 
 Run: `npm test -- tests/interactive/interactive-agent-session-manager.test.ts tests/execution/agent-execution-queue.test.ts tests/execution/execution-store.test.ts`
 
@@ -158,27 +158,27 @@ git commit -m "feat: orchestrate interactive agent lifecycle"
 - Consumes: session manager and stores from Tasks 1-2.
 - Produces: the four service endpoints in the interactive execution contract.
 
-- [ ] **Step 1: Write failing route tests**
+- [x] **Step 1: Write failing route tests**
 
 Cover service authentication, complete scope, event cursor, pending interaction inventory, stale version, duplicate idempotency, wrong response kind, secret-like fields rejection, cancellation, and execution-id enumeration resistance.
 
-- [ ] **Step 2: Run focused route tests**
+- [x] **Step 2: Run focused route tests**
 
 Run: `npm test -- tests/api/interactive-agent-routes.test.ts`
 
-- [ ] **Step 3: Add Zod request and response schemas**
+- [x] **Step 3: Add Zod request and response schemas**
 
 Set exact length limits: prompt 2,000 characters, option label 200, 20 options, clarification response 8,000, idempotency key 128, and event page 200. Reject unrecognized fields in response payloads.
 
-- [ ] **Step 4: Implement routes and register them**
+- [x] **Step 4: Implement routes and register them**
 
 Use existing service authentication and execution scope lookup before every store or adapter operation. Return normalized conflicts for stale, expired, already-resolved, and unsupported interactions.
 
-- [ ] **Step 5: Run route and scope regression tests**
+- [x] **Step 5: Run route and scope regression tests**
 
 Run: `npm test -- tests/api/interactive-agent-routes.test.ts tests/execution/execution-scope.test.ts tests/api/execution-routes.test.ts`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```text
 git add ragenius_execution_subsystem/src/api ragenius_execution_subsystem/src/app.ts ragenius_execution_subsystem/tests/api
@@ -201,37 +201,37 @@ git commit -m "feat: expose scoped agent interaction APIs"
 - Consumes: `InteractiveAgentAdapter`.
 - Produces: `CodexAppServerAdapter` and capability profile.
 
-- [ ] **Step 1: Write codec tests with recorded protocol fixtures**
+- [x] **Step 1: Write codec tests with recorded protocol fixtures**
 
 Test initialize, thread/turn ids, event deltas, multiple approval requests, dynamic tool call, malformed JSON, unknown methods, response correlation, and output bounds.
 
-- [ ] **Step 2: Implement newline JSON-RPC codec and process wrapper**
+- [x] **Step 2: Implement newline JSON-RPC codec and process wrapper**
 
 Spawn `codex app-server --stdio` without a shell, retain one process per active execution, and integrate the existing process-tree supervisor and bounded stderr handling.
 
-- [ ] **Step 3: Write failing adapter lifecycle tests**
+- [x] **Step 3: Write failing adapter lifecycle tests**
 
 Mock a full turn containing approval, dynamic selection, completion, cancellation, provider disconnect, and unsupported schema version.
 
-- [ ] **Step 4: Implement start and event normalization**
+- [x] **Step 4: Implement start and event normalization**
 
 Send `initialize`, `initialized`, `thread/start`, and `turn/start`. Persist thread/turn refs before resolving subsequent messages. Coalesce message deltas and discard raw reasoning.
 
-- [ ] **Step 5: Implement interactions and cancellation**
+- [x] **Step 5: Implement interactions and cancellation**
 
 Map typed approval requests, expose only allow-once/deny/cancel, register `ragenius_request_input`, and send `turn/interrupt` for cancellation.
 
-- [ ] **Step 6: Add config and preflight**
+- [x] **Step 6: Add config and preflight**
 
 Add `CODEX_APP_SERVER_INTERACTIVE_ENABLED`, command, supported version range, interaction TTL, and initialization timeout. Default the feature to disabled.
 
-- [ ] **Step 7: Run unit and opt-in live tests**
+- [x] **Step 7: Run unit and opt-in live tests**
 
 Run: `npm test -- tests/interactive/codex-app-server-adapter.test.ts`
 
 Opt-in: `CODEX_APP_SERVER_INTERACTIVE_SMOKE=1 npm test -- tests/interactive/codex-app-server-live-smoke.test.ts`
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```text
 git add ragenius_execution_subsystem/src ragenius_execution_subsystem/tests/interactive
@@ -647,3 +647,84 @@ approval evidence through the production adapter. Keep normal OpenClaw policy
 at `security: full` until that gate passes. Keep OpenClaw clarification
 unavailable until a separate managed-tool specification, feasibility test, and
 production implementation plan are approved after Task 10 passes.
+
+### Task 11: Explicit Composer Interaction Requirements
+
+**Goal:** Add a visible Interactive Agent Composer mode that selects managed
+interactive transport without relying on prompt inference or an approved Agent
+Skill, while retaining advanced required-interaction guarantees.
+
+**Files:**
+- Modify: `ragenius_execution_subsystem/src/api/schemas/execution-request.schema.ts`
+- Modify: `ragenius_execution_subsystem/src/app.ts`
+- Modify: `ragenius_execution_subsystem/src/core/execution/execution-engine.ts`
+- Modify: `ragenius_execution_subsystem/src/core/interactive/interactive-agent-session-manager.ts`
+- Modify: `ragenius_app_skeleton/backend/app/execution_subsystem_client.py`
+- Modify: `ragenius_app_skeleton/backend/app/main.py`
+- Modify: `ragenius_app_skeleton/frontend/src/components/ExecutionComposer.jsx`
+- Modify: `ragenius_app_skeleton/frontend/src/App.jsx`
+- Test: focused schema, execution-engine, session-manager, backend-client,
+  Composer, and app-routing tests.
+
+- [x] **Step 1: Add the strict request schema**
+
+Accept bounded unique `allowed_types` and `required_types` arrays containing
+only `clarification` and `selection`. Require at least one type across them and
+reject approval and unknown fields.
+
+Accept `style: chat` without typed interaction arrays only when runtime
+preflight verifies chat-level continuation.
+
+- [x] **Step 2: Merge request and skill requirements**
+
+Use a stable union for capability preflight. Explicit request requirements can
+raise but never lower reviewed skill requirements. Route any resulting
+interactive requirement through the existing session manager.
+
+- [x] **Step 3: Enforce required interaction observation**
+
+Track required occurrence types in the active execution. Remove a type only
+after a valid typed interaction is persisted. Fail terminal completion when a
+required type was not observed.
+
+- [x] **Step 4: Forward through the app boundary**
+
+Validate and forward the field unchanged through the app backend and execution
+subsystem client. Preserve app/session ownership checks and service auth.
+
+- [x] **Step 5: Add Composer controls**
+
+Offer `Agent` and `Interactive Agent` as visible Composer modes. Interactive
+Agent allows both clarification and selection by default, requires neither to
+occur, and explains that conversational input does not grant operation
+authorization. Keep detailed type requirements out of the primary UX. Disable
+typed interaction controls for OpenClaw; submit chat style and label follow-ups
+as new runs in the same provider session rather than paused-turn responses.
+
+- [x] **Step 6: Verify**
+
+Run focused tests, execution subsystem build/typecheck, app backend tests,
+frontend tests, and frontend production build. Then run a live Codex selection
+smoke using a staged artifact.
+
+Implemented on 2026-08-21. The previously failing legacy chat-export artifact
+was also staged successfully after separating semantic content identity from
+explicit `sha256:` byte integrity. Verification passed: execution subsystem
+471 tests with 8 skips, lint, typecheck, and build; app backend 127 tests with
+1 skip; app frontend 165 tests and production build. The opt-in live Codex
+app-server matrix also passed initialization, bounded read-only completion,
+and a real dynamic selection followed by same-turn resume against Codex CLI
+`0.146.0`. A three-service UI smoke remains appropriate after restart, but the
+provider protocol path is verified.
+
+Post-implementation UX stabilization completed on 2026-08-23. Live
+three-service OpenClaw TaskFlow follow-ups and Codex structured interaction
+were accepted by the user. A completed `Stop and summarize` turn now persists
+its final output idempotently into chat history, closes the chat-level session,
+and removes the follow-up composer. Long OpenClaw responses scroll within a
+bounded response region while the reply field and actions remain visible.
+Release verification passed the app backend suite (130 passed, 1 skipped),
+Builder suite (125 passed), frontend suite (184 passed), and frontend
+production build. The final commit gate also passed the complete app collection
+(556 passed, 1 skipped, 11 subtests) and execution-subsystem build and suite
+(480 passed, 8 opt-in live tests skipped).

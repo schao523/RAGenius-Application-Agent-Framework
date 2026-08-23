@@ -129,6 +129,26 @@ describe("ExecutionLaneStatusCard", () => {
     expect(screen.getByText(/status: running/i)).toBeInTheDocument();
   });
 
+  it("shows conservatively inferred interaction requirements", () => {
+    render(
+      <ExecutionLaneStatusCard
+        selectedApprovedContent={null}
+        sessionLaneState={{ execution_lane: {
+          latest_execution_id: "execution_interactive",
+          latest_status_result: {
+            status: "completed",
+            result: {
+              interaction_requirements: { inferred_types: ["selection"] },
+            },
+          },
+        } }}
+        styles={styles}
+      />,
+    );
+
+    expect(screen.getByText(/interaction inferred: selection/i)).toBeInTheDocument();
+  });
+
   it("allows opening details and refreshing the latest execution status when an execution id exists", () => {
     const onRefreshStatus = vi.fn();
     const onOpenComposer = vi.fn();

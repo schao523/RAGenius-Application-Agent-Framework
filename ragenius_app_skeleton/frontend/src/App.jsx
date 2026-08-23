@@ -8,6 +8,8 @@ import DocumentsPanel from "./components/DocumentsPanel";
 import ExecutionInspector from "./components/ExecutionInspector";
 import ExecutionComposer from "./components/ExecutionComposer";
 import ExecutionLaneStatusCard from "./components/ExecutionLaneStatusCard";
+import AgentInteractionCard from "./components/AgentInteractionCard";
+import AgentChatFollowUpPanel from "./components/AgentChatFollowUpPanel";
 import ArtifactLibrary from "./components/ArtifactLibrary";
 import InstructionsPanel from "./components/InstructionsPanel";
 import RuntimeInspector from "./components/RuntimeInspector";
@@ -214,12 +216,18 @@ const styles = {
     padding: 18,
     boxShadow: "0 18px 40px rgba(15,23,42,0.08)",
   },
-  chatWorkspaceCard: {
+  chatWorkspaceCard: (expandedPanelCount) => ({
     display: "grid",
-    gridTemplateRows: "auto auto minmax(0, 1fr) auto auto",
-    maxHeight: "calc(100vh - 32px)",
+    gridTemplateRows: [
+      "auto",
+      ...Array.from({ length: expandedPanelCount }, () => "auto"),
+      "minmax(0, 1fr)",
+      "auto",
+      "auto",
+    ].join(" "),
+    height: "calc(100vh - 32px)",
     overflow: "hidden",
-  },
+  }),
   sectionTitle: {
     margin: "0 0 8px 0",
     fontSize: 22,
@@ -276,7 +284,7 @@ const styles = {
   },
   textarea: {
     width: "100%",
-    minHeight: 130,
+    minHeight: 76,
     boxSizing: "border-box",
     padding: "13px 14px",
     borderRadius: 14,
@@ -563,6 +571,11 @@ const styles = {
     border: "1px solid #dbeafe",
     background: "linear-gradient(135deg, #ffffff 0%, #f8fbff 100%)",
   },
+  sessionHeaderGroup: {
+    display: "grid",
+    gap: 10,
+    minWidth: 0,
+  },
   sessionHeaderTitle: {
     margin: 0,
     fontSize: 24,
@@ -576,7 +589,6 @@ const styles = {
     display: "flex",
     gap: 8,
     flexWrap: "wrap",
-    marginBottom: 12,
   },
   workflowBadge: (kind) => ({
     display: "inline-flex",
@@ -744,11 +756,13 @@ const styles = {
     position: "relative",
     marginTop: 18,
     minHeight: 0,
+    overflow: "hidden",
   },
   transcript: {
     height: "100%",
     minHeight: 0,
-    overflowY: "scroll",
+    boxSizing: "border-box",
+    overflowY: "auto",
     overflowX: "hidden",
     paddingRight: 8,
     borderRadius: 18,
@@ -785,8 +799,23 @@ const styles = {
     overscrollBehavior: "contain",
     scrollbarGutter: "stable",
   },
+  chatActionToolbar: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+  },
   executionComposerShelf: {
     minWidth: 0,
+  },
+  utilityWorkspace: {
+    marginTop: 14,
+    maxHeight: "min(62vh, 720px)",
+    overflowY: "auto",
+    overflowX: "hidden",
+    overscrollBehavior: "contain",
+    scrollbarGutter: "stable",
   },
   scrollLatestButton: {
     position: "absolute",
@@ -1033,6 +1062,25 @@ export function createSessionId(randomUUID = () => globalThis.crypto.randomUUID(
   return randomUUID();
 }
 
+export function shouldPollAgentActivity({
+  agentChatState,
+  executionStatus,
+  hasPendingInteraction,
+}) {
+  return Boolean(
+    hasPendingInteraction
+    || String(agentChatState || "").toLowerCase() === "running"
+    || [
+      "queued",
+      "running",
+      "waiting",
+      "waiting_for_interaction",
+      "waiting_for_input",
+      "awaiting_input",
+    ].includes(String(executionStatus || "").toLowerCase()),
+  );
+}
+
 function buildThreadKey(appId, sessionId) {
   return `${appId || "no-app"}::${sessionId || "no-session"}`;
 }
@@ -1211,6 +1259,38 @@ function normalizeComposerAgentSkillRef(value) {
   };
 }
 
+function normalizeComposerInteractionRequirements(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const normalizeTypes = (items) => Array.isArray(items)
+    ? items.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const allowedTypes = normalizeTypes(value.allowed_types);
+  const requiredTypes = normalizeTypes(value.required_types);
+  const validTypes = ["clarification", "selection"];
+  const transport = String(value.transport || "").trim();
+  const style = String(value.style || "").trim();
+  if (
+    (style !== "chat" && allowedTypes.length === 0 && requiredTypes.length === 0)
+    || new Set(allowedTypes).size !== allowedTypes.length
+    || new Set(requiredTypes).size !== requiredTypes.length
+    || allowedTypes.some((item) => !validTypes.includes(item))
+    || requiredTypes.some((item) => !validTypes.includes(item))
+    || (transport && transport !== "interactive")
+    || (style && !["structured", "chat"].includes(style))
+    || (style === "chat" && (allowedTypes.length > 0 || requiredTypes.length > 0))
+  ) {
+    return null;
+  }
+  return {
+    ...(transport ? { transport } : {}),
+    ...(style ? { style } : {}),
+    ...(Array.isArray(value.allowed_types) ? { allowed_types: allowedTypes } : {}),
+    ...(Array.isArray(value.required_types) ? { required_types: requiredTypes } : {}),
+  };
+}
+
 export function buildExecutionRequestForComposer({ commandKind, targetId, args = {}, executionMode = "sync" }) {
   if (commandKind !== "agent") {
     return null;
@@ -1218,7 +1298,15 @@ export function buildExecutionRequestForComposer({ commandKind, targetId, args =
   const artifactRefs = normalizeComposerArtifactRefs(args.artifactRefs || args.artifact_refs);
   const expectedOutputs = normalizeComposerExpectedOutputs(args.expectedOutputs || args.expected_outputs);
   const agentSkillRef = normalizeComposerAgentSkillRef(args.agentSkillRef || args.agent_skill_ref);
-  if (artifactRefs.length === 0 && expectedOutputs.length === 0 && !agentSkillRef) {
+  const interactionRequirements = normalizeComposerInteractionRequirements(
+    args.interactionRequirements || args.interaction_requirements,
+  );
+  if (
+    artifactRefs.length === 0
+    && expectedOutputs.length === 0
+    && !agentSkillRef
+    && !interactionRequirements
+  ) {
     return null;
   }
   return {
@@ -1226,6 +1314,7 @@ export function buildExecutionRequestForComposer({ commandKind, targetId, args =
     agent_backend: String(targetId || "codex_cli").trim() || "codex_cli",
     execution_mode: executionMode === "async" ? "async" : "sync",
     ...(agentSkillRef ? { agent_skill_ref: agentSkillRef } : {}),
+    ...(interactionRequirements ? { interaction_requirements: interactionRequirements } : {}),
     ...(artifactRefs.length > 0 ? { artifact_refs: artifactRefs } : {}),
     ...(expectedOutputs.length > 0 ? { expected_outputs: expectedOutputs } : {}),
   };
@@ -1987,8 +2076,11 @@ function ChatPanel({
   const [confirmingExecution, setConfirmingExecution] = useState(false);
   const [loggingInToNotebookLm, setLoggingInToNotebookLm] = useState(false);
   const [exportingSelection, setExportingSelection] = useState(false);
-  const [showExecutionComposer, setShowExecutionComposer] = useState(false);
-  const [showArtifactLibrary, setShowArtifactLibrary] = useState(true);
+  const [activeUtilityView, setActiveUtilityView] = useState(null);
+  const [executionComposerMounted, setExecutionComposerMounted] = useState(false);
+  const [artifactLibraryMounted, setArtifactLibraryMounted] = useState(false);
+  const [attachedArtifacts, setAttachedArtifacts] = useState([]);
+  const [uploadControlKey, setUploadControlKey] = useState(0);
   const [artifactSuggestionForComposer, setArtifactSuggestionForComposer] = useState(null);
   const [artifactSuggestionsForComposer, setArtifactSuggestionsForComposer] = useState([]);
   const [artifactPreferredTargetIdForComposer, setArtifactPreferredTargetIdForComposer] = useState("");
@@ -2001,11 +2093,39 @@ function ChatPanel({
   const [inspectedMessageIndex, setInspectedMessageIndex] = useState(-1);
   const transcriptRef = useRef(null);
 
+  useEffect(() => {
+    setActiveUtilityView(null);
+    setAttachedArtifacts([]);
+    setUploadControlKey((value) => value + 1);
+  }, [sessionId]);
+
   const openExecutionComposer = () => {
-    setShowExecutionComposer(true);
+    setExecutionComposerMounted(true);
+    setActiveUtilityView("composer");
     Promise.resolve(onPrepareExecutionComposer?.()).catch((prepareError) => {
       setError(String(prepareError?.message || prepareError || "Unable to prepare execution session."));
     });
+  };
+
+  const openArtifactLibrary = () => {
+    setArtifactLibraryMounted(true);
+    setActiveUtilityView("artifacts");
+  };
+
+  const toggleUtilityView = (view) => {
+    if (activeUtilityView === view) {
+      setActiveUtilityView(null);
+      return;
+    }
+    if (view === "composer") {
+      openExecutionComposer();
+      return;
+    }
+    if (view === "artifacts") {
+      openArtifactLibrary();
+      return;
+    }
+    setActiveUtilityView(view);
   };
 
   const isLandingState = messages.length === 0;
@@ -2027,6 +2147,14 @@ function ChatPanel({
   const inspectedMessageIsExecution = isExecutionTurn(inspectedMessage);
   const phaseLabel = getSessionPhaseLabel(workflowStatus, latestAssistantMessage);
   const exportSelectionCount = Array.isArray(selectedExportMessageIds) ? selectedExportMessageIds.length : 0;
+  const hasPendingAgentInteraction = agentInteraction?.state === "pending";
+  const hasActiveAgentChat = ["ready_for_follow_up", "running"].includes(
+    String(agentChatSession?.state || "").toLowerCase(),
+  );
+  const showExecutionComposer = activeUtilityView === "composer";
+  const showApprovedContent = activeUtilityView === "approved";
+  const showExecutionLane = activeUtilityView === "execution";
+  const showArtifactLibrary = activeUtilityView === "artifacts";
 
   useEffect(() => {
     if (!transcriptRef.current) {
@@ -2070,8 +2198,16 @@ function ChatPanel({
     setLoading(true);
     setError("");
     try {
-      await onSubmitQuery(normalizedQuery);
+      const artifactRefs = attachedArtifacts.map((artifact) => ({
+        artifact_id: artifact.artifact_id,
+        display_name: artifact.display_name || artifact.artifact_id,
+        mime_type: artifact.mime_type || "application/octet-stream",
+        role: "attachment",
+      }));
+      await onSubmitQuery(normalizedQuery, { artifactRefs });
       setQuery("");
+      setAttachedArtifacts([]);
+      setUploadControlKey((value) => value + 1);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -2267,9 +2403,14 @@ function ChatPanel({
         <section
           style={{
             ...styles.card,
-            ...(isLandingState ? {} : styles.chatWorkspaceCard),
+            ...(isLandingState
+              ? {}
+              : styles.chatWorkspaceCard(
+                Number(hasPendingAgentInteraction),
+              )),
             marginBottom: 0,
           }}
+          aria-label={isLandingState ? undefined : "Chat session"}
         >
           {isLandingState ? (
             <ChatLanding
@@ -2294,40 +2435,23 @@ function ChatPanel({
                 onOpenInspector={() => openInspector(isExecutionTurn(latestAssistantMessage) ? "summary" : "details")}
                 hasAssistantTurn={Boolean(latestAssistantMessage)}
               />
-              <ApprovedContentPanel
-                approvedContent={approvedContent}
-                selectedApprovedContentId={selectedApprovedContentId}
-                onSelectApprovedContent={onSelectApprovedContent}
-                latestAssistantMessage={latestAssistantMessage}
-                onApproveLatest={approveLatestAssistantMessage}
-                approving={approving}
-                styles={styles}
-              />
-              <ExecutionLaneStatusCard
-                selectedApprovedContent={selectedApprovedContent}
-                sessionLaneState={sessionLaneState}
-                onRefreshStatus={refreshExecutionStatus}
-                refreshing={refreshingExecutionStatus}
-                onRetryExecution={retryLastExecution}
-                onOpenComposer={openExecutionComposer}
-                onOpenInspector={() => openInspector("summary")}
-                interaction={agentInteraction}
-                onRefreshInteraction={onRefreshAgentInteraction}
-                onRespondInteraction={onRespondAgentInteraction}
-                onCancelInteraction={onCancelAgentExecution}
-                interactionSubmitting={agentInteractionSubmitting}
-                interactionError={agentInteractionError}
-                chatSession={agentChatSession}
-                onAgentChatFollowUp={onAgentChatFollowUp}
-                onEndAgentChatSession={onEndAgentChatSession}
-                agentChatSubmitting={agentChatSubmitting}
-                agentChatError={agentChatError}
-                styles={styles}
-              />
+              {hasPendingAgentInteraction && (
+                <AgentInteractionCard
+                  interaction={agentInteraction}
+                  onRefresh={onRefreshAgentInteraction}
+                  onRespond={onRespondAgentInteraction}
+                  onCancel={onCancelAgentExecution}
+                  submitting={agentInteractionSubmitting}
+                  error={agentInteractionError}
+                  styles={styles}
+                />
+              )}
               <div style={styles.transcriptWrapper}>
                 <div
                   ref={transcriptRef}
                   style={styles.transcript}
+                  role="region"
+                  aria-label="Conversation transcript"
                   onScroll={updateScrollAffordance}
                 >
                   {messages.map((message, index) => {
@@ -2364,10 +2488,10 @@ function ChatPanel({
                           setArtifactPreferredTargetIdForComposer("");
                           setArtifactPreferredCommandKindForComposer(String(options?.commandKind || "").trim());
                           setArtifactPreferredAgentBackendForComposer(String(options?.agentBackend || "").trim());
-                          setShowArtifactLibrary(true);
+                          openArtifactLibrary();
                           openExecutionComposer();
                         }}
-                        onViewArtifactLibrary={() => setShowArtifactLibrary(true)}
+                        onViewArtifactLibrary={openArtifactLibrary}
                         onOpenInspector={(messageIndex) => openInspector(isExecutionTurn(messages[messageIndex]) ? "summary" : "details", messageIndex)}
                         onOpenSources={(messageIndex) => openInspector("sources", messageIndex)}
                       />
@@ -2383,19 +2507,43 @@ function ChatPanel({
             </>
           )}
 
-          <div style={{ ...styles.details, display: "grid", gap: 8 }}>
-            <div style={styles.label}>Upload artifact</div>
-            <ArtifactUploadControl
-              disabled={!appId}
-              onUpload={(file, operationId, onProgress, signal) => onUploadArtifact(file, operationId, onProgress, signal)}
-              onRetry={onRetryArtifactUpload}
-            />
-            <span style={styles.small}>
-              Files are available to this chat and Agent execution. Successful uploads appear in Artifact Library.
-            </span>
-          </div>
-
           <div style={styles.composerShell}>
+            <AgentChatFollowUpPanel
+              chatSession={agentChatSession}
+              error={agentChatError}
+              onCancel={onCancelAgentExecution}
+              onEnd={onEndAgentChatSession}
+              onFollowUp={onAgentChatFollowUp}
+              prompt={String(
+                sessionLaneState?.execution_lane?.latest_status_result?.result?.output_text
+                || sessionLaneState?.execution_lane?.latest_execution_result?.result?.output_text
+                || "",
+              )}
+              submitting={agentChatSubmitting}
+              styles={styles}
+            />
+            {!hasActiveAgentChat && (
+              <>
+              {attachedArtifacts.length > 0 && (
+              <div aria-label="Attached to next message" style={{ ...styles.row, marginBottom: 10 }}>
+                <span style={styles.small}>Attached to next message</span>
+                {attachedArtifacts.map((artifact) => (
+                  <span key={artifact.artifact_id} style={{ ...styles.pill, ...styles.statusOk }}>
+                    {artifact.display_name || artifact.artifact_id} · Ready
+                    <button
+                      type="button"
+                      aria-label={`Remove ${artifact.display_name || artifact.artifact_id}`}
+                      style={{ ...styles.inlineActionButton, marginLeft: 6 }}
+                      onClick={() => setAttachedArtifacts((items) => (
+                        items.filter((item) => item.artifact_id !== artifact.artifact_id)
+                      ))}
+                    >
+                      Remove
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <textarea
               style={styles.textarea}
               value={query}
@@ -2403,117 +2551,198 @@ function ChatPanel({
               placeholder={isLandingState ? "Ask anything or use a starter prompt." : "Type your next message."}
               disabled={!appId}
             />
-            <div style={{ ...styles.row, marginTop: 12 }}>
-              <button style={styles.button} onClick={send} disabled={loading || !appId}>
-                {loading ? "Sending..." : "Ask"}
-              </button>
-              <button
-                type="button"
-                style={styles.secondaryButton}
-                onClick={() => {
-                  setArtifactSuggestionForComposer(null);
-                  setArtifactSuggestionsForComposer([]);
-                  setArtifactPreferredTargetIdForComposer("");
-                  setArtifactPreferredCommandKindForComposer("");
-                  setArtifactPreferredAgentBackendForComposer("");
-                  openExecutionComposer();
-                }}
-                disabled={!appId}
-              >
-                Run Tool or Skill
-              </button>
-              <button
-                type="button"
-                style={styles.secondaryButton}
-                onClick={() => setShowArtifactLibrary((value) => !value)}
-                disabled={!appId}
-              >
-                {showArtifactLibrary ? "Hide Artifact Library" : "Show Artifact Library"}
-              </button>
-              <button
-                type="button"
-                style={styles.secondaryButton}
-                onClick={exportSelectedMessages}
-                disabled={!appId || exportSelectionCount === 0 || exportingSelection}
-              >
-                {exportingSelection ? "Creating Reuse Artifact..." : `Create Reuse Artifact (${exportSelectionCount})`}
-              </button>
+            <div role="toolbar" aria-label="Chat actions" style={{ ...styles.chatActionToolbar, marginTop: 12 }}>
+              <div style={styles.row}>
+                <button style={styles.button} onClick={send} disabled={loading || !appId}>
+                  {loading ? "Sending..." : "Ask"}
+                </button>
+                <button
+                  type="button"
+                  style={styles.secondaryButton}
+                  onClick={() => {
+                    setArtifactSuggestionForComposer(null);
+                    setArtifactSuggestionsForComposer([]);
+                    setArtifactPreferredTargetIdForComposer("");
+                    setArtifactPreferredCommandKindForComposer("");
+                    setArtifactPreferredAgentBackendForComposer("");
+                    toggleUtilityView("composer");
+                  }}
+                  disabled={!appId}
+                  aria-expanded={showExecutionComposer}
+                  aria-controls="utility-workspace"
+                >
+                  Run Tool or Skill
+                </button>
+                <button
+                  type="button"
+                  style={styles.secondaryButton}
+                  onClick={exportSelectedMessages}
+                  disabled={!appId || exportSelectionCount === 0 || exportingSelection}
+                >
+                  {exportingSelection ? "Creating Reuse Artifact..." : `Create Reuse Artifact (${exportSelectionCount})`}
+                </button>
+                <ArtifactUploadControl
+                  key={`${sessionId}:${uploadControlKey}`}
+                  compact
+                  disabled={!appId}
+                  onUpload={(file, operationId, onProgress, signal) => onUploadArtifact(file, operationId, onProgress, signal)}
+                  onRetry={onRetryArtifactUpload}
+                  onReady={(artifact) => setAttachedArtifacts((items) => (
+                    items.some((item) => item.artifact_id === artifact.artifact_id)
+                      ? items
+                      : [...items, artifact]
+                  ))}
+                />
+              </div>
+              <div style={styles.row}>
+                <button
+                  type="button"
+                  style={styles.inlineActionButton}
+                  aria-expanded={showApprovedContent}
+                  aria-controls="utility-workspace"
+                  onClick={() => toggleUtilityView("approved")}
+                >
+                  {showApprovedContent ? "Hide Approved Content" : "Show Approved Content"}
+                </button>
+                <button
+                  type="button"
+                  style={styles.inlineActionButton}
+                  aria-expanded={showExecutionLane}
+                  aria-controls="utility-workspace"
+                  onClick={() => toggleUtilityView("execution")}
+                >
+                  {showExecutionLane ? "Hide Execution Lane" : "Show Execution Lane"}
+                </button>
+                <button
+                  type="button"
+                  style={styles.inlineActionButton}
+                  aria-expanded={showArtifactLibrary}
+                  aria-controls="utility-workspace"
+                  onClick={() => toggleUtilityView("artifacts")}
+                  disabled={!appId}
+                >
+                  {showArtifactLibrary ? "Hide Artifact Library" : "Show Artifact Library"}
+                </button>
+              </div>
             </div>
             {error && <div style={{ ...styles.error, marginTop: 12 }}>{error}</div>}
+              </>
+            )}
           </div>
         </section>
-        {showExecutionComposer && (
-          <div style={styles.executionComposerShelf}>
-            <ExecutionComposer
-              key={`${appId}:${sessionId}:${userId}`}
-              toolInventory={toolInventory}
-              skillInventory={skillInventory}
-              agentSkillInventory={agentSkillInventory}
-              agentSkillInventoryLoading={agentSkillInventoryLoading}
-              agentSkillInventoryError={agentSkillInventoryError}
-              agentSkillProjectionStatusByBackend={agentSkillProjectionStatusByBackend}
-              artifactInventory={artifactInventory}
-              onUploadExecutionInput={onUploadExecutionInput}
-              onRetryArtifactUpload={onRetryArtifactUpload}
-              initialArtifactSuggestion={artifactSuggestionForComposer}
-              initialArtifactSuggestions={artifactSuggestionsForComposer}
-              initialTargetId={artifactPreferredTargetIdForComposer}
-              initialCommandKind={artifactPreferredCommandKindForComposer}
-              initialAgentBackend={artifactPreferredAgentBackendForComposer}
-              selectedApprovedContent={
-                approvedContent.find((item) => item.approved_content_id === selectedApprovedContentId) || null
-              }
-              onRefreshAgentSkills={onRefreshAgentSkills}
-              onSubmit={async (payload) => {
-                await onRunExecutionComposer?.(payload);
-                setArtifactSuggestionForComposer(null);
-                setArtifactSuggestionsForComposer([]);
-                setArtifactPreferredTargetIdForComposer("");
-                setArtifactPreferredCommandKindForComposer("");
-                setArtifactPreferredAgentBackendForComposer("");
-                setShowExecutionComposer(false);
-              }}
-              onClose={() => {
-                setArtifactSuggestionForComposer(null);
-                setArtifactSuggestionsForComposer([]);
-                setArtifactPreferredTargetIdForComposer("");
-                setArtifactPreferredCommandKindForComposer("");
-                setArtifactPreferredAgentBackendForComposer("");
-                setShowExecutionComposer(false);
-              }}
-              styles={styles}
-            />
-          </div>
+        {(activeUtilityView || executionComposerMounted || artifactLibraryMounted) && (
+          <section
+            id="utility-workspace"
+            role="region"
+            aria-label="Utility Workspace"
+            hidden={!activeUtilityView}
+            style={styles.utilityWorkspace}
+          >
+            {showApprovedContent && (
+              <ApprovedContentPanel
+                approvedContent={approvedContent}
+                selectedApprovedContentId={selectedApprovedContentId}
+                onSelectApprovedContent={onSelectApprovedContent}
+                latestAssistantMessage={latestAssistantMessage}
+                onApproveLatest={approveLatestAssistantMessage}
+                approving={approving}
+                styles={styles}
+              />
+            )}
+            {showExecutionLane && (
+              <ExecutionLaneStatusCard
+                selectedApprovedContent={selectedApprovedContent}
+                sessionLaneState={sessionLaneState}
+                onRefreshStatus={refreshExecutionStatus}
+                refreshing={refreshingExecutionStatus}
+                onRetryExecution={retryLastExecution}
+                onOpenComposer={openExecutionComposer}
+                onOpenInspector={() => openInspector("summary")}
+                styles={styles}
+              />
+            )}
+            {executionComposerMounted && (
+              <div hidden={!showExecutionComposer} style={styles.executionComposerShelf}>
+                <ExecutionComposer
+                  key={`${appId}:${sessionId}:${userId}`}
+                  toolInventory={toolInventory}
+                  skillInventory={skillInventory}
+                  agentSkillInventory={agentSkillInventory}
+                  agentSkillInventoryLoading={agentSkillInventoryLoading}
+                  agentSkillInventoryError={agentSkillInventoryError}
+                  agentSkillProjectionStatusByBackend={agentSkillProjectionStatusByBackend}
+                  artifactInventory={artifactInventory}
+                  onUploadExecutionInput={onUploadExecutionInput}
+                  onRetryArtifactUpload={onRetryArtifactUpload}
+                  initialArtifactSuggestion={artifactSuggestionForComposer}
+                  initialArtifactSuggestions={artifactSuggestionsForComposer}
+                  initialTargetId={artifactPreferredTargetIdForComposer}
+                  initialCommandKind={artifactPreferredCommandKindForComposer}
+                  initialAgentBackend={artifactPreferredAgentBackendForComposer}
+                  selectedApprovedContent={
+                    approvedContent.find((item) => item.approved_content_id === selectedApprovedContentId) || null
+                  }
+                  onRefreshAgentSkills={onRefreshAgentSkills}
+                  onSubmit={async (payload) => {
+                    await onRunExecutionComposer?.(payload);
+                    setArtifactSuggestionForComposer(null);
+                    setArtifactSuggestionsForComposer([]);
+                    setArtifactPreferredTargetIdForComposer("");
+                    setArtifactPreferredCommandKindForComposer("");
+                    setArtifactPreferredAgentBackendForComposer("");
+                    setExecutionComposerMounted(false);
+                    setActiveUtilityView(null);
+                  }}
+                  onClose={() => {
+                    setArtifactSuggestionForComposer(null);
+                    setArtifactSuggestionsForComposer([]);
+                    setArtifactPreferredTargetIdForComposer("");
+                    setArtifactPreferredCommandKindForComposer("");
+                    setArtifactPreferredAgentBackendForComposer("");
+                    setExecutionComposerMounted(false);
+                    setActiveUtilityView(null);
+                  }}
+                  styles={styles}
+                />
+              </div>
+            )}
+            {artifactLibraryMounted && (
+              <div hidden={!showArtifactLibrary}>
+                <ArtifactLibrary
+                  key={`${appId}:${sessionId}:${userId}`}
+                  artifacts={artifactInventory}
+                  toolInventory={toolInventory}
+                  loading={artifactInventoryLoading}
+                  error={artifactInventoryError}
+                  onDeleteArtifact={onDeleteArtifact}
+                  baseUrl={baseUrl}
+                  onUseInNextStep={(artifact, options = {}) => {
+                    setArtifactSuggestionForComposer(artifact);
+                    setArtifactSuggestionsForComposer([]);
+                    setArtifactPreferredTargetIdForComposer(String(options?.preferredTargetId || "").trim());
+                    setArtifactPreferredCommandKindForComposer(String(options?.commandKind || "").trim());
+                    setArtifactPreferredAgentBackendForComposer(String(options?.agentBackend || "").trim());
+                    openExecutionComposer();
+                  }}
+                  onUseSelectedInNextStep={(artifacts, options = {}) => {
+                    const selectedArtifacts = Array.isArray(artifacts) ? artifacts : [];
+                    setArtifactSuggestionForComposer(selectedArtifacts[0] || null);
+                    setArtifactSuggestionsForComposer(selectedArtifacts);
+                    setArtifactPreferredTargetIdForComposer(String(options?.preferredTargetId || "").trim());
+                    setArtifactPreferredCommandKindForComposer(String(options?.commandKind || "agent").trim());
+                    setArtifactPreferredAgentBackendForComposer(String(options?.agentBackend || "openclaw_cli").trim());
+                    openExecutionComposer();
+                  }}
+                  onClose={() => {
+                    setArtifactLibraryMounted(false);
+                    setActiveUtilityView(null);
+                  }}
+                  styles={styles}
+                />
+              </div>
+            )}
+          </section>
         )}
-        {showArtifactLibrary ? (
-          <ArtifactLibrary
-            artifacts={artifactInventory}
-            toolInventory={toolInventory}
-            loading={artifactInventoryLoading}
-            error={artifactInventoryError}
-            onDeleteArtifact={onDeleteArtifact}
-            baseUrl={baseUrl}
-            onUseInNextStep={(artifact, options = {}) => {
-              setArtifactSuggestionForComposer(artifact);
-              setArtifactSuggestionsForComposer([]);
-              setArtifactPreferredTargetIdForComposer(String(options?.preferredTargetId || "").trim());
-              setArtifactPreferredCommandKindForComposer(String(options?.commandKind || "").trim());
-              setArtifactPreferredAgentBackendForComposer(String(options?.agentBackend || "").trim());
-              openExecutionComposer();
-            }}
-            onUseSelectedInNextStep={(artifacts, options = {}) => {
-              const selectedArtifacts = Array.isArray(artifacts) ? artifacts : [];
-              setArtifactSuggestionForComposer(selectedArtifacts[0] || null);
-              setArtifactSuggestionsForComposer(selectedArtifacts);
-              setArtifactPreferredTargetIdForComposer(String(options?.preferredTargetId || "").trim());
-              setArtifactPreferredCommandKindForComposer(String(options?.commandKind || "agent").trim());
-              setArtifactPreferredAgentBackendForComposer(String(options?.agentBackend || "openclaw_cli").trim());
-              openExecutionComposer();
-            }}
-            onClose={() => setShowArtifactLibrary(false)}
-            styles={styles}
-          />
-        ) : null}
       </div>
       {inspectedMessageIsExecution ? (
         <ExecutionInspector
@@ -3030,7 +3259,16 @@ export default function App() {
     if (instructionUnderstandingState.compileRequired) {
       throw new Error(instructionUnderstandingState.message);
     }
-    const userMessage = { role: "user", content: normalizedQuery };
+    const attachedArtifactRefs = Array.isArray(options.artifactRefs)
+      ? options.artifactRefs.filter((ref) => ref && String(ref.artifact_id || "").trim())
+      : [];
+    const userMessage = {
+      role: "user",
+      content: normalizedQuery,
+      ...(attachedArtifactRefs.length > 0
+        ? { retrievalSummary: { attached_artifact_refs: attachedArtifactRefs } }
+        : {}),
+    };
 
     setThreadsBySession((prev) => ({
       ...prev,
@@ -3043,6 +3281,7 @@ export default function App() {
       user_query: normalizedQuery,
       template_version: 1,
       ...(options.executionRequest ? { execution_request: options.executionRequest } : {}),
+      ...(attachedArtifactRefs.length > 0 ? { artifact_refs: attachedArtifactRefs } : {}),
     };
     let data;
     try {
@@ -3316,12 +3555,12 @@ export default function App() {
     }
   };
 
-  const endAgentChatSession = async () => {
+  const endAgentChatSession = async ({ persistFinalOutput = false } = {}) => {
     if (!activeExecutionId || !activeAgentChatSession) return;
     setAgentChatSubmitting(true);
     setAgentChatError("");
     try {
-      await fetchJson(
+      const data = await fetchJson(
         `${baseUrl}/sessions/${sessionId}/executions/${encodeURIComponent(activeExecutionId)}/end-chat-session`,
         {
           method: "POST",
@@ -3330,12 +3569,21 @@ export default function App() {
             app_id: selectedAppId,
             user_id: userId,
             expected_session_version: activeAgentChatSession.session_version,
+            ...(persistFinalOutput ? { persist_final_output: true } : {}),
           }),
         },
       );
+      if (data.final_message?.id) {
+        setThreadsBySession((previous) => {
+          const messages = previous[activeThreadKey] || [];
+          if (messages.some((message) => message.id === data.final_message.id)) return previous;
+          return { ...previous, [activeThreadKey]: [...messages, data.final_message] };
+        });
+      }
       await refreshAgentChatSession(activeExecutionId);
     } catch (chatError) {
       setAgentChatError(String(chatError?.message || chatError));
+      await refreshAgentChatSession(activeExecutionId);
     } finally {
       setAgentChatSubmitting(false);
     }
@@ -3752,13 +4000,11 @@ export default function App() {
       if (cancelled) return;
       await refreshAgentInteraction(activeExecutionId);
       await refreshAgentChatSession(activeExecutionId);
-      const shouldContinue = activeAgentInteraction || [
-        "queued",
-        "running",
-        "waiting",
-        "waiting_for_input",
-        "awaiting_input",
-      ].includes(activeExecutionStatus);
+      const shouldContinue = shouldPollAgentActivity({
+        agentChatState: activeAgentChatSession?.state,
+        executionStatus: activeExecutionStatus,
+        hasPendingInteraction: Boolean(activeAgentInteraction),
+      });
       if (!cancelled && shouldContinue) {
         timeout = window.setTimeout(poll, 1500);
       }
@@ -3773,6 +4019,7 @@ export default function App() {
     activeExecutionStatus,
     activeAgentInteraction?.interaction_id,
     activeAgentInteraction?.version,
+    activeAgentChatSession?.state,
     activeThreadKey,
   ]);
 
@@ -3914,7 +4161,7 @@ export default function App() {
               selectedApprovedContentId={activeSelectedApprovedContentId}
               sessionLaneState={activeSessionLaneState}
               workflowStatus={currentSession?.workflow_status || null}
-              onSubmitQuery={(query) => sendQueryToSession(sessionId, query)}
+              onSubmitQuery={(query, options) => sendQueryToSession(sessionId, query, options)}
               onSubmitStarterQuestion={sendStarterQuestionInNewSession}
               onAdvanceWorkflow={advanceWorkflowStep}
               onUploadArtifact={uploadArtifactToSession}

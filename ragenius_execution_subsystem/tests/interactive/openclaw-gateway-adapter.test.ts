@@ -392,6 +392,37 @@ describe("OpenClaw Gateway adapter", () => {
     assert.deepEqual(verified, ["/srv/openclaw/runs/execution_001"]);
   });
 
+  it("preserves a bounded redacted provider reason for lifecycle errors", async () => {
+    const factory = new FakeGatewayFactory();
+    const events: InteractiveProviderEvent[] = [];
+    const adapter = new OpenClawGatewayAdapter(config(), factory, runDependencies());
+    await adapter.start({
+      ...preflightInput(), capabilities: capabilities(), protocolVersion: "2026.6.8",
+      emit: async (event) => { events.push(event); }
+    });
+
+    await factory.connection.emit({
+      type: "event", event: "agent", seq: 1,
+      payload: {
+        runId: "run-001", seq: 1, stream: "lifecycle",
+        data: { phase: "error", error: "402 Insufficient Balance for gateway-secret" }
+      }
+    });
+
+    assert.deepEqual(events.at(-1), {
+      type: "run_completed",
+      providerEventRef: "openclaw:run-001:1",
+      payload: {
+        status: "failed",
+        failure_code: "OPENCLAW_PROVIDER_ERROR",
+        summary: "402 Insufficient Balance for [REDACTED]",
+        verification_results: [],
+        output_text: "",
+        output_truncated: false
+      }
+    });
+  });
+
   it("maps approvals to allow-once or deny and ignores wrong-session requests", async () => {
     const factory = new FakeGatewayFactory();
     const events: InteractiveProviderEvent[] = [];

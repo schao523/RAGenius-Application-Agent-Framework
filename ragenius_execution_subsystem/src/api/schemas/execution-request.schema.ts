@@ -27,6 +27,37 @@ export const agentSkillRefSchema = z.object({
   approved_fingerprint: z.string().trim().min(1)
 }).strict();
 
+const conversationalInteractionTypesSchema = z
+  .array(z.enum(["clarification", "selection"]))
+  .max(2)
+  .refine((values) => new Set(values).size === values.length, {
+    message: "Interaction types must be unique."
+  });
+
+export const agentRequestInteractionRequirementsSchema = z
+  .object({
+    transport: z.literal("interactive").optional(),
+    style: z.enum(["structured", "chat"]).optional(),
+    allowed_types: conversationalInteractionTypesSchema.optional(),
+    required_types: conversationalInteractionTypesSchema.optional()
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const allowed = value.allowed_types ?? [];
+    const required = value.required_types ?? [];
+    if (value.style === "chat" && (allowed.length > 0 || required.length > 0)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Chat-level interaction cannot advertise typed interactions."
+      });
+    } else if (value.style !== "chat" && allowed.length === 0 && required.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At least one allowed or required interaction type is needed."
+      });
+    }
+  });
+
 export const agentArtifactRefSchema = z
   .object({
     artifact_id: z.string().trim().min(1),
@@ -64,6 +95,7 @@ export const executeAgentRequestSchema = executionRequestBaseSchema.extend({
   agent_skill_hint: z.string().trim().min(1).optional(),
   approved_content_id: z.string().trim().min(1).optional(),
   approved_revision_id: z.string().trim().min(1).optional(),
+  interaction_requirements: agentRequestInteractionRequirementsSchema.optional(),
   artifact_refs: z.array(agentArtifactRefSchema).optional(),
   expected_outputs: z.array(agentExpectedOutputSchema).optional(),
   context: z.record(z.string(), z.unknown()).optional()
@@ -77,6 +109,9 @@ export const executionRequestSchema = z.discriminatedUnion("request_type", [
 export type ExecutionOptions = z.infer<typeof executionOptionsSchema>;
 export type AgentArtifactRef = z.infer<typeof agentArtifactRefSchema>;
 export type AgentSkillRef = z.infer<typeof agentSkillRefSchema>;
+export type AgentRequestInteractionRequirements = z.infer<
+  typeof agentRequestInteractionRequirementsSchema
+>;
 export type AgentExpectedOutput = z.infer<typeof agentExpectedOutputSchema>;
 export type ExecuteSkillRequest = z.infer<typeof executeSkillRequestSchema>;
 export type ExecuteAgentRequest = z.infer<typeof executeAgentRequestSchema>;

@@ -57,6 +57,16 @@ export class InteractiveCapabilityService {
         reason: `The adapter does not support required interaction types: ${missing.join(", ")}.`
       };
     }
+    if (
+      input.requiredChatLevelInteraction
+      && preflight.capabilities.chatLevelInteraction !== true
+    ) {
+      return {
+        available: false,
+        failureCode: "INTERACTIVE_CAPABILITY_UNAVAILABLE",
+        reason: "The adapter does not support required chat-level interaction."
+      };
+    }
     const recoveryClass = input.requiredRecoveryClass ?? "not_resumable";
     if (
       recoveryClass === "session_resumable"

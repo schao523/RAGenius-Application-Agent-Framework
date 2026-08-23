@@ -76,6 +76,34 @@ class PersistRunNodeTests(unittest.TestCase):
         self.assertEqual(summary["visible_output_count"], 1)
         self.assertEqual(summary["execution_artifact_count"], 1)
 
+    def test_normal_turn_persists_attached_artifact_refs_on_user_message(self):
+        state = {
+            "session_id": "s-upload",
+            "turn_input_type": "text_query",
+            "user_query": "Summarize the attached notes.",
+            "attached_artifact_refs": [{
+                "artifact_id": "artifact-notes",
+                "display_name": "notes.txt",
+                "mime_type": "text/plain",
+                "role": "attachment",
+            }],
+            "final_answer": {
+                "content": "Summary",
+                "citations": [],
+                "missing_infoTypes": [],
+            },
+            "_chat_repo": self.chat_repo,
+            "_session_repo": self.session_repo,
+        }
+
+        persist_run.run(state)
+
+        user_message = self.chat_repo.history("s-upload")[0]
+        self.assertEqual(
+            user_message["retrievalSummary"]["attached_artifact_refs"],
+            state["attached_artifact_refs"],
+        )
+
     def test_persist_run_writes_hidden_execution_state_into_session_runtime_state(self):
         state = {
             "session_id": "s-upload",

@@ -4,6 +4,13 @@ import { describe, expect, it, vi } from "vitest";
 import ArtifactUploadControl from "./ArtifactUploadControl";
 
 describe("ArtifactUploadControl", () => {
+  it("renders a compact upload action without a permanent upload section", () => {
+    render(<ArtifactUploadControl onUpload={vi.fn()} compact />);
+
+    expect(screen.getByRole("button", { name: /upload artifact/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Upload artifact")).toHaveStyle({ display: "none" });
+  });
+
   it("uploads once, shows phases, and returns the ready artifact", async () => {
     const onReady = vi.fn();
     const onUpload = vi.fn().mockImplementation(async (_file, _operationId, onProgress) => {

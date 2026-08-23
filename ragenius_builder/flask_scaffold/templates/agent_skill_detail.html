@@ -71,13 +71,45 @@
   <aside class="space-y-5">
     <section class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
       <h2 class="text-lg font-bold">Review decision</h2>
+      <div class="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950">
+        <p class="font-semibold">Advisory recommendation: {{ interaction_recommendation.recommended_channel|replace('_', ' ') }}</p>
+        <p class="mt-1">{{ interaction_recommendation.reason }}</p>
+        <p class="mt-1 text-xs">Confidence: {{ interaction_recommendation.confidence }}{% if interaction_recommendation.evidence %} | Evidence: {{ interaction_recommendation.evidence|join(', ') }}{% endif %}</p>
+        <p class="mt-2 font-semibold">Administrator confirmation is required. Discovery never publishes this recommendation automatically.</p>
+      </div>
       <form class="mt-3 space-y-3" method="post" action="{{ url_for('approve_agent_skill_form', agent_skill_id=agent_skill.id) }}">
         <input type="hidden" name="expected_fingerprint" value="{{ agent_skill.content_fingerprint }}">
         <label for="interaction_channel" class="block text-sm font-medium">Interaction channel</label>
         <select id="interaction_channel" name="interaction_channel" class="w-full rounded border-gray-300">
-          <option value="none">None / one-shot</option>
-          {% if agent_skill.backend == 'openclaw_cli' %}<option value="chat_level">OpenClaw chat-level continuation</option>{% endif %}
+          <option value="none" {% if selected_interaction_policy.interaction_channel == 'none' %}selected{% endif %}>None / one-shot</option>
+          {% if agent_skill.backend == 'codex_cli' %}<option value="typed" {% if selected_interaction_policy.interaction_channel == 'typed' %}selected{% endif %}>Structured clarification or selection</option>{% endif %}
+          {% if agent_skill.backend == 'openclaw_cli' %}<option value="chat_level" {% if selected_interaction_policy.interaction_channel == 'chat_level' %}selected{% endif %}>OpenClaw chat-level continuation</option>{% endif %}
         </select>
+        <p class="text-xs text-gray-600">Choose one-shot when the skill can finish without a reply. Choose an interactive channel only when the skill may pause or continue after user input.</p>
+        {% if agent_skill.backend == 'codex_cli' %}
+          <fieldset class="space-y-2 rounded border border-gray-200 p-3">
+            <legend class="px-1 text-sm font-semibold">Structured interaction types</legend>
+            {% for value, label, guidance in [
+              ('clarification', 'Clarification', 'The agent asks for missing information.'),
+              ('selection', 'Selection', 'The agent presents choices and waits for one.'),
+              ('approval', 'Approval', 'The agent asks permission before a governed action.'),
+              ('authentication_handoff', 'Authentication handoff', 'The user must complete sign-in outside the agent.'),
+              ('user_action_required', 'User action required', 'The user must complete another manual step.')
+            ] %}
+              <label class="flex items-start gap-2 text-sm">
+                <input type="checkbox" name="supported_interaction_types" value="{{ value }}" {% if value in selected_interaction_policy.supported_interaction_types %}checked{% endif %}>
+                <span><span class="font-medium">{{ label }}</span><span class="block text-xs text-gray-600">{{ guidance }}</span></span>
+              </label>
+            {% endfor %}
+          </fieldset>
+          <label for="interaction_requirement" class="block text-sm font-medium">Interaction requirement</label>
+          <select id="interaction_requirement" name="interaction_requirement" class="w-full rounded border-gray-300">
+            <option value="conditional" {% if selected_interaction_policy.interaction_requirement != 'required' %}selected{% endif %}>Conditional: the skill may ask</option>
+            <option value="required" {% if selected_interaction_policy.interaction_requirement == 'required' %}selected{% endif %}>Required: every successful run asks</option>
+          </select>
+        {% else %}
+          <p class="rounded border border-gray-200 p-3 text-sm text-gray-700">Chat-level continuation keeps the OpenClaw session available for ordinary follow-up messages. It does not claim structured clarification or selection events.</p>
+        {% endif %}
         <label for="review_notes" class="block text-sm font-medium">Notes</label>
         <textarea id="review_notes" name="review_notes" class="w-full rounded border-gray-300" rows="3"></textarea>
         <button type="submit" {% if agent_skill.governance_state == 'source_disabled' %}disabled title="Source is disabled"{% endif %} class="w-full px-4 py-2 rounded bg-emerald-700 text-white hover:bg-emerald-800">Approve this fingerprint</button>

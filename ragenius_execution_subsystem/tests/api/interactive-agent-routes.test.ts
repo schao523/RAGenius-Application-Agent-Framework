@@ -104,7 +104,11 @@ class RouteTestAdapter implements InteractiveAgentAdapter {
   }
   async complete(): Promise<void> {
     assert.ok(this.emit);
-    await this.emit({ type: "run_completed", payload: { status: "completed", summary: "Ready." } });
+    await this.emit({ type: "message_delta", payload: { delta: "Choose 1 or 2." } });
+    await this.emit({
+      type: "run_completed",
+      payload: { output_text: "Choose 1 or 2.", status: "completed", summary: "Ready." }
+    });
   }
 }
 
@@ -170,12 +174,20 @@ function approvalResponse(extraResponse: Record<string, unknown> = {}) {
 describe("interactive Agent routes", () => {
   it("returns a scoped chat session and accepts a versioned follow-up", async () => {
     const harness = await createHarness(["execution"], true);
+    const approved = await harness.app.inject({
+      method: "POST",
+      url: `/v1/executions/${scope.executionId}/interactions/interaction_001/responses?${scopeQuery()}`,
+      headers: auth(),
+      payload: approvalResponse()
+    });
+    assert.equal(approved.statusCode, 200);
     await harness.adapter.complete();
     const session = await harness.app.inject({
       method: "GET", url: `/v1/executions/${scope.executionId}/chat-session?${scopeQuery()}`, headers: auth()
     });
     assert.equal(session.statusCode, 200);
     assert.equal(session.json().state, "ready_for_follow_up");
+    assert.equal(session.json().latest_output_text, "Choose 1 or 2.");
     assert.equal(session.json().provider_session_ref, undefined);
 
     const followUp = await harness.app.inject({
@@ -194,6 +206,13 @@ describe("interactive Agent routes", () => {
 
   it("returns a stable closed-session error after an idle chat is ended", async () => {
     const harness = await createHarness(["execution"], true);
+    const approved = await harness.app.inject({
+      method: "POST",
+      url: `/v1/executions/${scope.executionId}/interactions/interaction_001/responses?${scopeQuery()}`,
+      headers: auth(),
+      payload: approvalResponse()
+    });
+    assert.equal(approved.statusCode, 200);
     await harness.adapter.complete();
     const session = await harness.app.inject({
       method: "GET", url: `/v1/executions/${scope.executionId}/chat-session?${scopeQuery()}`, headers: auth()

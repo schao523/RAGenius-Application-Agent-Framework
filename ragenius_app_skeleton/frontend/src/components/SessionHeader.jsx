@@ -12,7 +12,7 @@ export default function SessionHeader({
   hasAssistantTurn,
 }) {
   return (
-    <>
+    <div role="group" aria-label="Session context" style={styles.sessionHeaderGroup}>
       <div style={styles.sessionHeader}>
         <div>
           <div style={styles.sessionHeaderTitle}>{appName || "Chat"}</div>
@@ -52,6 +52,6 @@ export default function SessionHeader({
           )}
         </div>
       )}
-    </>
+    </div>
   );
 }

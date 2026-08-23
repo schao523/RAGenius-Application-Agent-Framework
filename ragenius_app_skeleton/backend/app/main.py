@@ -129,6 +129,7 @@ class ChatRequest(BaseModel):
     adapter_version: int = 1
     template_version: int = 1
     execution_request: dict[str, Any] | None = None
+    artifact_refs: list[dict[str, Any]] | None = None
 
 
 class BuilderIngestPayload(BaseModel):
@@ -1189,6 +1190,81 @@ def _agent_expected_outputs_from_request(payload: ChatRequest) -> list[dict[str,
     )
 
 
+def _agent_interaction_requirements_from_request(
+    payload: ChatRequest,
+) -> dict[str, Any] | None:
+    request_payload = _structured_execution_request(payload)
+    value = request_payload.get("interaction_requirements")
+    if value is None:
+        value = request_payload.get("interactionRequirements")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="interaction_requirements must be an object.",
+        )
+    if set(value) - {"transport", "style", "allowed_types", "required_types"}:
+        raise HTTPException(status_code=400, detail="Unknown interaction requirement field.")
+    transport = value.get("transport")
+    if transport is not None and str(transport or "").strip() != "interactive":
+        raise HTTPException(
+            status_code=400,
+            detail="interaction_requirements.transport must be interactive.",
+        )
+    normalized: dict[str, Any] = {}
+    if transport is not None:
+        normalized["transport"] = "interactive"
+    style = value.get("style")
+    if style is not None:
+        normalized_style = str(style or "").strip()
+        if normalized_style not in {"structured", "chat"}:
+            raise HTTPException(
+                status_code=400,
+                detail="interaction_requirements.style must be structured or chat.",
+            )
+        normalized["style"] = normalized_style
+    for field_name in ("allowed_types", "required_types"):
+        field_value = value.get(field_name)
+        if field_value is None:
+            continue
+        if not isinstance(field_value, list):
+            raise HTTPException(
+                status_code=400,
+                detail=f"interaction_requirements.{field_name} must be a list.",
+            )
+        interaction_types = [str(item or "").strip() for item in field_value]
+        if (
+            len(set(interaction_types)) != len(interaction_types)
+            or any(item not in {"clarification", "selection"} for item in interaction_types)
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"interaction_requirements.{field_name} must contain unique "
+                    "clarification or selection values."
+                ),
+            )
+        normalized[field_name] = interaction_types
+    if normalized.get("style") == "chat" and (
+        normalized.get("allowed_types") or normalized.get("required_types")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Chat-level interaction cannot advertise typed interactions.",
+        )
+    if (
+        normalized.get("style") != "chat"
+        and not normalized.get("allowed_types")
+        and not normalized.get("required_types")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="At least one allowed or required interaction type is needed.",
+        )
+    return normalized
+
+
 def _agent_skill_ref_from_request(payload: ChatRequest) -> dict[str, str] | None:
     request_payload = _structured_execution_request(payload)
     value = request_payload.get("agent_skill_ref")
@@ -1294,6 +1370,18 @@ def _render_chat_export_content(messages: list[dict[str, Any]], export_format: s
     return "\n\n".join(blocks).strip()
 
 
+def _execution_output_text(result: Dict[str, Any]) -> str:
+    result_payload = result.get("result")
+    if not isinstance(result_payload, dict):
+        return ""
+    return str(result_payload.get("output_text") or "").strip()
+
+
+def _append_execution_output(summary: str, result: Dict[str, Any]) -> str:
+    output_text = _execution_output_text(result)
+    return f"{summary}\n\n{output_text}" if output_text else summary
+
+
 def _execution_confirmation_summary_text(execution_id: str, result: Dict[str, Any]) -> str:
     normalized_execution_id = str(execution_id or "").strip()
     login_requirement = _resolve_notebooklm_login_requirement(result)
@@ -1307,7 +1395,10 @@ def _execution_confirmation_summary_text(execution_id: str, result: Dict[str, An
         return message or f"Execution `{normalized_execution_id}` failed after confirmation."
     status = str(result.get("status") or result.get("state") or "unknown").strip()
     if status == "completed":
-        return f"Execution `{normalized_execution_id}` confirmed and completed."
+        return _append_execution_output(
+            f"Execution `{normalized_execution_id}` confirmed and completed.",
+            result,
+        )
     if status == "pending_confirmation":
         return f"Execution `{normalized_execution_id}` is still pending confirmation."
     return f"Execution `{normalized_execution_id}` confirmed and is now {status}."
@@ -1522,6 +1613,9 @@ def _agent_exec_summary_text(
     final_message = str(result_payload.get("final_message") or "").strip()
     if final_message:
         return final_message
+    output_text = _execution_output_text(submit_result)
+    if output_text:
+        return output_text
 
     execution_id = str(submit_result.get("execution_id") or "").strip()
     suffix = f" Execution id: {execution_id}." if execution_id else ""
@@ -1596,6 +1690,11 @@ def _handle_normal_chat_turn(
         "adapter_version": session["adapter_version"],
         "template_version": session["template_version"],
         "user_query": payload.user_query,
+        "attached_artifact_refs": [
+            ref
+            for ref in (payload.artifact_refs or [])
+            if isinstance(ref, dict) and str(ref.get("artifact_id") or "").strip()
+        ],
         "turn_input_type": "text_query",
         "session_upload_event_ids": [],
         "pending_upload_analysis": False,
@@ -1673,7 +1772,10 @@ def _handle_exec_status_turn(
     elif error_message:
         summary_text = f"Execution status for `{execution_id}` could not be loaded: {error_message}"
     else:
-        summary_text = f"Execution status for `{execution_id}` is {latest_status}."
+        summary_text = _append_execution_output(
+            f"Execution status for `{execution_id}` is {latest_status}.",
+            result,
+        )
     chat_repo.append(
         session_id,
         "assistant",
@@ -1947,6 +2049,7 @@ def _handle_exec_agent_turn(
         if agent_backend == "openclaw_cli"
         else _agent_expected_outputs_from_request(payload)
     )
+    interaction_requirements = _agent_interaction_requirements_from_request(payload)
     submit_result = execution_client.submit_agent(
         session_id=session_id,
         app_id=payload.app_id,
@@ -1958,6 +2061,7 @@ def _handle_exec_agent_turn(
         approved_revision_id=snapshot.get("revision_id") if snapshot else None,
         artifact_refs=artifact_refs,
         expected_outputs=expected_outputs,
+        interaction_requirements=interaction_requirements,
         context_payload=context_payload,
         execution_mode=execution_mode,
     )
@@ -3964,6 +4068,12 @@ async def get_session_execution_status(
         app_id=app_id,
         session_id=session_id,
     )
+    result = _enrich_execution_result_artifacts(
+        session_id=session_id,
+        app_id=app_id,
+        user_id=user_id,
+        submit_result=result,
+    )
     runtime_state = session_repo.get_runtime_state(session_id)
     lane_state = _session_lane_state(runtime_state)
     lane_state["execution_lane"]["latest_execution_id"] = execution_id
@@ -4123,13 +4233,41 @@ async def end_session_agent_chat(
     app_id = str(payload.get("app_id") or "")
     user_id = str(payload.get("user_id") or "")
     _require_session_scope(session_id, app_id=app_id, user_id=user_id)
+    persist_final_output = payload.get("persist_final_output") is True
+    chat_session = None
+    if persist_final_output:
+        chat_session = await run_in_threadpool(
+            execution_client.get_agent_chat_session, execution_id,
+            app_id=app_id, session_id=session_id,
+        )
+        _require_successful_execution_proxy(chat_session)
     result = await run_in_threadpool(
         execution_client.end_agent_chat_session, execution_id,
         app_id=app_id, session_id=session_id,
         expected_session_version=int(payload.get("expected_session_version") or 0),
     )
     _require_successful_execution_proxy(result)
-    return _redact_provider_handles(result)
+    public_result = _redact_provider_handles(result)
+    final_output = str((chat_session or {}).get("latest_output_text") or "").strip()
+    if persist_final_output and final_output:
+        existing = next((
+            message for message in reversed(chat_repo.history(session_id))
+            if message.get("role") == "assistant"
+            and message.get("retrievalSummary", {}).get("command") == "agent_chat_final"
+            and message.get("retrievalSummary", {}).get("execution_id") == execution_id
+        ), None)
+        final_message = existing or chat_repo.append(
+            session_id,
+            "assistant",
+            final_output,
+            retrieval_summary={
+                "execution_override": True,
+                "command": "agent_chat_final",
+                "execution_id": execution_id,
+            },
+        )
+        public_result["final_message"] = final_message
+    return public_result
 
 
 @app.get("/sessions/{session_id}/executions/{execution_id}/events")

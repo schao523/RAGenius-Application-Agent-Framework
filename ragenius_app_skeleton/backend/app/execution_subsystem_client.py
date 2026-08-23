@@ -242,6 +242,7 @@ class ExecutionSubsystemClient:
         approved_revision_id: str | None = None,
         artifact_refs: list[dict[str, Any]] | None = None,
         expected_outputs: list[dict[str, Any]] | None = None,
+        interaction_requirements: dict[str, Any] | None = None,
         context_payload: dict[str, Any] | None = None,
         execution_mode: str | None = None,
     ) -> dict[str, Any]:
@@ -264,6 +265,8 @@ class ExecutionSubsystemClient:
             payload["artifact_refs"] = artifact_refs
         if expected_outputs:
             payload["expected_outputs"] = expected_outputs
+        if interaction_requirements:
+            payload["interaction_requirements"] = interaction_requirements
         if context_payload:
             payload["context"] = context_payload
         if str(execution_mode or "").strip():

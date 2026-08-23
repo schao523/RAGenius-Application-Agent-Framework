@@ -21,7 +21,11 @@ import {
   parseRageniusInteractionToolCall,
   rageniusInteractionToolSpec
 } from "./codex-interaction-tool.js";
-import { createCodexRunWorkspace } from "../agents/codex-workspace.js";
+import {
+  createCodexRunWorkspace,
+  stageCodexArtifacts
+} from "../agents/codex-workspace.js";
+import type { CodexStagedArtifact } from "../agents/codex-cli-types.js";
 
 export interface CodexAppServerInteractiveConfig {
   enabled: boolean;
@@ -159,6 +163,10 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
         executionId: input.scope.executionId,
         runRoot: this.config.runRoot
       });
+      const stagedArtifacts = await stageCodexArtifacts({
+        workspace,
+        artifacts: input.providerContext.resolved_artifacts
+      });
       await transport.request("initialize", {
         clientInfo: { name: "RAGenius", title: "RAGenius Execution Subsystem", version: "0.1.0" },
         capabilities: { experimentalApi: true }
@@ -177,7 +185,10 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
       if (!threadId) throw new Error("Codex thread/start did not return a thread id.");
       const turnResponse = recordValue(await transport.request("turn/start", {
         threadId,
-        input: [{ type: "text", text: input.request.agent_query }]
+        input: [{
+          type: "text",
+          text: buildInteractiveTurnText(input, stagedArtifacts)
+        }]
       }));
       const turnId = stringValue(recordValue(turnResponse.turn).id);
       if (!turnId) throw new Error("Codex turn/start did not return a turn id.");
@@ -394,6 +405,45 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
       error: { code: "UNSUPPORTED_METHOD", message: "RAGenius does not support this provider request." }
     });
   }
+}
+
+function buildInteractiveTurnText(
+  input: InteractiveStartInput,
+  stagedArtifacts: CodexStagedArtifact[]
+): string {
+  const allowedTypes = [...new Set(
+    input.requiredInteractionTypes.filter(
+      (type): type is "clarification" | "selection" =>
+        type === "clarification" || type === "selection"
+    )
+  )];
+  const requiredTypes = [...new Set(
+    (input.requiredOccurrenceTypes ?? []).filter(
+      (type): type is "clarification" | "selection" =>
+        type === "clarification" || type === "selection"
+    )
+  )];
+  const sections: string[] = [];
+  if (allowedTypes.length > 0) sections.push([
+    "RAGenius interactive input protocol:",
+    `- Allowed interaction types: ${allowedTypes.join(", ")}.`,
+    `- Required interaction types for this run: ${requiredTypes.length > 0 ? requiredTypes.join(", ") : "none"}.`,
+    "- When user input is needed for an allowed interaction type, you MUST use `ragenius_request_input`.",
+    "- Do not ask for that input only in assistant prose.",
+    "- Do not call the tool when user input is unnecessary.",
+    "- Never request secrets, credentials, tokens, passwords, or one-time codes through this tool."
+  ].join("\n"));
+  if (stagedArtifacts.length > 0) sections.push([
+    "RAGenius selected artifacts:",
+    ...stagedArtifacts.map((artifact) =>
+      artifact.workspace_relative_path
+        ? `- ${artifact.role}: ${artifact.display_name} at ${artifact.workspace_relative_path}`
+        : `- ${artifact.role}: ${artifact.display_name} (metadata only)`
+    ),
+    "Use only these workspace-relative paths. Do not use browser-local or artifact-store paths."
+  ].join("\n"));
+  sections.push(`User request:\n${input.request.agent_query}`);
+  return sections.join("\n\n");
 }
 
 async function failProviderRun(

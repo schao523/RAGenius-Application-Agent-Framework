@@ -52,6 +52,33 @@ describe("ChatMessageCard", () => {
     expect(screen.queryByRole("button", { name: /mark reviewed/i })).toBeNull();
   });
 
+  it("shows artifacts attached to a user message", () => {
+    render(
+      <ChatMessageCard
+        message={{
+          role: "user",
+          content: "Summarize these notes.",
+          retrievalSummary: {
+            attached_artifact_refs: [{
+              artifact_id: "artifact-notes",
+              display_name: "notes.txt",
+              mime_type: "text/plain",
+              role: "attachment",
+            }],
+          },
+        }}
+        index={0}
+        styles={styles}
+        onOpenInspector={() => {}}
+        onOpenSources={() => {}}
+        onApproveMessage={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("notes.txt")).toBeInTheDocument();
+    expect(screen.getByText("Attached")).toBeInTheDocument();
+  });
+
   it("shows reuse selection controls for selectable messages", () => {
     const onToggleSelectedForExport = vi.fn();
     render(

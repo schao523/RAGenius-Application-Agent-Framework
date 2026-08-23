@@ -148,6 +148,11 @@ async function createHarness(
   const interactionStore = new InMemoryAgentInteractionStore();
   const eventStore = new InMemoryAgentEventStore();
   const adapter = new FakeAdapter();
+  const persistedResponses: Array<{
+    executionId: string;
+    text: string;
+    outputId: string;
+  }> = [];
   const chatTurnStore = new InMemoryAgentChatTurnStore(sessionStore);
   await executionStore.save({
     executionId: scope.executionId,
@@ -161,12 +166,173 @@ async function createHarness(
     executionStore,
     interactionStore,
     idleTtlMs,
+    persistFinalResponse: async (input) => {
+      persistedResponses.push({
+        executionId: input.executionId,
+        outputId: input.output.output_id,
+        text: input.text
+      });
+      return {
+        artifact_id: "artifact_interactive_output",
+        artifact_type: "agent_output" as const,
+        display_name: input.output.display_name,
+        mime_type: input.output.media_type
+      };
+    },
     sessionStore
   });
-  return { adapter, chatTurnStore, eventStore, executionStore, interactionStore, manager, sessionStore };
+  return {
+    adapter,
+    chatTurnStore,
+    eventStore,
+    executionStore,
+    interactionStore,
+    manager,
+    persistedResponses,
+    sessionStore
+  };
 }
 
 describe("interactive Agent session manager", () => {
+  it("fails completion when an explicitly required interaction was not observed", async () => {
+    const harness = await createHarness();
+    await harness.manager.start({
+      policy,
+      providerContext,
+      request,
+      requiredInteractionTypes: ["selection"],
+      requiredOccurrenceTypes: ["selection"],
+      scope
+    });
+
+    await harness.adapter.send({
+      type: "run_completed",
+      payload: { status: "completed", summary: "Answered without asking." }
+    });
+
+    const result = await harness.executionStore.get(scope);
+    assert.equal(result?.status, "failed");
+    assert.equal(result?.errors?.[0]?.code, "REQUIRED_INTERACTION_NOT_OBSERVED");
+    assert.equal(harness.adapter.cancelled, true);
+  });
+
+  it("allows completion after the explicitly required interaction was observed", async () => {
+    const harness = await createHarness();
+    await harness.manager.start({
+      policy,
+      providerContext,
+      request,
+      requiredInteractionTypes: ["selection"],
+      requiredOccurrenceTypes: ["selection"],
+      scope
+    });
+    await harness.adapter.send(interactionEvent("interaction-selection", "selection"));
+    const interaction = (await harness.interactionStore.list(scope))[0]!;
+    await harness.manager.respond({
+      ...scope,
+      expectedVersion: interaction.version,
+      idempotencyKey: "selection-response",
+      interactionId: interaction.interactionId,
+      responseSummary: { kind: "selection", option_ids: ["markdown"] }
+    });
+    await harness.adapter.send({
+      type: "run_completed",
+      payload: { status: "completed", summary: "Answered after asking." }
+    });
+
+    assert.equal((await harness.executionStore.get(scope))?.status, "completed");
+  });
+
+  it("rejects provider completion while an interaction is still unresolved", async () => {
+    const harness = await createHarness();
+    await harness.manager.start({
+      policy,
+      providerContext,
+      request,
+      requiredInteractionTypes: ["selection"],
+      requiredOccurrenceTypes: ["selection"],
+      scope
+    });
+    await harness.adapter.send(interactionEvent("interaction-selection", "selection"));
+
+    await harness.adapter.send({
+      type: "run_completed",
+      payload: { status: "completed", summary: "Provider stopped waiting." }
+    });
+
+    const result = await harness.executionStore.get(scope);
+    assert.equal(result?.status, "failed");
+    assert.equal(result?.errors?.[0]?.code, "PROVIDER_COMPLETED_WITH_PENDING_INTERACTION");
+  });
+
+  it("returns the accumulated final response without creating an artifact when saving is off", async () => {
+    const harness = await createHarness();
+    await harness.manager.start({
+      policy,
+      providerContext,
+      request,
+      inferredInteractionTypes: ["selection"],
+      requiredInteractionTypes: ["selection"],
+      scope
+    });
+    await harness.adapter.send({ type: "message_delta", payload: { delta: "Plain " } });
+    await harness.adapter.send({ type: "message_delta", payload: { delta: "answer" } });
+    await harness.adapter.send({
+      type: "run_completed",
+      payload: { status: "completed", summary: "Answered." }
+    });
+
+    const result = await harness.executionStore.get(scope);
+    assert.equal(result?.status, "completed");
+    assert.equal((result?.result as Record<string, unknown>)?.output_text, "Plain answer");
+    assert.deepEqual((result?.result as Record<string, unknown>)?.artifacts, []);
+    assert.deepEqual(
+      (result?.result as Record<string, unknown>)?.interaction_requirements,
+      { inferred_types: ["selection"] }
+    );
+    assert.deepEqual(harness.persistedResponses, []);
+  });
+
+  it("persists the accumulated final response when reusable output is requested", async () => {
+    const harness = await createHarness();
+    const saveRequest: ExecuteAgentRequest = {
+      ...request,
+      expected_outputs: [{
+        output_id: "agent_output",
+        artifact_type: "agent_output",
+        media_type: "text/markdown",
+        persist_as_artifact: true,
+        required: false
+      }]
+    };
+    await harness.manager.start({
+      policy,
+      providerContext: { ...providerContext, expected_outputs: saveRequest.expected_outputs ?? [] },
+      request: saveRequest,
+      requiredInteractionTypes: ["selection"],
+      scope
+    });
+    await harness.adapter.send({ type: "message_delta", payload: { delta: "# Answer\n" } });
+    await harness.adapter.send({ type: "message_delta", payload: { delta: "Markdown selected." } });
+    await harness.adapter.send({
+      type: "run_completed",
+      payload: { status: "completed", summary: "Answered." }
+    });
+
+    assert.deepEqual(harness.persistedResponses, [{
+      executionId: scope.executionId,
+      outputId: "agent_output",
+      text: "# Answer\nMarkdown selected."
+    }]);
+    const result = await harness.executionStore.get(scope);
+    assert.deepEqual((result?.result as Record<string, unknown>)?.artifacts, [{
+      artifact_id: "artifact_interactive_output",
+      artifact_type: "agent_output",
+      display_name: "agent_output.md",
+      mime_type: "text/markdown"
+    }]);
+  });
+
   it("keeps a chat-capable OpenClaw session ready and starts a same-session follow-up", async () => {
     const harness = await createHarness();
     harness.adapter.capabilityOverrides = {
@@ -355,6 +521,22 @@ describe("interactive Agent session manager", () => {
     assert.equal(result.failureCode, "INTERACTIVE_CAPABILITY_UNAVAILABLE");
     assert.equal((await harness.executionStore.get(scope))?.status, "failed");
     assert.equal(await harness.sessionStore.getByExecution(scope), null);
+  });
+
+  it("fails closed when chat-level interaction is required but disabled", async () => {
+    const harness = await createHarness();
+    const result = await harness.manager.start({
+      request,
+      policy,
+      providerContext,
+      requiredChatLevelInteraction: true,
+      requiredInteractionTypes: [],
+      scope
+    });
+
+    assert.equal(result.started, false);
+    assert.equal(result.failureCode, "INTERACTIVE_CAPABILITY_UNAVAILABLE");
+    assert.match(result.reason, /chat-level interaction/);
   });
 
   it("fails closed when reviewed recovery exceeds adapter guarantees", async () => {

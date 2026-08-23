@@ -119,7 +119,10 @@ export class ExecutionEngine {
         request: ExecutionRequest & { request_type: "execute_agent" };
         selection: ResolvedAgentSkillSelection | null;
       }) => {
+        inferredInteractionTypes?: AgentInteractionType[];
+        requiredChatLevelInteraction?: boolean;
         requiredInteractionTypes: AgentInteractionType[];
+        requiredOccurrenceTypes?: AgentInteractionType[];
         requiredRecoveryClass?: AgentSkillRecoveryClass;
       } | null)
     | undefined;
@@ -151,7 +154,10 @@ export class ExecutionEngine {
       request: ExecutionRequest & { request_type: "execute_agent" };
       selection: ResolvedAgentSkillSelection | null;
     }) => {
+      inferredInteractionTypes?: AgentInteractionType[];
+      requiredChatLevelInteraction?: boolean;
       requiredInteractionTypes: AgentInteractionType[];
+      requiredOccurrenceTypes?: AgentInteractionType[];
       requiredRecoveryClass?: AgentSkillRecoveryClass;
     } | null;
   }) {
@@ -460,8 +466,23 @@ export class ExecutionEngine {
             policy: agentPolicy,
             providerContext,
             request: policyRequest,
+            ...(interactiveRequirement.inferredInteractionTypes
+              ? {
+                  inferredInteractionTypes:
+                    interactiveRequirement.inferredInteractionTypes
+                }
+              : {}),
+            ...(interactiveRequirement.requiredChatLevelInteraction
+              ? { requiredChatLevelInteraction: true }
+              : {}),
             requiredInteractionTypes:
               interactiveRequirement.requiredInteractionTypes,
+            ...(interactiveRequirement.requiredOccurrenceTypes
+              ? {
+                  requiredOccurrenceTypes:
+                    interactiveRequirement.requiredOccurrenceTypes
+                }
+              : {}),
             ...(interactiveRequirement.requiredRecoveryClass
               ? {
                   requiredRecoveryClass:
