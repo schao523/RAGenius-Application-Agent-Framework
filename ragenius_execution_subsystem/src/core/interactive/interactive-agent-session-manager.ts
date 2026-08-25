@@ -20,6 +20,7 @@ import type { AgentSessionStore } from "./agent-session-store.js";
 import type {
   InteractiveAgentAdapter,
   InteractiveProviderEvent,
+  ProviderInteractionLaunch,
   ProviderSessionHandle
 } from "./interactive-agent-adapter.js";
 import { ProviderSessionUnavailableError } from "./interactive-agent-adapter.js";
@@ -64,6 +65,10 @@ export interface RespondToInteractionInput extends ExecutionScope {
 export type RespondToInteractionResult = {
   outcome: "resolved" | "replay" | "conflict" | "expired" | "not_found" | "verification_failed";
 };
+
+export type LaunchInteractionResult =
+  | { outcome: "issued"; launch: ProviderInteractionLaunch }
+  | { outcome: "conflict" | "expired" | "not_found" | "unavailable" };
 
 export interface AgentChatFollowUpInput extends ExecutionScope {
   expectedSessionVersion: number;
@@ -120,6 +125,7 @@ export class InteractiveAgentSessionManager {
   private readonly sessionStore: AgentSessionStore;
   private readonly active = new Map<string, ActiveProviderSession>();
   private readonly idleTimers = new Map<string, NodeJS.Timeout>();
+  private readonly issuedLaunches = new Set<string>();
 
   constructor(options: {
     capabilityService: InteractiveCapabilityService;
@@ -410,6 +416,41 @@ export class InteractiveAgentSessionManager {
       });
     }
     return { outcome: "resolved" };
+  }
+
+  async launchInteraction(input: ExecutionScope & {
+    expectedVersion: number;
+    interactionId: string;
+    now?: Date;
+  }): Promise<LaunchInteractionResult> {
+    const interaction = (await this.interactionStore.list(input)).find(
+      (candidate) => candidate.interactionId === input.interactionId
+    );
+    if (!interaction) return { outcome: "not_found" };
+    const now = input.now ?? new Date();
+    if (interaction.state === "pending" && interaction.expiresAt.getTime() <= now.getTime()) {
+      return { outcome: "expired" };
+    }
+    if (
+      interaction.state !== "pending" ||
+      interaction.type !== "authentication_handoff" ||
+      interaction.version !== input.expectedVersion ||
+      interaction.presentation?.launchAvailable !== true
+    ) {
+      return { outcome: "conflict" };
+    }
+    const active = this.active.get(input.executionId);
+    if (!active?.adapter.launchInteraction) return { outcome: "unavailable" };
+    const ticketKey = `${input.executionId}:${input.interactionId}:${input.expectedVersion}`;
+    if (this.issuedLaunches.has(ticketKey)) return { outcome: "conflict" };
+    let launch: ProviderInteractionLaunch;
+    try {
+      launch = await active.adapter.launchInteraction(active.handle, input.interactionId);
+    } catch {
+      return { outcome: "unavailable" };
+    }
+    this.issuedLaunches.add(ticketKey);
+    return { outcome: "issued", launch };
   }
 
   async cancel(scope: ExecutionScope): Promise<{ cancelled: boolean }> {
@@ -844,6 +885,9 @@ export class InteractiveAgentSessionManager {
     const active = this.active.get(executionId);
     for (const timer of active?.expiryTimers.values() ?? []) clearTimeout(timer);
     this.active.delete(executionId);
+    for (const key of this.issuedLaunches) {
+      if (key.startsWith(`${executionId}:`)) this.issuedLaunches.delete(key);
+    }
   }
 
   private scheduleIdleExpiry(

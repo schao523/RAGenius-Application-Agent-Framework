@@ -4,6 +4,7 @@ import { hasServiceScope } from "../auth/service-auth.js";
 import {
   agentEventQuerySchema,
   agentChatFollowUpBodySchema,
+  agentInteractionLaunchBodySchema,
   agentInteractionResponseBodySchema,
   endAgentChatSessionBodySchema,
   interactiveExecutionScopeQuerySchema,
@@ -243,6 +244,43 @@ export const registerInteractiveAgentRoutes: FastifyPluginAsync = async (app) =>
         events.at(-1)?.sequence ?? query.after_sequence
     });
   });
+
+  app.post(
+    "/executions/:execution_id/interactions/:interaction_id/launch",
+    async (request, reply) => {
+      requireExecutionScope(request);
+      const params = request.params as { execution_id: string; interaction_id: string };
+      const scope = scopeFrom(params.execution_id, request.query);
+      if (!await app.services.executionStore.get(scope)) throw executionNotFound();
+      const body = agentInteractionLaunchBodySchema.parse(request.body);
+      const result = await app.services.interactiveSessionManager.launchInteraction({
+        ...scope,
+        expectedVersion: body.expected_version,
+        interactionId: params.interaction_id
+      });
+      if (result.outcome === "not_found") throw executionNotFound();
+      if (result.outcome === "expired") {
+        throw conflict("INTERACTION_EXPIRED", "The interaction has expired.");
+      }
+      if (result.outcome !== "issued") {
+        throw conflict("INTERACTION_LAUNCH_UNAVAILABLE", "Authentication launch is not available.");
+      }
+      reply.header("Cache-Control", "no-store");
+      reply.header("Pragma", "no-cache");
+      if (result.launch.kind === "https_url") {
+        return reply.status(200).send({
+          expires_at: result.launch.expiresAt.toISOString(),
+          launch_url: result.launch.launchUrl
+        });
+      }
+      return reply.status(200).send({
+        application: result.launch.application,
+        expires_at: result.launch.expiresAt.toISOString(),
+        kind: "provider_window",
+        provider: result.launch.provider
+      });
+    }
+  );
 
   app.post(
     "/executions/:execution_id/interactions/:interaction_id/responses",

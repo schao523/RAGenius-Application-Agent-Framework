@@ -8,6 +8,7 @@ import type {
   InteractiveProviderEvent,
   InteractiveStartInput,
   ProviderCancellationResult,
+  ProviderInteractionLaunch,
   ProviderReconciliationResult,
   ProviderSessionHandle
 } from "./interactive-agent-adapter.js";
@@ -317,6 +318,41 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
       throw new Error("Unsupported Codex interaction response binding.");
     }
     state.pending.delete(claim.interactionId);
+  }
+
+  async launchInteraction(
+    handle: ProviderSessionHandle,
+    interactionId: string
+  ): Promise<ProviderInteractionLaunch> {
+    const pending = protectedHandle(handle).pending.get(interactionId);
+    if (!pending || pending.type !== "authentication_handoff") {
+      throw new Error("Authentication launch is not pending.");
+    }
+    const target = pending.mcpRequest?.protectedLaunchTarget ??
+      pending.managedRequest?.protectedLaunchTarget;
+    if (!target) throw new Error("Authentication launch target is unavailable.");
+    const expiresAt = new Date(Date.now() + 30_000);
+    if (target.kind === "provider_window") {
+      return {
+        application: target.application,
+        expiresAt,
+        kind: "provider_window",
+        provider: target.provider
+      };
+    }
+    const url = new URL(target.url);
+    const allowedHosts = pending.verificationTarget?.allowedHosts ??
+      this.config.mcpAuthAllowedHosts ?? [];
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      !allowedHosts.includes(url.hostname)
+    ) {
+      throw new Error("Authentication launch target failed validation.");
+    }
+    return { expiresAt, kind: "https_url", launchUrl: url.toString() };
   }
 
   async cancel(handle: ProviderSessionHandle): Promise<ProviderCancellationResult> {

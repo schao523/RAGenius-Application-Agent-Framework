@@ -84,6 +84,10 @@ export const endAgentChatSessionBodySchema = z.object({
   expected_session_version: z.number().int().positive()
 }).strict();
 
+export const agentInteractionLaunchBodySchema = z.object({
+  expected_version: z.number().int().positive()
+}).strict();
+
 export type AgentInteractionResponseBody = z.infer<
   typeof agentInteractionResponseBodySchema
 >;

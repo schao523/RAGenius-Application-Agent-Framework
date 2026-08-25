@@ -445,6 +445,15 @@ describe("Codex app-server adapter", () => {
         turnId: "turn-1"
       }
     });
+    const launch = await adapter.launchInteraction!(
+      handle,
+      events[0]!.interaction!.interactionId
+    );
+    assert.equal(launch.kind, "https_url");
+    assert.equal(
+      launch.kind === "https_url" ? launch.launchUrl : "",
+      "https://accounts.google.com/"
+    );
     await adapter.respond(handle, userActionClaim(events[0]!.interaction!.interactionId, "authentication_handoff"));
     assert.equal(verifyCount, 1);
     assert.equal((factory.transport.responses[0]?.result as { success: boolean }).success, true);
@@ -455,6 +464,37 @@ describe("Codex app-server adapter", () => {
     }), new FakeFactory());
     const unavailablePreflight = await unavailable.preflight({ ...preflightInput(), requiredInteractionTypes: [] });
     assert.equal(unavailablePreflight.capabilities.interactionTypes.includes("authentication_handoff"), false);
+
+    const unsafeTarget = {
+      ...target,
+      launch: { kind: "https_url" as const, url: "https://evil.example/" }
+    };
+    const unsafeFactory = new FakeFactory();
+    const unsafeAdapter = new CodexAppServerAdapter(config({
+      authHandoffEnabled: true,
+      managedAuthTargets: [unsafeTarget]
+    }), unsafeFactory, new Map([[verifier.id, verifier]]));
+    const unsafeEvents: InteractiveProviderEvent[] = [];
+    const unsafePreflight = await unsafeAdapter.preflight({ ...preflightInput(), requiredInteractionTypes: [] });
+    const unsafeHandle = await unsafeAdapter.start({
+      ...preflightInput(), requiredInteractionTypes: [],
+      capabilities: unsafePreflight.capabilities, protocolVersion: "0.146.0",
+      emit: async (event) => { unsafeEvents.push(event); }
+    });
+    await unsafeFactory.transport.emit({
+      id: "auth-unsafe",
+      method: "item/tool/call",
+      params: {
+        tool: "ragenius_request_authentication_handoff",
+        arguments: { authentication_target_id: "gmail", instruction: "Complete sign-in." },
+        threadId: "thread-1",
+        turnId: "turn-1"
+      }
+    });
+    await assert.rejects(
+      unsafeAdapter.launchInteraction!(unsafeHandle, unsafeEvents[0]!.interaction!.interactionId),
+      /failed validation/
+    );
   });
 
   it("stages selected artifacts and references only their workspace-relative paths", async () => {

@@ -103,6 +103,10 @@ export interface ProviderReconciliationResult {
   diagnostics?: Record<string, unknown>;
 }
 
+export type ProviderInteractionLaunch =
+  | { expiresAt: Date; kind: "https_url"; launchUrl: string }
+  | { application: string; expiresAt: Date; kind: "provider_window"; provider: "computer_use" };
+
 export interface ClaimedChatFollowUp {
   idempotencyKey: string;
   kind: "reply" | "continue" | "revise" | "graceful_cancel";
@@ -115,6 +119,10 @@ export interface InteractiveAgentAdapter {
   preflight(input: InteractivePreflightInput): Promise<InteractivePreflightResult>;
   start(input: InteractiveStartInput): Promise<ProviderSessionHandle>;
   respond(handle: ProviderSessionHandle, claim: ClaimedInteraction): Promise<void>;
+  launchInteraction?(
+    handle: ProviderSessionHandle,
+    interactionId: string
+  ): Promise<ProviderInteractionLaunch>;
   cancel(handle: ProviderSessionHandle): Promise<ProviderCancellationResult>;
   reconcile(handle: ProviderSessionHandle): Promise<ProviderReconciliationResult>;
   restore?(

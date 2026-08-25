@@ -39,7 +39,7 @@ const request: ExecuteAgentRequest = {
 const capabilities: AgentInteractionCapabilities = {
   cancellation: true,
   eventReplay: "none",
-  interactionTypes: ["approval", "clarification", "selection"],
+  interactionTypes: ["approval", "authentication_handoff", "clarification", "selection"],
   protocolTransport: true,
   reconnectReconciliation: false,
   sameSessionContinuation: true,
@@ -63,6 +63,7 @@ class RouteTestAdapter implements InteractiveAgentAdapter {
   followUpCount = 0;
   chatLevel = false;
   private emit?: (event: InteractiveProviderEvent) => Promise<void>;
+  launchCount = 0;
 
   async preflight() {
     return {
@@ -81,6 +82,14 @@ class RouteTestAdapter implements InteractiveAgentAdapter {
   }
   async cancel() { return { cancelled: true }; }
   async reconcile() { return { state: "running" as const }; }
+  async launchInteraction() {
+    this.launchCount += 1;
+    return {
+      expiresAt: new Date(Date.now() + 30_000),
+      kind: "https_url" as const,
+      launchUrl: "https://accounts.google.com/signin"
+    };
+  }
   async sendFollowUp(handle: ProviderSessionHandle) {
     this.followUpCount += 1;
     return { ...handle, providerRunRef: "run-2", providerTurnRef: "run-2" };
@@ -105,6 +114,29 @@ class RouteTestAdapter implements InteractiveAgentAdapter {
         prompt: "Allow creating one report?",
         providerCorrelationRef: "protected-provider-request",
         type: "approval"
+      }
+    });
+  }
+  async requestAuthentication(): Promise<void> {
+    assert.ok(this.emit);
+    await this.emit({
+      type: "interaction_requested",
+      payload: {},
+      interaction: {
+        allowsFreeText: false,
+        expiresAt: new Date(Date.now() + 60_000),
+        interactionId: "interaction_auth",
+        options: [],
+        policyBindingHash: "protected-policy-hash",
+        presentation: {
+          completionLabel: "Authentication completed",
+          launchAvailable: true,
+          targetHost: "accounts.google.com",
+          targetLabel: "Google sign-in"
+        },
+        prompt: "Sign in to Google.",
+        providerCorrelationRef: "protected-provider-request-auth",
+        type: "authentication_handoff"
       }
     });
   }
@@ -178,6 +210,44 @@ function approvalResponse(extraResponse: Record<string, unknown> = {}) {
 }
 
 describe("interactive Agent routes", () => {
+  it("issues one scoped no-store authentication launch", async () => {
+    const test = await createHarness();
+    await test.adapter.requestAuthentication();
+    const first = await test.app.inject({
+      method: "POST",
+      url: `/v1/executions/${scope.executionId}/interactions/interaction_auth/launch?${scopeQuery()}`,
+      headers: auth(),
+      payload: { expected_version: 1 }
+    });
+    assert.equal(first.statusCode, 200, first.body);
+    assert.equal(first.headers["cache-control"], "no-store");
+    assert.equal(first.headers.pragma, "no-cache");
+    assert.equal(first.json().launch_url, "https://accounts.google.com/signin");
+
+    const replay = await test.app.inject({
+      method: "POST",
+      url: `/v1/executions/${scope.executionId}/interactions/interaction_auth/launch?${scopeQuery()}`,
+      headers: auth(),
+      payload: { expected_version: 1 }
+    });
+    assert.equal(replay.statusCode, 409);
+    assert.equal(test.adapter.launchCount, 1);
+
+    const wrongScope = await test.app.inject({
+      method: "POST",
+      url: `/v1/executions/${scope.executionId}/interactions/interaction_auth/launch?${scopeQuery("wrong-session")}`,
+      headers: auth(),
+      payload: { expected_version: 1 }
+    });
+    assert.equal(wrongScope.statusCode, 404);
+
+    const unauthenticated = await test.app.inject({
+      method: "POST",
+      url: `/v1/executions/${scope.executionId}/interactions/interaction_auth/launch?${scopeQuery()}`,
+      payload: { expected_version: 1 }
+    });
+    assert.equal(unauthenticated.statusCode, 401);
+  });
   it("returns a scoped chat session and accepts a versioned follow-up", async () => {
     const harness = await createHarness(["execution"], true);
     const approved = await harness.app.inject({
