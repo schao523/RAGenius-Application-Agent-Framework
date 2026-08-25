@@ -9,6 +9,7 @@ function isUnavailable(interaction) {
 export default function AgentInteractionCard({
   interaction,
   onRespond,
+  onLaunch,
   onCancel,
   onRefresh,
   submitting = false,
@@ -27,6 +28,7 @@ export default function AgentInteractionCard({
   if (!interaction) return null;
 
   const disabled = unavailable || submitting;
+  const presentation = interaction.presentation || {};
   const toggleOption = (optionId) => {
     setSelectedOptions((current) => (
       current.includes(optionId)
@@ -131,16 +133,42 @@ export default function AgentInteractionCard({
       {["authentication_handoff", "user_action_required"].includes(interaction.type) && (
         <div>
           {interaction.type === "authentication_handoff" && (
-            <div style={styles?.compactNote}>Complete authentication in the provider window. Do not enter credentials here.</div>
+            <>
+              <div style={styles?.compactNote}>
+                Target: {presentation.target_label || "Approved provider"}
+                {presentation.target_host ? ` (${presentation.target_host})` : ""}
+              </div>
+              <div style={{ ...styles?.compactNote, marginTop: 6 }}>
+                Enter credentials, one-time codes, and recovery codes only in the provider window. Never enter them in RAGenius.
+              </div>
+            </>
           )}
-          <button
-            type="button"
-            style={styles?.button}
-            disabled={disabled}
-            onClick={() => onRespond?.({ kind: "user_action", outcome: "completed" })}
-          >
-            I completed this step
-          </button>
+          {interaction.type === "user_action_required" && presentation.completion_label && (
+            <div style={styles?.compactNote}>{presentation.completion_label}</div>
+          )}
+          <div style={{ ...(styles?.row || {}), marginTop: 10 }}>
+            {interaction.type === "authentication_handoff" && presentation.launch_available && (
+              <button type="button" style={styles?.button} disabled={disabled} onClick={onLaunch}>
+                Open sign-in
+              </button>
+            )}
+            <button
+              type="button"
+              style={styles?.button}
+              disabled={disabled}
+              onClick={() => onRespond?.({ kind: "user_action", outcome: "completed" })}
+            >
+              {presentation.completion_label || "I completed this step"}
+            </button>
+            <button
+              type="button"
+              style={styles?.secondaryButton}
+              disabled={disabled}
+              onClick={() => onRespond?.({ kind: "user_action", outcome: "cancelled" })}
+            >
+              Cancel step
+            </button>
+          </div>
         </div>
       )}
 

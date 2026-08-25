@@ -100,6 +100,40 @@ def test_codex_approval_then_clarification_then_completion_survives_refresh(monk
     assert "prompt" not in lane
 
 
+def test_authentication_launch_is_scoped_and_no_store(monkeypatch, tmp_path):
+    _session(monkeypatch, tmp_path)
+
+    class FakeExecutionClient:
+        def launch_agent_interaction(self, execution_id, interaction_id, **values):
+            assert execution_id == "execution-1"
+            assert interaction_id == "interaction-auth"
+            assert values == {
+                "app_id": "app-1",
+                "session_id": "session-1",
+                "expected_version": 2,
+            }
+            return {
+                "launch_url": "https://accounts.google.com/signin",
+                "expires_at": "2099-01-01T00:00:00Z",
+            }
+
+    monkeypatch.setattr(app_main, "execution_client", FakeExecutionClient())
+    response = TestClient(app).post(
+        "/sessions/session-1/executions/execution-1/interactions/interaction-auth/launch",
+        json={"app_id": "app-1", "user_id": "user-1", "expected_version": 2},
+    )
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.json()["launch_url"] == "https://accounts.google.com/signin"
+
+    wrong_user = TestClient(app).post(
+        "/sessions/session-1/executions/execution-1/interactions/interaction-auth/launch",
+        json={"app_id": "app-1", "user_id": "other-user", "expected_version": 2},
+    )
+    assert wrong_user.status_code in {403, 404}
+
+
 def test_interactive_completion_refresh_enriches_persisted_output_artifact(monkeypatch, tmp_path):
     _session(monkeypatch, tmp_path)
 

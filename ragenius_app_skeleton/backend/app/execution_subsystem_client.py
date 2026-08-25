@@ -402,6 +402,22 @@ class ExecutionSubsystemClient:
             query={"app_id": app_id, "session_id": session_id},
         )
 
+    def launch_agent_interaction(
+        self,
+        execution_id: str,
+        interaction_id: str,
+        *,
+        app_id: str,
+        session_id: str,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        return self._json_request(
+            "POST",
+            f"/executions/{execution_id}/interactions/{interaction_id}/launch",
+            {"expected_version": expected_version},
+            query={"app_id": app_id, "session_id": session_id},
+        )
+
     def cancel_agent_execution(
         self,
         execution_id: str,

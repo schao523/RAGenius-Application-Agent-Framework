@@ -2058,6 +2058,7 @@ function ChatPanel({
   agentInteraction,
   onRefreshAgentInteraction,
   onRespondAgentInteraction,
+  onLaunchAgentInteraction,
   onCancelAgentExecution,
   agentInteractionSubmitting,
   agentInteractionError,
@@ -2440,6 +2441,7 @@ function ChatPanel({
                   interaction={agentInteraction}
                   onRefresh={onRefreshAgentInteraction}
                   onRespond={onRespondAgentInteraction}
+                  onLaunch={onLaunchAgentInteraction}
                   onCancel={onCancelAgentExecution}
                   submitting={agentInteractionSubmitting}
                   error={agentInteractionError}
@@ -3505,6 +3507,40 @@ export default function App() {
     }
   };
 
+  const launchAgentInteraction = async () => {
+    if (!activeExecutionId || !activeAgentInteraction) return;
+    const providerWindow = globalThis.open?.("about:blank", "_blank", "noopener,noreferrer");
+    setAgentInteractionSubmitting(true);
+    setAgentInteractionError("");
+    try {
+      const data = await fetchJson(
+        `${baseUrl}/sessions/${sessionId}/executions/${encodeURIComponent(activeExecutionId)}`
+        + `/interactions/${encodeURIComponent(activeAgentInteraction.interaction_id)}/launch`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            app_id: selectedAppId,
+            user_id: userId,
+            expected_version: activeAgentInteraction.version,
+          }),
+        },
+      );
+      if (typeof data.launch_url === "string" && data.launch_url.startsWith("https://")) {
+        if (!providerWindow) throw new Error("The browser blocked the sign-in window. Allow pop-ups and retry.");
+        providerWindow.location.replace(data.launch_url);
+      } else {
+        providerWindow?.close();
+        throw new Error("This authentication target requires a trusted provider window that is not available in the browser app.");
+      }
+    } catch (interactionError) {
+      providerWindow?.close();
+      setAgentInteractionError(String(interactionError?.message || interactionError));
+    } finally {
+      setAgentInteractionSubmitting(false);
+    }
+  };
+
   const refreshAgentChatSession = async (executionIdOverride = activeExecutionId) => {
     const executionId = String(executionIdOverride || "").trim();
     if (!selectedAppId || !sessionId || !userId || !executionId) return;
@@ -4171,6 +4207,7 @@ export default function App() {
               agentInteraction={activeAgentInteraction}
               onRefreshAgentInteraction={refreshAgentInteraction}
               onRespondAgentInteraction={respondAgentInteraction}
+              onLaunchAgentInteraction={launchAgentInteraction}
               onCancelAgentExecution={cancelAgentExecution}
               agentInteractionSubmitting={agentInteractionSubmitting}
               agentInteractionError={agentInteractionError}

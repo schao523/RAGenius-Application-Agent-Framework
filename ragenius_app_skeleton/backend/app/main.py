@@ -170,6 +170,12 @@ class SessionAgentInteractionResponseRequest(BaseModel):
     response: dict[str, Any]
 
 
+class SessionAgentInteractionLaunchRequest(BaseModel):
+    app_id: str
+    user_id: str
+    expected_version: int
+
+
 class ApprovedContentCreateRequest(BaseModel):
     app_id: str
     user_id: str
@@ -4333,6 +4339,30 @@ async def respond_session_agent_interaction(
     runtime_state["session_lane_state"] = lane_state
     session_repo.set_runtime_state(session_id, runtime_state)
     return {**public_result, "session_lane_state": lane_state}
+
+
+@app.post("/sessions/{session_id}/executions/{execution_id}/interactions/{interaction_id}/launch")
+async def launch_session_agent_interaction(
+    session_id: str,
+    execution_id: str,
+    interaction_id: str,
+    payload: SessionAgentInteractionLaunchRequest,
+):
+    _require_session_scope(session_id, app_id=payload.app_id, user_id=payload.user_id)
+    result = await run_in_threadpool(
+        execution_client.launch_agent_interaction,
+        execution_id,
+        interaction_id,
+        app_id=payload.app_id,
+        session_id=session_id,
+        expected_version=payload.expected_version,
+    )
+    _require_successful_execution_proxy(result)
+    response = _redact_provider_handles(result)
+    return JSONResponse(
+        content=response,
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
 
 
 @app.post("/sessions/{session_id}/executions/{execution_id}/cancel")

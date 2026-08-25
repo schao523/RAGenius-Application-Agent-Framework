@@ -331,9 +331,16 @@ def test_interactive_agent_methods_forward_auth_scope_cursor_and_response(monkey
         idempotency_key="response_1",
         response={"kind": "approval", "decision": "allow_once"},
     )
+    client.launch_agent_interaction(
+        "execution_1",
+        "interaction_1",
+        app_id="app 1",
+        session_id="session/1",
+        expected_version=3,
+    )
     client.cancel_agent_execution("execution_1", app_id="app 1", session_id="session/1")
 
-    assert len(captured) == 4
+    assert len(captured) == 5
     assert all(item.get_header("Authorization") == "Bearer service-secret" for item in captured)
     assert parse_qs(urlparse(captured[0].full_url).query) == {
         "app_id": ["app 1"],
@@ -350,5 +357,6 @@ def test_interactive_agent_methods_forward_auth_scope_cursor_and_response(monkey
         "idempotency_key": "response_1",
         "response": {"kind": "approval", "decision": "allow_once"},
     }
-    assert captured[3].get_method() == "POST"
-    assert captured[3].data is None
+    assert json.loads(captured[3].data.decode("utf-8")) == {"expected_version": 3}
+    assert captured[4].get_method() == "POST"
+    assert captured[4].data is None
