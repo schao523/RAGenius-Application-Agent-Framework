@@ -32,6 +32,11 @@ export interface ResolveAgentInteractionInput extends InteractionScope {
   responseSummary: Record<string, unknown>;
 }
 
+export interface ReleaseAgentInteractionInput extends InteractionScope {
+  idempotencyKey: string;
+  now: Date;
+}
+
 export type InteractionClaimResult =
   | { outcome: "claimed" | "replay" | "conflict" | "expired"; record: AgentInteractionRecord }
   | { outcome: "not_found"; record: null };
@@ -41,6 +46,7 @@ export interface AgentInteractionStore {
   claim(input: ClaimAgentInteractionInput): Promise<InteractionClaimResult>;
   create(input: CreateAgentInteractionInput): Promise<AgentInteractionRecord>;
   list(scope: ExecutionScope): Promise<AgentInteractionRecord[]>;
+  release(input: ReleaseAgentInteractionInput): Promise<AgentInteractionRecord | null>;
   resolve(input: ResolveAgentInteractionInput): Promise<AgentInteractionRecord | null>;
 }
 
@@ -146,6 +152,27 @@ export class InMemoryAgentInteractionStore implements AgentInteractionStore {
       resolvedAt: input.now,
       responseSummary: { ...input.responseSummary },
       state: "resolved",
+      updatedAt: input.now,
+      version: stored.record.version + 1
+    };
+    return cloneInteraction(stored.record);
+  }
+
+  async release(input: ReleaseAgentInteractionInput): Promise<AgentInteractionRecord | null> {
+    const stored = this.records.get(input.interactionId);
+    if (
+      !stored ||
+      !matchesScope(stored.record, input) ||
+      stored.idempotencyKey !== input.idempotencyKey ||
+      stored.record.state !== "resolving"
+    ) {
+      return null;
+    }
+    stored.idempotencyKey = null;
+    stored.record = {
+      ...stored.record,
+      responseSummary: null,
+      state: "pending",
       updatedAt: input.now,
       version: stored.record.version + 1
     };

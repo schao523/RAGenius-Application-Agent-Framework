@@ -81,6 +81,7 @@ class FakeAdapter implements InteractiveAgentAdapter {
   readonly followUps: string[] = [];
   cancelled = false;
   providerSessionUnavailable = false;
+  respondError: Error | null = null;
   capabilityOverrides: Partial<AgentInteractionCapabilities> = {};
   available = true;
   onStart?: (input: InteractiveStartInput) => void;
@@ -110,6 +111,7 @@ class FakeAdapter implements InteractiveAgentAdapter {
   }
 
   async respond(_handle: ProviderSessionHandle, claim: ClaimedInteraction) {
+    if (this.respondError) throw this.respondError;
     this.responses.push(claim.interactionId);
     if (claim.responseSummary.decision === "cancel_execution") {
       await this.emit?.({ type: "run_cancelled", payload: { status: "aborted" } });
@@ -290,6 +292,37 @@ describe("interactive Agent session manager", () => {
     const result = await harness.executionStore.get(scope);
     assert.equal(result?.status, "failed");
     assert.equal(result?.errors?.[0]?.code, "INVALID_PROVIDER_INTERACTION");
+  });
+
+  it("returns an unverified authentication handoff to pending for retry", async () => {
+    const harness = await createHarness();
+    harness.adapter.capabilityOverrides = {
+      interactionTypes: [...capabilities.interactionTypes, "authentication_handoff"]
+    };
+    harness.adapter.respondError = new Error("AUTHENTICATION_HANDOFF_NOT_VERIFIED");
+    await harness.manager.start({
+      policy,
+      providerContext,
+      request,
+      requiredInteractionTypes: ["authentication_handoff"],
+      scope
+    });
+    await harness.adapter.send(interactionEvent("interaction-auth", "authentication_handoff"));
+    const interaction = (await harness.interactionStore.list(scope))[0]!;
+
+    const response = await harness.manager.respond({
+      ...scope,
+      expectedVersion: interaction.version,
+      idempotencyKey: "auth-attempt-1",
+      interactionId: interaction.interactionId,
+      responseSummary: { kind: "user_action", outcome: "completed" }
+    });
+
+    assert.equal(response.outcome, "verification_failed");
+    const retryable = (await harness.interactionStore.list(scope))[0]!;
+    assert.equal(retryable.state, "pending");
+    assert.equal(retryable.version, 3);
+    assert.equal((await harness.executionStore.get(scope))?.status, "waiting_for_interaction");
   });
 
   it("returns the accumulated final response without creating an artifact when saving is off", async () => {

@@ -18,25 +18,49 @@ import {
   stringValue
 } from "./codex-app-server-codec.js";
 import {
+  buildRageniusDynamicToolSpecs,
+  buildRageniusManagedInteractionGuidance,
+  parseRageniusAuthenticationHandoffToolCall,
   parseRageniusInteractionToolCall,
-  rageniusInteractionToolSpec
+  parseRageniusUserActionToolCall,
+  rageniusAuthenticationHandoffToolSpec,
+  rageniusInteractionToolSpec,
+  rageniusUserActionToolSpec,
+  type ManagedInteractionToolRequest
 } from "./codex-interaction-tool.js";
+import {
+  decodeCodexMcpElicitation,
+  McpElicitationDecodeError,
+  translateMcpElicitationResponse,
+  type NormalizedMcpElicitation
+} from "./codex-mcp-elicitation.js";
+import {
+  eligibleManagedAuthenticationTargets,
+  type CodexManagedAuthenticationTarget,
+  type ManagedAuthenticationVerifier
+} from "./codex-managed-auth-targets.js";
 import {
   createCodexRunWorkspace,
   stageCodexArtifacts
 } from "../agents/codex-workspace.js";
 import type { CodexStagedArtifact } from "../agents/codex-cli-types.js";
+import type { AgentInteractionType } from "./interactive-agent-types.js";
 
 export interface CodexAppServerInteractiveConfig {
+  authHandoffEnabled?: boolean;
   enabled: boolean;
   command: string;
   initializationTimeoutMs: number;
   interactionTtlMs: number;
+  managedAuthTargets?: readonly CodexManagedAuthenticationTarget[];
   maxDeltaBytes: number;
   maxLineBytes: number;
   maxStderrBytes: number;
+  mcpAuthAllowedHosts?: readonly string[];
+  mcpElicitationEnabled?: boolean;
   runRoot: string;
   supportedVersions: string[];
+  userActionEnabled?: boolean;
 }
 
 export interface CodexVersionInfo {
@@ -61,9 +85,13 @@ export interface CodexAppServerTransportFactory {
 }
 
 type PendingProviderRequest = {
+  kind: "approval" | "input" | "mcp" | "managed_authentication" | "managed_user_action";
+  managedRequest?: ManagedInteractionToolRequest;
+  mcpRequest?: NormalizedMcpElicitation;
   options: Array<{ id: string; label: string }>;
   requestId: string | number;
-  type: "approval" | "clarification" | "selection";
+  type: "approval" | "clarification" | "selection" | "authentication_handoff" | "user_action_required";
+  verificationTarget?: CodexManagedAuthenticationTarget;
 };
 
 type CodexProtectedHandle = {
@@ -72,6 +100,8 @@ type CodexProtectedHandle = {
   messageDeltaTruncated: boolean;
   messageQueue: Promise<void>;
   pending: Map<string, PendingProviderRequest>;
+  threadId: string | null;
+  turnId: string | null;
   state: "running" | "cancelled" | "completed" | "failed";
   terminalWaiters: Array<(state: CodexProtectedHandle["state"]) => void>;
   transport: CodexAppServerTransport;
@@ -93,7 +123,8 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
 
   constructor(
     private readonly config: CodexAppServerInteractiveConfig,
-    private readonly factory: CodexAppServerTransportFactory
+    private readonly factory: CodexAppServerTransportFactory,
+    private readonly authenticationVerifiers: ReadonlyMap<string, ManagedAuthenticationVerifier> = new Map()
   ) {
     this.codec = new CodexAppServerCodec({
       maxDeltaBytes: config.maxDeltaBytes,
@@ -102,11 +133,9 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
   }
 
   async preflight(input: InteractivePreflightInput): Promise<InteractivePreflightResult> {
+    const capabilities = this.capabilities();
     const base = {
-      capabilities: {
-        ...CODEX_CAPABILITIES,
-        interactionTypes: [...CODEX_CAPABILITIES.interactionTypes]
-      },
+      capabilities,
       protocolVersion: "unknown",
       transport: "codex_app_server" as const
     };
@@ -130,9 +159,7 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
       };
     }
     const missing = input.requiredInteractionTypes.filter(
-      (type) => !CODEX_CAPABILITIES.interactionTypes.includes(
-        type as (typeof CODEX_CAPABILITIES.interactionTypes)[number]
-      )
+      (type) => !capabilities.interactionTypes.includes(type)
     );
     return missing.length > 0
       ? {
@@ -153,8 +180,10 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
       messageQueue: Promise.resolve(),
       pending: new Map(),
       state: "running",
+      threadId: null,
       terminalWaiters: [],
-      transport
+      transport,
+      turnId: null
     };
     transport.onMessage((message) => this.enqueueMessage(protectedHandle, input, message));
     transport.onClose((error) => this.enqueueDisconnect(protectedHandle, error));
@@ -169,29 +198,52 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
       });
       await transport.request("initialize", {
         clientInfo: { name: "RAGenius", title: "RAGenius Execution Subsystem", version: "0.1.0" },
-        capabilities: { experimentalApi: true }
+        capabilities: {
+          experimentalApi: true,
+          ...(this.config.mcpElicitationEnabled
+            ? { mcpServerOpenaiFormElicitation: true }
+            : {})
+        }
       });
       await transport.notify("initialized", {});
+      const eligibleTargets = this.eligibleTargets();
       const threadResponse = recordValue(await transport.request("thread/start", {
         approvalPolicy: "on-request",
         approvalsReviewer: "user",
         cwd: workspace.root_absolute_path,
-        dynamicTools: [rageniusInteractionToolSpec],
+        dynamicTools: buildRageniusDynamicToolSpecs({
+          inputEnabled: input.requiredInteractionTypes.some(
+            (type) => type === "clarification" || type === "selection"
+          ),
+          authHandoffEnabled: this.config.authHandoffEnabled === true,
+          userActionEnabled: this.config.userActionEnabled === true,
+          eligibleTargets
+        }),
         ephemeral: true,
         experimentalRawEvents: false,
         sandbox: sandboxFor(input.policy.workspaceAccess)
       }));
       const threadId = stringValue(recordValue(threadResponse.thread).id);
       if (!threadId) throw new Error("Codex thread/start did not return a thread id.");
+      protectedHandle.threadId = threadId;
       const turnResponse = recordValue(await transport.request("turn/start", {
         threadId,
         input: [{
           type: "text",
-          text: buildInteractiveTurnText(input, stagedArtifacts)
+          text: buildInteractiveTurnText(
+            input,
+            stagedArtifacts,
+            buildRageniusManagedInteractionGuidance({
+              authHandoffEnabled: this.config.authHandoffEnabled === true,
+              userActionEnabled: this.config.userActionEnabled === true,
+              eligibleTargets
+            })
+          )
         }]
       }));
       const turnId = stringValue(recordValue(turnResponse.turn).id);
       if (!turnId) throw new Error("Codex turn/start did not return a turn id.");
+      protectedHandle.turnId = turnId;
       return {
         providerRunRef: turnId,
         providerSessionRef: threadId,
@@ -208,7 +260,7 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
     const state = protectedHandle(handle);
     const pending = state.pending.get(claim.interactionId);
     if (!pending) throw new Error("Codex provider interaction is no longer pending.");
-    if (pending.type === "approval") {
+    if (pending.kind === "approval") {
       const decision = stringValue(claim.responseSummary.decision);
       const codexDecision = decision === "allow_once"
         ? "accept"
@@ -219,12 +271,50 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
             : "";
       if (!codexDecision) throw new Error("Unsupported Codex approval decision.");
       await state.transport.respond(pending.requestId, { decision: codexDecision });
-    } else {
+    } else if (pending.kind === "input") {
       const text = interactionResponseText(pending, claim.responseSummary);
       await state.transport.respond(pending.requestId, {
         success: true,
         contentItems: [{ type: "inputText", text }]
       });
+    } else if (pending.kind === "mcp" && pending.mcpRequest) {
+      if (
+        pending.type === "authentication_handoff" &&
+        stringValue(claim.responseSummary.outcome) === "completed"
+      ) {
+        await this.verifyAuthentication(claim.interaction.executionId, pending);
+      }
+      await state.transport.respond(
+        pending.requestId,
+        translateMcpElicitationResponse(pending.mcpRequest, claim.responseSummary)
+      );
+    } else if (pending.kind === "managed_authentication") {
+      const outcome = stringValue(claim.responseSummary.outcome);
+      if (outcome === "completed") {
+        await this.verifyAuthentication(claim.interaction.executionId, pending);
+      }
+      await state.transport.respond(pending.requestId, {
+        success: outcome === "completed",
+        contentItems: [{
+          type: "inputText",
+          text: outcome === "completed"
+            ? "Authentication was verified. Continue the same operation."
+            : "The user cancelled authentication. Do not continue the protected operation."
+        }]
+      });
+    } else if (pending.kind === "managed_user_action") {
+      const completed = stringValue(claim.responseSummary.outcome) === "completed";
+      await state.transport.respond(pending.requestId, {
+        success: completed,
+        contentItems: [{
+          type: "inputText",
+          text: completed
+            ? "The user reported completion. Verify the observable result before continuing."
+            : "The user cancelled the requested action."
+        }]
+      });
+    } else {
+      throw new Error("Unsupported Codex interaction response binding.");
     }
     state.pending.delete(claim.interactionId);
   }
@@ -337,6 +427,10 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
     params: Record<string, unknown>
   ): Promise<void> {
     await flushMessageDelta(state);
+    if (method === "mcpServer/elicitation/request") {
+      await this.consumeMcpElicitation(state, input, id, method, params);
+      return;
+    }
     if (method === "item/permissions/requestApproval") {
       await state.transport.respond(id, { decision: "decline" });
       await state.emit({
@@ -351,7 +445,12 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
     }
     if (isApprovalMethod(method)) {
       const interactionId = newInteractionId();
-      state.pending.set(interactionId, { options: [], requestId: id, type: "approval" });
+      state.pending.set(interactionId, {
+        kind: "approval",
+        options: [],
+        requestId: id,
+        type: "approval"
+      });
       await state.emit({
         type: "interaction_requested",
         providerEventRef: `${method}:${String(id)}`,
@@ -377,6 +476,7 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
         const parsed = parseRageniusInteractionToolCall(params.arguments);
         const interactionId = newInteractionId();
         state.pending.set(interactionId, {
+          kind: "input",
           options: parsed.options,
           requestId: id,
           type: parsed.type
@@ -401,15 +501,192 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
       }
       return;
     }
+    if (
+      method === "item/tool/call" &&
+      stringValue(params.tool) === rageniusAuthenticationHandoffToolSpec.name
+    ) {
+      await this.consumeManagedToolCall(state, input, id, method, params, "authentication");
+      return;
+    }
+    if (
+      method === "item/tool/call" &&
+      stringValue(params.tool) === rageniusUserActionToolSpec.name
+    ) {
+      await this.consumeManagedToolCall(state, input, id, method, params, "user_action");
+      return;
+    }
     await state.transport.respond(id, {
       error: { code: "UNSUPPORTED_METHOD", message: "RAGenius does not support this provider request." }
     });
+  }
+
+  private capabilities(): InteractivePreflightResult["capabilities"] {
+    const interactionTypes: AgentInteractionType[] = [...CODEX_CAPABILITIES.interactionTypes];
+    if (
+      (this.config.authHandoffEnabled || this.config.mcpElicitationEnabled) &&
+      this.eligibleTargets().length > 0
+    ) {
+      interactionTypes.push("authentication_handoff");
+    }
+    if (this.config.userActionEnabled) interactionTypes.push("user_action_required");
+    return { ...CODEX_CAPABILITIES, interactionTypes };
+  }
+
+  private eligibleTargets(): readonly CodexManagedAuthenticationTarget[] {
+    return eligibleManagedAuthenticationTargets(
+      this.config.managedAuthTargets ?? [],
+      this.authenticationVerifiers
+    );
+  }
+
+  private async consumeMcpElicitation(
+    state: CodexProtectedHandle,
+    input: InteractiveStartInput,
+    id: string | number,
+    method: string,
+    params: Record<string, unknown>
+  ): Promise<void> {
+    if (!this.config.mcpElicitationEnabled || !state.threadId) {
+      await state.transport.respond(id, {
+        action: "decline",
+        content: null,
+        _meta: null
+      });
+      return;
+    }
+    try {
+      const eligibleTargets = this.eligibleTargets();
+      const eligibleAuthHosts = (this.config.mcpAuthAllowedHosts ?? []).filter((host) =>
+        eligibleTargets.some((target) => target.allowedHosts.includes(host))
+      );
+      const decoded = decodeCodexMcpElicitation(params, {
+        activeThreadId: state.threadId,
+        activeTurnId: state.turnId,
+        allowedAuthenticationHosts: eligibleAuthHosts,
+        authorizationBound:
+          input.providerContext.authorization.state === "confirmed" &&
+          input.providerContext.operation_plan.some(
+            (operation) => operation.required && operation.kind !== "read"
+          ),
+        providerRequestId: id
+      });
+      const verificationTarget = decoded.presentation?.targetHost
+        ? eligibleTargets.find((target) =>
+            target.allowedHosts.includes(decoded.presentation!.targetHost!)
+          )
+        : undefined;
+      const interactionId = newInteractionId();
+      state.pending.set(interactionId, {
+        kind: "mcp",
+        mcpRequest: decoded,
+        options: decoded.options,
+        requestId: id,
+        type: decoded.interactionType,
+        ...(verificationTarget ? { verificationTarget } : {})
+      });
+      await state.emit({
+        type: "interaction_requested",
+        providerEventRef: `${method}:${String(id)}`,
+        payload: { server_name: decoded.serverName },
+        interaction: {
+          allowsFreeText: decoded.allowsFreeText,
+          expiresAt: new Date(Date.now() + this.config.interactionTtlMs),
+          interactionId,
+          options: decoded.options,
+          ...(decoded.presentation ? { presentation: decoded.presentation } : {}),
+          policyBindingHash: input.providerContext.authorization.policy_fingerprint,
+          prompt: decoded.prompt,
+          providerCorrelationRef: `${method}:${String(id)}`,
+          type: decoded.interactionType
+        }
+      });
+    } catch (error) {
+      await state.transport.respond(id, { action: "decline", content: null, _meta: null });
+      await state.emit({
+        type: "warning",
+        providerEventRef: `${method}:${String(id)}`,
+        payload: {
+          code: error instanceof McpElicitationDecodeError
+            ? error.code
+            : "MCP_ELICITATION_UNSUPPORTED",
+          message: "The MCP elicitation request was rejected."
+        }
+      });
+    }
+  }
+
+  private async consumeManagedToolCall(
+    state: CodexProtectedHandle,
+    input: InteractiveStartInput,
+    id: string | number,
+    method: string,
+    params: Record<string, unknown>,
+    kind: "authentication" | "user_action"
+  ): Promise<void> {
+    try {
+      const parsed = kind === "authentication"
+        ? parseRageniusAuthenticationHandoffToolCall(params.arguments, this.eligibleTargets())
+        : parseRageniusUserActionToolCall(params.arguments);
+      const responseBinding = parsed.responseBinding;
+      const verificationTarget = responseBinding.kind === "managed_authentication"
+        ? this.eligibleTargets().find((target) => target.id === responseBinding.targetId)
+        : undefined;
+      const interactionId = newInteractionId();
+      state.pending.set(interactionId, {
+        kind: responseBinding.kind,
+        managedRequest: parsed,
+        options: [],
+        requestId: id,
+        type: parsed.type,
+        ...(verificationTarget ? { verificationTarget } : {})
+      });
+      await state.emit({
+        type: "interaction_requested",
+        providerEventRef: `${method}:${String(id)}`,
+        payload: {},
+        interaction: {
+          allowsFreeText: false,
+          expiresAt: new Date(Date.now() + this.config.interactionTtlMs),
+          interactionId,
+          options: [],
+          presentation: parsed.presentation,
+          policyBindingHash: input.providerContext.authorization.policy_fingerprint,
+          prompt: parsed.prompt,
+          providerCorrelationRef: `${method}:${String(id)}`,
+          type: parsed.type
+        }
+      });
+    } catch (error) {
+      await state.transport.respond(id, {
+        success: false,
+        contentItems: [{
+          type: "inputText",
+          text: error instanceof Error && error.message.startsWith("AUTHENTICATION_TARGET_NOT_APPROVED")
+            ? "AUTHENTICATION_TARGET_NOT_APPROVED"
+            : "Invalid managed RAGenius interaction request."
+        }]
+      });
+    }
+  }
+
+  private async verifyAuthentication(
+    executionId: string,
+    pending: PendingProviderRequest
+  ): Promise<void> {
+    const target = pending.verificationTarget;
+    const verifier = target
+      ? this.authenticationVerifiers.get(target.verifierId)
+      : undefined;
+    if (!target || !verifier) throw new Error("AUTHENTICATION_HANDOFF_NOT_VERIFIED");
+    const result = await verifier.verify({ executionId, target });
+    if (!result.verified) throw new Error("AUTHENTICATION_HANDOFF_NOT_VERIFIED");
   }
 }
 
 function buildInteractiveTurnText(
   input: InteractiveStartInput,
-  stagedArtifacts: CodexStagedArtifact[]
+  stagedArtifacts: CodexStagedArtifact[],
+  managedGuidance = ""
 ): string {
   const allowedTypes = [...new Set(
     input.requiredInteractionTypes.filter(
@@ -442,6 +719,7 @@ function buildInteractiveTurnText(
     ),
     "Use only these workspace-relative paths. Do not use browser-local or artifact-store paths."
   ].join("\n"));
+  if (managedGuidance) sections.push(managedGuidance);
   sections.push(`User request:\n${input.request.agent_query}`);
   return sections.join("\n\n");
 }

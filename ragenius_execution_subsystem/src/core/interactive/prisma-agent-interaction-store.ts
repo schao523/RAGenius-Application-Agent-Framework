@@ -3,6 +3,7 @@ import type {
   ClaimAgentInteractionInput,
   CreateAgentInteractionInput,
   InteractionClaimResult,
+  ReleaseAgentInteractionInput,
   ResolveAgentInteractionInput
 } from "./agent-interaction-store.js";
 import type {
@@ -187,6 +188,27 @@ export class PrismaAgentInteractionStore implements AgentInteractionStore {
       return toRecord(row);
     }
     return null;
+  }
+
+  async release(input: ReleaseAgentInteractionInput): Promise<AgentInteractionRecord | null> {
+    const updated = await this.prisma.agentInteraction.updateMany({
+      where: {
+        ...scopeWhere(input),
+        id: input.interactionId,
+        idempotencyKey: input.idempotencyKey,
+        state: "resolving"
+      },
+      data: {
+        idempotencyKey: null,
+        responseSummary: null,
+        state: "pending",
+        updatedAt: input.now,
+        version: { increment: 1 }
+      }
+    });
+    if (updated.count !== 1) return null;
+    const row = await this.get(input);
+    return row ? toRecord(row) : null;
   }
 
   async cancelPending(scope: ExecutionScope, now: Date): Promise<number> {

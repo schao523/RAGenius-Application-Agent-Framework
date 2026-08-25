@@ -24,6 +24,7 @@ import type {
   ClaimedInteraction,
   InteractiveProviderEvent
 } from "../../src/core/interactive/interactive-agent-adapter.js";
+import type { ManagedAuthenticationVerifier } from "../../src/core/interactive/codex-managed-auth-targets.js";
 
 const request: ExecuteAgentRequest = {
   request_type: "execute_agent",
@@ -324,6 +325,138 @@ describe("Codex app-server adapter", () => {
     });
   });
 
+  it("maps MCP form approval and resumes the same provider request", async () => {
+    const factory = new FakeFactory();
+    const adapter = new CodexAppServerAdapter(config({ mcpElicitationEnabled: true }), factory);
+    const events: InteractiveProviderEvent[] = [];
+    const authorizedContext: AgentProviderExecutionContext = {
+      ...providerContext,
+      authorization: { ...providerContext.authorization, state: "confirmed" },
+      operation_plan: [{
+        operation_id: "send_message",
+        kind: "external_write",
+        description: "Send one message.",
+        required: true,
+        minimum_verification: "provider_reported"
+      }]
+    };
+    const handle = await adapter.start({
+      ...preflightInput(),
+      providerContext: authorizedContext,
+      capabilities: capabilities(),
+      protocolVersion: "0.146.0",
+      emit: async (event) => { events.push(event); }
+    });
+    await factory.transport.emit({
+      id: 71,
+      method: "mcpServer/elicitation/request",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        serverName: "gmail",
+        mode: "form",
+        message: "Send this message?",
+        requestedSchema: { type: "object", properties: {} },
+        _meta: null
+      }
+    });
+
+    assert.equal(events[0]?.interaction?.type, "approval");
+    await adapter.respond(handle, claim(events[0]!.interaction!.interactionId, "allow_once"));
+    assert.deepEqual(factory.transport.responses, [{
+      id: 71,
+      result: { action: "accept", content: {}, _meta: null }
+    }]);
+  });
+
+  it("advertises and resolves managed user actions only when enabled", async () => {
+    const factory = new FakeFactory();
+    const adapter = new CodexAppServerAdapter(config({ userActionEnabled: true }), factory);
+    const events: InteractiveProviderEvent[] = [];
+    const preflight = await adapter.preflight({ ...preflightInput(), requiredInteractionTypes: [] });
+    assert.equal(preflight.capabilities.interactionTypes.includes("user_action_required"), true);
+    const handle = await adapter.start({
+      ...preflightInput(), requiredInteractionTypes: [],
+      capabilities: preflight.capabilities, protocolVersion: "0.146.0",
+      emit: async (event) => { events.push(event); }
+    });
+    const threadParams = factory.transport.requests[1]?.params as { dynamicTools: Array<{ name: string }> };
+    assert.equal(threadParams.dynamicTools.some((tool) => tool.name === "ragenius_request_user_action"), true);
+    const turnParams = factory.transport.requests[2]?.params as { input: Array<{ text: string }> };
+    assert.match(turnParams.input[0]?.text ?? "", /managed user action/i);
+
+    await factory.transport.emit({
+      id: "manual-1",
+      method: "item/tool/call",
+      params: {
+        tool: "ragenius_request_user_action",
+        arguments: { instruction: "Select the prepared file.", completion_label: "File selected" },
+        threadId: "thread-1",
+        turnId: "turn-1"
+      }
+    });
+    assert.equal(events[0]?.interaction?.type, "user_action_required");
+    await adapter.respond(handle, userActionClaim(events[0]!.interaction!.interactionId, "user_action_required"));
+    assert.deepEqual(factory.transport.responses[0], {
+      id: "manual-1",
+      result: {
+        success: true,
+        contentItems: [{ type: "inputText", text: "The user reported completion. Verify the observable result before continuing." }]
+      }
+    });
+  });
+
+  it("exposes managed authentication only with an installed verifier", async () => {
+    const factory = new FakeFactory();
+    let verifyCount = 0;
+    const verifier: ManagedAuthenticationVerifier = {
+      id: "gmail-auth-check",
+      async verify() {
+        verifyCount += 1;
+        return { verified: true };
+      }
+    };
+    const target = {
+      id: "gmail",
+      label: "Google sign-in",
+      launch: { kind: "https_url" as const, url: "https://accounts.google.com/" },
+      allowedHosts: ["accounts.google.com"],
+      verifierId: verifier.id
+    };
+    const adapter = new CodexAppServerAdapter(config({
+      authHandoffEnabled: true,
+      managedAuthTargets: [target]
+    }), factory, new Map([[verifier.id, verifier]]));
+    const events: InteractiveProviderEvent[] = [];
+    const preflight = await adapter.preflight({ ...preflightInput(), requiredInteractionTypes: [] });
+    assert.equal(preflight.capabilities.interactionTypes.includes("authentication_handoff"), true);
+    const handle = await adapter.start({
+      ...preflightInput(), requiredInteractionTypes: [],
+      capabilities: preflight.capabilities, protocolVersion: "0.146.0",
+      emit: async (event) => { events.push(event); }
+    });
+    await factory.transport.emit({
+      id: "auth-1",
+      method: "item/tool/call",
+      params: {
+        tool: "ragenius_request_authentication_handoff",
+        arguments: { authentication_target_id: "gmail", instruction: "Complete Google sign-in." },
+        threadId: "thread-1",
+        turnId: "turn-1"
+      }
+    });
+    await adapter.respond(handle, userActionClaim(events[0]!.interaction!.interactionId, "authentication_handoff"));
+    assert.equal(verifyCount, 1);
+    assert.equal((factory.transport.responses[0]?.result as { success: boolean }).success, true);
+
+    const unavailable = new CodexAppServerAdapter(config({
+      authHandoffEnabled: true,
+      managedAuthTargets: [target]
+    }), new FakeFactory());
+    const unavailablePreflight = await unavailable.preflight({ ...preflightInput(), requiredInteractionTypes: [] });
+    assert.equal(unavailablePreflight.capabilities.interactionTypes.includes("authentication_handoff"), false);
+  });
+
   it("stages selected artifacts and references only their workspace-relative paths", async () => {
     const runRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ragenius-codex-interactive-"));
     try {
@@ -493,16 +626,36 @@ describe("Codex app-server adapter", () => {
 
 function config(overrides: Partial<ConstructorParameters<typeof CodexAppServerAdapter>[0]> = {}) {
   return {
+    authHandoffEnabled: false,
     enabled: true,
     command: "codex",
     initializationTimeoutMs: 5000,
     interactionTtlMs: 60000,
+    managedAuthTargets: [],
     maxDeltaBytes: 4096,
     maxLineBytes: 65536,
     maxStderrBytes: 65536,
+    mcpAuthAllowedHosts: [],
+    mcpElicitationEnabled: false,
     runRoot: ".test_tmp/codex-interactive-tests",
     supportedVersions: ["0.146.0"],
+    userActionEnabled: false,
     ...overrides
+  };
+}
+
+function userActionClaim(
+  interactionId: string,
+  type: "authentication_handoff" | "user_action_required"
+): ClaimedInteraction {
+  return {
+    idempotencyKey: `key-${interactionId}`,
+    interactionId,
+    responseSummary: { kind: "user_action", outcome: "completed" },
+    interaction: {
+      ...interactionRecord(interactionId, "approval"),
+      type
+    }
   };
 }
 

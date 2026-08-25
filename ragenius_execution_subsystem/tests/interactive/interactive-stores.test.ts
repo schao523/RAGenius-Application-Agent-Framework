@@ -239,6 +239,36 @@ describe("interactive agent stores", () => {
     assert.equal(records[1]?.state, "cancelled");
   });
 
+  it("releases only the matching resolving interaction for a retry", async () => {
+    const store = new InMemoryAgentInteractionStore();
+    await store.create(interactionInput("interaction_retry", "selection"));
+    const claimed = await store.claim({
+      ...scope,
+      expectedVersion: 1,
+      idempotencyKey: "response-key-retry",
+      interactionId: "interaction_retry",
+      now: new Date("2026-08-13T00:00:10.000Z"),
+      responseSummary: { completed: true, kind: "user_action" }
+    });
+    assert.equal(claimed.outcome, "claimed");
+
+    assert.equal(await store.release({
+      ...scope,
+      idempotencyKey: "wrong-key",
+      interactionId: "interaction_retry",
+      now: new Date("2026-08-13T00:00:11.000Z")
+    }), null);
+    const released = await store.release({
+      ...scope,
+      idempotencyKey: "response-key-retry",
+      interactionId: "interaction_retry",
+      now: new Date("2026-08-13T00:00:12.000Z")
+    });
+    assert.equal(released?.state, "pending");
+    assert.equal(released?.responseSummary, null);
+    assert.equal(released?.version, 3);
+  });
+
   it("appends monotonic events and deduplicates provider event references", async () => {
     const store = new InMemoryAgentEventStore();
     const first = await store.append({

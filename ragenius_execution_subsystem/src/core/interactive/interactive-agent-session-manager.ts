@@ -62,7 +62,7 @@ export interface RespondToInteractionInput extends ExecutionScope {
 }
 
 export type RespondToInteractionResult = {
-  outcome: "resolved" | "replay" | "conflict" | "expired" | "not_found";
+  outcome: "resolved" | "replay" | "conflict" | "expired" | "not_found" | "verification_failed";
 };
 
 export interface AgentChatFollowUpInput extends ExecutionScope {
@@ -341,12 +341,47 @@ export class InteractiveAgentSessionManager {
       );
       return { outcome: "conflict" };
     }
-    await active.adapter.respond(active.handle, {
-      idempotencyKey: input.idempotencyKey,
-      interaction: claim.record,
-      interactionId: input.interactionId,
-      responseSummary: input.responseSummary
-    });
+    try {
+      await active.adapter.respond(active.handle, {
+        idempotencyKey: input.idempotencyKey,
+        interaction: claim.record,
+        interactionId: input.interactionId,
+        responseSummary: input.responseSummary
+      });
+    } catch (error) {
+      if (isAuthenticationVerificationFailure(error)) {
+        const released = await this.interactionStore.release({
+          ...input,
+          idempotencyKey: input.idempotencyKey,
+          now
+        });
+        if (!released) {
+          await this.failAndTerminate(
+            input,
+            "AGENT_INTERACTION_STATE_INVALID",
+            "Authentication verification failed and the interaction could not be returned to pending."
+          );
+          return { outcome: "conflict" };
+        }
+        await this.eventStore.append({
+          ...input,
+          interactionId: input.interactionId,
+          occurredAt: now,
+          payload: {
+            code: "AUTHENTICATION_HANDOFF_NOT_VERIFIED",
+            message: "Authentication could not be verified. Complete sign-in and retry."
+          },
+          type: "warning"
+        });
+        return { outcome: "verification_failed" };
+      }
+      await this.failAndTerminate(
+        input,
+        "AGENT_INTERACTION_RESPONSE_REJECTED",
+        "The provider rejected the interaction response."
+      );
+      return { outcome: "conflict" };
+    }
     await this.interactionStore.resolve({
       ...input,
       now,
@@ -877,6 +912,10 @@ export class InteractiveAgentSessionManager {
       { state }
     );
   }
+}
+
+function isAuthenticationVerificationFailure(error: unknown): boolean {
+  return error instanceof Error && error.message === "AUTHENTICATION_HANDOFF_NOT_VERIFIED";
 }
 
 function appendFinalResponse(

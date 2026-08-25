@@ -287,6 +287,12 @@ export const registerInteractiveAgentRoutes: FastifyPluginAsync = async (app) =>
       if (result.outcome === "expired") {
         throw conflict("INTERACTION_EXPIRED", "The interaction has expired.");
       }
+      if (result.outcome === "verification_failed") {
+        throw conflict(
+          "AUTHENTICATION_HANDOFF_NOT_VERIFIED",
+          "Authentication could not be verified. Complete sign-in and retry."
+        );
+      }
       return reply.status(200).send({
         execution_id: params.execution_id,
         interaction_id: params.interaction_id,
