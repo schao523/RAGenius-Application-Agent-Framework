@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 import type { AppEnv } from "./env.js";
+import {
+  parseCodexManagedAuthenticationTargets,
+  parseExactAuthenticationHosts,
+  type CodexManagedAuthenticationTarget
+} from "../core/interactive/codex-managed-auth-targets.js";
 
 export interface BuilderRuntimeConfig {
   baseUrl?: string;
@@ -86,15 +91,20 @@ export interface CodexCliProviderConfig {
 }
 
 export interface CodexAppServerProviderConfig {
+  authHandoffEnabled: boolean;
   enabled: boolean;
   command: string;
   initializationTimeoutMs: number;
   interactionTtlMs: number;
+  managedAuthTargets: readonly CodexManagedAuthenticationTarget[];
   maxDeltaBytes: number;
   maxLineBytes: number;
   maxStderrBytes: number;
+  mcpAuthAllowedHosts: readonly string[];
+  mcpElicitationEnabled: boolean;
   runRoot: string;
   supportedVersions: string[];
+  userActionEnabled: boolean;
 }
 
 export interface OpenClawCliRuntimeConfig {
@@ -237,15 +247,24 @@ export function buildProviderRuntimeConfig(
 ): ProviderRuntimeConfig {
   return {
     codexAppServer: {
+      authHandoffEnabled: env.CODEX_INTERACTIVE_AUTH_HANDOFF_ENABLED,
       enabled: env.CODEX_APP_SERVER_INTERACTIVE_ENABLED,
       command: env.CODEX_APP_SERVER_COMMAND,
       initializationTimeoutMs: env.CODEX_APP_SERVER_INITIALIZATION_TIMEOUT_MS,
       interactionTtlMs: env.CODEX_APP_SERVER_INTERACTION_TTL_MS,
+      managedAuthTargets: parseCodexManagedAuthenticationTargets(
+        env.CODEX_MANAGED_AUTH_TARGETS_JSON
+      ),
       maxDeltaBytes: env.CODEX_APP_SERVER_MAX_DELTA_BYTES,
       maxLineBytes: env.CODEX_APP_SERVER_MAX_LINE_BYTES,
       maxStderrBytes: env.CODEX_APP_SERVER_MAX_STDERR_BYTES,
+      mcpAuthAllowedHosts: parseExactAuthenticationHosts(
+        env.CODEX_MCP_AUTH_ALLOWED_HOSTS_JSON
+      ),
+      mcpElicitationEnabled: env.CODEX_MCP_ELICITATION_ENABLED,
       runRoot: env.CODEX_RUN_ROOT,
-      supportedVersions: splitCsv(env.CODEX_APP_SERVER_SUPPORTED_VERSIONS)
+      supportedVersions: splitCsv(env.CODEX_APP_SERVER_SUPPORTED_VERSIONS),
+      userActionEnabled: env.CODEX_INTERACTIVE_USER_ACTION_ENABLED
     },
     codexCli: {
       enabled: env.CODEX_CLI_ENABLED,

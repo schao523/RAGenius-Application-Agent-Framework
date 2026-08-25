@@ -50,9 +50,14 @@ describe("runtime config", () => {
     assert.equal(defaults.providers.codexCli.maxOutputBytes, 16384);
     assert.equal(defaults.providers.codexCli.sandboxMode, "workspace-write");
     assert.equal(defaults.providers.codexAppServer.enabled, false);
-      assert.equal(defaults.providers.codexAppServer.command, "codex");
-      assert.equal(defaults.providers.codexAppServer.runRoot, "storage/codex-runs");
+    assert.equal(defaults.providers.codexAppServer.command, "codex");
+    assert.equal(defaults.providers.codexAppServer.runRoot, "storage/codex-runs");
     assert.deepEqual(defaults.providers.codexAppServer.supportedVersions, ["0.146.0"]);
+    assert.equal(defaults.providers.codexAppServer.mcpElicitationEnabled, false);
+    assert.equal(defaults.providers.codexAppServer.authHandoffEnabled, false);
+    assert.equal(defaults.providers.codexAppServer.userActionEnabled, false);
+    assert.deepEqual(defaults.providers.codexAppServer.mcpAuthAllowedHosts, []);
+    assert.deepEqual(defaults.providers.codexAppServer.managedAuthTargets, []);
     assert.deepEqual(defaults.agentSkills.codex.inventory, {
       maxStderrBytes: 65536,
       maxStdoutBytes: 1048576,
@@ -66,6 +71,17 @@ describe("runtime config", () => {
       CODEX_RUN_RETENTION_HOURS: "12",
       CODEX_MAX_OUTPUT_BYTES: "8192",
       CODEX_CLI_SANDBOX_MODE: "read-only",
+      CODEX_MCP_ELICITATION_ENABLED: "true",
+      CODEX_INTERACTIVE_AUTH_HANDOFF_ENABLED: "true",
+      CODEX_INTERACTIVE_USER_ACTION_ENABLED: "true",
+      CODEX_MCP_AUTH_ALLOWED_HOSTS_JSON: JSON.stringify(["accounts.google.com"]),
+      CODEX_MANAGED_AUTH_TARGETS_JSON: JSON.stringify([{
+        id: "gmail",
+        label: "Google sign-in",
+        launch: { kind: "https_url", url: "https://accounts.google.com/" },
+        allowedHosts: ["accounts.google.com"],
+        verifierId: "gmail-auth-check"
+      }]),
       CODEX_AGENT_SKILL_INVENTORY_TIMEOUT_MS: "7000",
       CODEX_AGENT_SKILL_INVENTORY_MAX_STDOUT_BYTES: "32768",
       CODEX_AGENT_SKILL_INVENTORY_MAX_STDERR_BYTES: "2048",
@@ -83,6 +99,11 @@ describe("runtime config", () => {
     assert.equal(configured.providers.codexCli.runRetentionHours, 12);
     assert.equal(configured.providers.codexCli.maxOutputBytes, 8192);
     assert.equal(configured.providers.codexCli.sandboxMode, "read-only");
+    assert.equal(configured.providers.codexAppServer.mcpElicitationEnabled, true);
+    assert.equal(configured.providers.codexAppServer.authHandoffEnabled, true);
+    assert.equal(configured.providers.codexAppServer.userActionEnabled, true);
+    assert.deepEqual(configured.providers.codexAppServer.mcpAuthAllowedHosts, ["accounts.google.com"]);
+    assert.equal(configured.providers.codexAppServer.managedAuthTargets[0]?.id, "gmail");
     assert.deepEqual(configured.agentSkills.codex.inventory, {
       maxStderrBytes: 2048,
       maxStdoutBytes: 32768,
