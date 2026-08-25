@@ -14,6 +14,11 @@ This contract extends:
 - `docs/agent-mode-artifact-creation-reuse-contract.md`
 - `docs/openclaw-agent-execution-integration-contract.md`
 
+Codex MCP elicitation and managed authentication/manual-action behavior are
+further specified by:
+
+- `docs/codex-mcp-elicitation-interaction-addendum.md`
+
 Those contracts remain authoritative unless this addendum explicitly changes
 interactive lifecycle or provider-session behavior.
 

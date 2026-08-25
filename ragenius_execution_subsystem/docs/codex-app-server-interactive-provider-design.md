@@ -7,6 +7,10 @@ Date: 2026-08-13
 Add a capability-gated Codex interactive adapter without replacing the existing
 autonomous `codex exec --json` provider.
 
+Generic MCP elicitation, authentication handoff, managed user actions, and
+required-operation outcome normalization are further specified by
+`docs/codex-mcp-elicitation-interaction-addendum.md`.
+
 ## Observed Basis
 
 Codex CLI `0.146.0` app-server passed live tests for JSON-RPC initialization,
