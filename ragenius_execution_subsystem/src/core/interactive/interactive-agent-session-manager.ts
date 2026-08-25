@@ -560,10 +560,14 @@ export class InteractiveAgentSessionManager {
         );
         return;
       }
+      const { presentation, ...interactionData } = parsedInteraction.data;
       const interaction = await this.interactionStore.create({
         ...scope,
         agentSessionId: (await this.requireSession(scope)).agentSessionId,
-        ...parsedInteraction.data,
+        ...interactionData,
+        ...(presentation !== undefined
+          ? { presentation }
+          : {}),
         options: parsedInteraction.data.options.map((option) => ({
           id: option.id,
           label: option.label,

@@ -116,6 +116,13 @@ export interface AgentInteractionOption {
   label: string;
 }
 
+export interface AgentInteractionPresentation {
+  completionLabel?: string | undefined;
+  launchAvailable?: boolean | undefined;
+  targetHost?: string | undefined;
+  targetLabel?: string | undefined;
+}
+
 export interface AgentInteractionRecord extends ExecutionScope {
   agentSessionId: string;
   allowsFreeText: boolean;
@@ -123,6 +130,7 @@ export interface AgentInteractionRecord extends ExecutionScope {
   expiresAt: Date;
   interactionId: string;
   options: AgentInteractionOption[];
+  presentation?: AgentInteractionPresentation | null;
   policyBindingHash: string;
   prompt: string;
   providerCorrelationRef: string;

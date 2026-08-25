@@ -114,6 +114,7 @@ model AgentInteraction {
   state                  String
   prompt                 String
   options                Json
+  presentation           Json?
   allowsFreeText         Boolean   @map("allows_free_text")
   secretInput            Boolean   @default(false) @map("secret_input")
   providerCorrelationRef String    @map("provider_correlation_ref")

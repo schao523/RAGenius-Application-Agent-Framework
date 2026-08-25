@@ -7,6 +7,7 @@ import type {
 } from "./agent-interaction-store.js";
 import type {
   AgentInteractionOption,
+  AgentInteractionPresentation,
   AgentInteractionRecord,
   ExecutionScope
 } from "./interactive-agent-types.js";
@@ -25,6 +26,7 @@ export interface AgentInteractionRow {
   id: string;
   idempotencyKey: string | null;
   options: unknown;
+  presentation: unknown;
   policyBindingHash: string;
   prompt: string;
   providerCorrelationRef: string;
@@ -93,6 +95,7 @@ export class PrismaAgentInteractionStore implements AgentInteractionStore {
           state: "pending",
           prompt: input.prompt,
           options: input.options,
+          presentation: input.presentation,
           allowsFreeText: input.allowsFreeText,
           secretInput: false,
           providerCorrelationRef: input.providerCorrelationRef,
@@ -226,6 +229,12 @@ function asSummary(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function asPresentation(value: unknown): AgentInteractionPresentation | null {
+  return typeof value === "object" && value !== null
+    ? (value as AgentInteractionPresentation)
+    : null;
+}
+
 function toRecord(row: AgentInteractionRow): AgentInteractionRecord {
   return {
     agentSessionId: row.agentSessionId,
@@ -236,6 +245,7 @@ function toRecord(row: AgentInteractionRow): AgentInteractionRecord {
     expiresAt: row.expiresAt,
     interactionId: row.id,
     options: asOptions(row.options),
+    presentation: asPresentation(row.presentation),
     policyBindingHash: row.policyBindingHash,
     prompt: row.prompt,
     providerCorrelationRef: row.providerCorrelationRef,

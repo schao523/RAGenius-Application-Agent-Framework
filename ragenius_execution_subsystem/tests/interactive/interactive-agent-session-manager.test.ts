@@ -265,6 +265,33 @@ describe("interactive Agent session manager", () => {
     assert.equal(result?.errors?.[0]?.code, "PROVIDER_COMPLETED_WITH_PENDING_INTERACTION");
   });
 
+  it("rejects protected values in interaction presentation before persistence", async () => {
+    const harness = await createHarness();
+    await harness.manager.start({
+      policy,
+      providerContext,
+      request,
+      requiredInteractionTypes: [],
+      scope
+    });
+
+    await harness.adapter.send({
+      ...interactionEvent("interaction-auth", "authentication_handoff"),
+      interaction: {
+        ...interactionEvent("interaction-auth", "authentication_handoff").interaction!,
+        presentation: {
+          launchAvailable: true,
+          targetLabel: "Unsafe sign-in",
+          url: "https://accounts.example.test/?token=secret"
+        } as never
+      }
+    });
+    assert.deepEqual(await harness.interactionStore.list(scope), []);
+    const result = await harness.executionStore.get(scope);
+    assert.equal(result?.status, "failed");
+    assert.equal(result?.errors?.[0]?.code, "INVALID_PROVIDER_INTERACTION");
+  });
+
   it("returns the accumulated final response without creating an artifact when saving is off", async () => {
     const harness = await createHarness();
     await harness.manager.start({

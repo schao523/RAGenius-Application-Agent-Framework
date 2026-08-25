@@ -74,6 +74,22 @@ function publicInteraction(record: AgentInteractionRecord): Record<string, unkno
     expires_at: record.expiresAt.toISOString(),
     interaction_id: record.interactionId,
     options: record.options.map((option) => ({ ...option })),
+    presentation: record.presentation
+      ? {
+          ...(record.presentation.completionLabel
+            ? { completion_label: record.presentation.completionLabel }
+            : {}),
+          ...(record.presentation.launchAvailable !== undefined
+            ? { launch_available: record.presentation.launchAvailable }
+            : {}),
+          ...(record.presentation.targetHost
+            ? { target_host: record.presentation.targetHost }
+            : {}),
+          ...(record.presentation.targetLabel
+            ? { target_label: record.presentation.targetLabel }
+            : {})
+        }
+      : null,
     prompt: record.prompt,
     resolved_at: record.resolvedAt?.toISOString() ?? null,
     sequence: record.sequence,

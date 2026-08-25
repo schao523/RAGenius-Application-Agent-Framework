@@ -68,6 +68,7 @@ export class InMemoryAgentInteractionStore implements AgentInteractionStore {
       ...input,
       createdAt: now,
       options: input.options.map((option) => ({ ...option })),
+      presentation: input.presentation ? { ...input.presentation } : null,
       resolvedAt: null,
       responseSummary: null,
       secretInput: false,
@@ -183,6 +184,7 @@ function cloneInteraction(record: AgentInteractionRecord): AgentInteractionRecor
   return {
     ...record,
     options: record.options.map((option) => ({ ...option })),
+    presentation: record.presentation ? { ...record.presentation } : null,
     responseSummary: record.responseSummary
       ? { ...record.responseSummary }
       : null

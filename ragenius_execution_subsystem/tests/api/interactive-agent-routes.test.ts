@@ -96,6 +96,12 @@ class RouteTestAdapter implements InteractiveAgentAdapter {
         interactionId: "interaction_001",
         options: [],
         policyBindingHash: "protected-policy-hash",
+        presentation: {
+          completionLabel: "Authentication completed",
+          launchAvailable: true,
+          targetHost: "accounts.google.com",
+          targetLabel: "Google sign-in"
+        },
         prompt: "Allow creating one report?",
         providerCorrelationRef: "protected-provider-request",
         type: "approval"
@@ -269,6 +275,12 @@ describe("interactive Agent routes", () => {
     assert.equal(response.json().items[0].interaction_id, "interaction_001");
     assert.equal(response.json().items[0].provider_correlation_ref, undefined);
     assert.equal(response.json().items[0].policy_binding_hash, undefined);
+    assert.deepEqual(response.json().items[0].presentation, {
+      completion_label: "Authentication completed",
+      launch_available: true,
+      target_host: "accounts.google.com",
+      target_label: "Google sign-in"
+    });
     assert.equal(wrongScope.statusCode, 404);
   });
 

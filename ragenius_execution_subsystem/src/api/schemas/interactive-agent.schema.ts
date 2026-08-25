@@ -9,6 +9,13 @@ export const providerInteractionRequestSchema = z.object({
     id: z.string().trim().min(1).max(200),
     label: z.string().trim().min(1).max(200)
   }).strict()).max(20),
+  presentation: z.object({
+    completionLabel: z.string().trim().min(1).max(100).optional(),
+    launchAvailable: z.boolean().optional(),
+    targetHost: z.string().trim().min(1).max(253)
+      .regex(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/).optional(),
+    targetLabel: z.string().trim().min(1).max(200).optional()
+  }).strict().nullable().optional(),
   policyBindingHash: z.string().trim().min(1).max(512),
   prompt: z.string().trim().min(1).max(2000),
   providerCorrelationRef: z.string().trim().min(1).max(512),

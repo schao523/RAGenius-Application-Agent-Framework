@@ -53,6 +53,7 @@ export interface ProviderInteractionRequest {
   expiresAt: Date;
   interactionId: string;
   options: AgentInteractionOption[];
+  presentation?: AgentInteractionRecord["presentation"];
   policyBindingHash: string;
   prompt: string;
   providerCorrelationRef: string;
