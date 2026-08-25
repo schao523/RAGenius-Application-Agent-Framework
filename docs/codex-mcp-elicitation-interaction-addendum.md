@@ -1,11 +1,11 @@
-# Codex MCP Elicitation Interaction Addendum
+# Codex Interactive Skill, Plugin, And MCP Interaction Addendum
 
 Date: 2026-08-25
 
 ## Status
 
 Normative contract and execution-subsystem design addendum for generic MCP
-elicitation in Codex Interactive Agent mode.
+elicitation and managed skill/plugin handoffs in Codex Interactive Agent mode.
 
 This addendum extends:
 
@@ -18,14 +18,14 @@ Codex MCP elicitation handling or interactive result normalization.
 
 ## Purpose
 
-Codex plugins and MCP servers may request confirmation, bounded input,
+Codex skills, plugins, and MCP servers may require confirmation, bounded input,
 authentication, or a manual user action after a turn has started. RAGenius must
-mediate supported requests as durable provider-neutral interactions instead of
-rejecting them, parsing assistant prose, exposing secrets, or reporting a
-blocked operation as successful.
+mediate supported structured requests as durable provider-neutral interactions
+instead of rejecting them, parsing assistant prose, exposing secrets, or
+reporting a blocked operation as successful.
 
-The implementation is generic MCP support. Gmail is the first live acceptance
-case, not a special-case provider implementation.
+The implementation is generic Codex interactive protocol support. Gmail is the
+first live MCP acceptance case, not a special-case provider implementation.
 
 ## Observed Basis
 
@@ -93,6 +93,8 @@ The MVP adds:
   Agent mode;
 - conservative normalization to `approval`, `selection`, `clarification`, or
   `authentication_handoff`;
+- a managed `ragenius_request_authentication_handoff` tool for instruction
+  skills and plugin guidance that cannot initiate MCP URL elicitation;
 - a separate managed `ragenius_request_user_action` tool for bounded manual
   actions that MCP elicitation cannot classify safely;
 - same-turn persistence and resolution through the existing interaction state
@@ -127,6 +129,19 @@ runtime adapter capability are sufficient to enable the supported flow.
 Codex plugins, skills, and MCP servers may initiate a supported structured
 request, but they do not control RAGenius authorization or persistence.
 
+The supported request sources are:
+
+| Source | Structured mechanism | Eligible normalized types |
+| --- | --- | --- |
+| MCP server | `mcpServer/elicitation/request` | `approval`, `selection`, `clarification`, `authentication_handoff` |
+| Instruction skill | managed Codex dynamic tool | `authentication_handoff`, `user_action_required` |
+| Plugin instructions | managed Codex dynamic tool | `authentication_handoff`, `user_action_required` |
+| Assistant prose | none | none |
+
+An underlying MCP server remains the preferred source when it can provide an
+authoritative provider request. Managed tools cover instruction-driven flows
+without treating prose as protocol.
+
 ## Runtime Capability Contract
 
 Codex preflight may advertise these interaction types only when the running
@@ -153,14 +168,34 @@ Capability advertisement is controlled by these execution-subsystem settings:
 
 ```text
 CODEX_MCP_ELICITATION_ENABLED=false
-CODEX_MCP_AUTH_HANDOFF_ENABLED=false
-CODEX_MCP_USER_ACTION_ENABLED=false
+CODEX_INTERACTIVE_AUTH_HANDOFF_ENABLED=false
+CODEX_INTERACTIVE_USER_ACTION_ENABLED=false
 CODEX_MCP_AUTH_ALLOWED_HOSTS_JSON=[]
+CODEX_MANAGED_AUTH_TARGETS_JSON=[]
 ```
 
 The host allowlist is a JSON array of exact lowercase ASCII host names. Empty
 or invalid configuration permits no authentication launch. Wildcards, URL
 paths, query fragments, and user-info components are not valid entries.
+
+The managed target registry is a JSON array with this schema:
+
+```ts
+type ManagedAuthenticationTarget = {
+  id: string;
+  label: string;
+  launch:
+    | { kind: "https_url"; url: string }
+    | { kind: "provider_window"; provider: "computer_use"; application: string };
+  allowedHosts: string[];
+  verifierId: string;
+};
+```
+
+Target ids, launch definitions, and verifier ids are administrator-controlled
+runtime configuration. Skills, plugins, user prompts, and models cannot create
+or modify registry entries. Every `verifierId` must resolve to an installed
+trusted read-only verifier during preflight; otherwise the target is disabled.
 
 ## Canonical Normalized Request
 
@@ -195,6 +230,20 @@ type NormalizedMcpElicitation = {
 `providerRequestId`, the complete authentication URL, raw schema, and raw
 metadata remain protected execution-subsystem state. They are not written to
 public logs or returned in ordinary execution results.
+
+Managed dynamic-tool requests normalize through the same interaction record
+but use a tool-call id as `providerRequestId` and one of these response
+bindings:
+
+```ts
+type ManagedHandoffResponseBinding =
+  | {
+      kind: "managed_authentication";
+      targetId: string;
+      verifierId: string;
+    }
+  | { kind: "managed_user_action" };
+```
 
 ## Classification Rules
 
@@ -249,6 +298,50 @@ The full URL is protected service data. It may transit the trusted app backend
 only in a no-store service response used immediately for a scoped browser
 redirect. The interaction record may expose only the approved host and a
 bounded label.
+
+### Managed Authentication Handoff
+
+Instruction skills and plugin instructions may ask Codex to invoke a second
+managed dynamic tool when authentication is required but no MCP URL
+elicitation is available:
+
+```json
+{
+  "type": "function",
+  "name": "ragenius_request_authentication_handoff",
+  "description": "Pause for sign-in or account consent at an administrator-approved authentication target. Never request credentials in RAGenius.",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["authentication_target_id", "instruction"],
+    "properties": {
+      "authentication_target_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      },
+      "instruction": { "type": "string", "maxLength": 2000 },
+      "completion_label": { "type": "string", "maxLength": 100 }
+    }
+  }
+}
+```
+
+The adapter resolves `authentication_target_id` only against
+`CODEX_MANAGED_AUTH_TARGETS_JSON`. The model cannot provide a URL, executable,
+application path, verifier, credential field, or callback. Unknown or disabled
+target ids fail with `AUTHENTICATION_TARGET_NOT_APPROVED`.
+
+The adapter creates `authentication_handoff` using the registry label and
+protected launch definition. After the user reports completion, the registered
+read-only verifier must succeed before the same Codex turn receives a
+successful tool result. Verification failure keeps the interaction pending
+when the provider request remains resumable; otherwise the execution fails.
+
+The managed tool is exposed only when authentication handoff is enabled and at
+least one registry target passes preflight. Trusted turn guidance lists only
+eligible target ids and labels. A skill or plugin may recommend a target but
+cannot make an unregistered target eligible.
 
 ### User Action
 
@@ -308,6 +401,11 @@ type PendingCodexProviderRequest = {
     | { kind: "approval" }
     | { kind: "field"; propertyName: string }
     | { kind: "authentication_url"; elicitationId: string }
+    | {
+        kind: "managed_authentication";
+        targetId: string;
+        verifierId: string;
+      }
     | { kind: "managed_user_action" };
 };
 ```
@@ -332,6 +430,8 @@ The existing provider-neutral responses translate as follows:
 | `clarification.text` | `{ action: "accept", content: { [propertyName]: text }, _meta: null }` |
 | authentication `completed` | `{ action: "accept", content: null, _meta: null }`, followed by non-mutating authentication verification |
 | authentication `cancelled` | `{ action: "cancel", content: null, _meta: null }` |
+| managed authentication `completed` | successful managed-tool result only after the registered verifier succeeds |
+| managed authentication `cancelled` | cancelled managed-tool result |
 | user action `completed` | successful managed-tool result, followed by provider verification when available |
 | user action `cancelled` | cancelled managed-tool result |
 
@@ -380,6 +480,11 @@ arbitrary provider HTML form.
 
 Interactive Agent mode may show one generic notice that sign-in or manual
 actions can occur. Per-skill capability labels are deferred.
+
+For a managed authentication target, the panel shows its administrator-defined
+label rather than an MCP server name. The app does not distinguish whether the
+request originated from a skill, plugin instruction, or MCP server because the
+runtime interaction semantics are identical.
 
 ## Authentication Launch Contract
 
@@ -439,6 +544,7 @@ diagnostic output but does not change the authoritative status.
 | `MCP_ELICITATION_SCOPE_MISMATCH` | The request does not belong to the active thread or turn. |
 | `MCP_ELICITATION_TARGET_BLOCKED` | The authentication URL is not an approved HTTPS target. |
 | `MCP_ELICITATION_RESPONSE_REJECTED` | Codex app-server rejected the normalized response. |
+| `AUTHENTICATION_TARGET_NOT_APPROVED` | A managed skill/plugin request named an unknown or disabled authentication target. |
 | `AUTHENTICATION_HANDOFF_NOT_VERIFIED` | The user completed the handoff but provider authentication could not be verified. |
 | `USER_ACTION_NOT_VERIFIED` | A required manual action was acknowledged but its observable result was absent. |
 | `MCP_OPERATION_BLOCKED` | A required MCP operation was denied, cancelled, or otherwise blocked. |
@@ -482,6 +588,8 @@ tokens, and provider credentials.
 ### Protocol And Unit Tests
 
 - Decode all three generated `0.146.0` modes.
+- Resolve managed authentication target ids without accepting model-provided
+  URLs, verifier ids, or application paths.
 - Normalize confirmation, one-field selection, and one-field clarification.
 - Reject secret fields, multiple fields, unsupported widgets, oversized
   payloads, scope mismatch, and unapproved URLs.
@@ -508,9 +616,14 @@ tokens, and provider credentials.
 3. Gmail send approval cancelled: execution cancellation is authoritative.
 4. Authentication URL handoff: sign-in completes outside RAGenius and a
    non-mutating provider check succeeds.
-5. Computer Use manual action: a file-selection or browser-permission handoff
+5. Managed skill authentication: an instruction-only skill requests an
+   approved target, the registered verifier succeeds, and the same turn
+   resumes.
+6. Unknown managed target: the request fails without opening a URL or
+   application.
+7. Computer Use manual action: a file-selection or browser-permission handoff
    resumes the same Codex turn.
-6. Duplicate response: only one provider response and at most one external
+8. Duplicate response: only one provider response and at most one external
    write occur.
 
 Live external-write tests use a controlled account and uniquely identifiable
@@ -524,8 +637,10 @@ of duplicates.
 2. Enable approval, selection, and clarification for Codex `0.146.0`.
 3. Run Gmail accept/deny/cancel live acceptance.
 4. Enable URL authentication handoff after launch-target validation passes.
-5. Enable managed user actions after same-turn Computer Use testing passes.
-6. Advertise each capability only after its live acceptance evidence is
+5. Enable managed skill/plugin authentication after registry and verifier
+   acceptance passes.
+6. Enable managed user actions after same-turn Computer Use testing passes.
+7. Advertise each capability only after its live acceptance evidence is
    recorded.
 
 Builder metadata and OpenClaw parity remain separate future decisions.
