@@ -128,6 +128,31 @@ class FakeFactory implements CodexAppServerTransportFactory {
 }
 
 describe("Codex app-server codec", () => {
+  it("projects bounded MCP operation evidence without arguments or results", () => {
+    const codec = new CodexAppServerCodec({ maxLineBytes: 4096 });
+    const event = codec.normalizeNotification({
+      method: "item/completed",
+      params: { item: {
+        id: "mcp-1",
+        type: "mcpToolCall",
+        toolName: "gmail.send_message",
+        operationId: "agent_external_write",
+        status: "failed",
+        error: { code: "permission_denied", message: "secret detail" },
+        arguments: { token: "secret" },
+        result: { message_id: "private" }
+      } }
+    });
+    assert.equal(event?.type, "tool_completed");
+    assert.deepEqual(event?.payload, {
+      item_id: "mcp-1",
+      item_type: "mcpToolCall",
+      tool_name: "gmail.send_message",
+      status: "failed",
+      operation_id: "agent_external_write",
+      error_code: "permission_denied"
+    });
+  });
   it("frames correlated JSON-RPC messages and notifications", () => {
     const codec = new CodexAppServerCodec({ maxLineBytes: 1024 });
     assert.equal(codec.encodeRequest(7, "initialize", { clientInfo: { name: "RAGenius" } }),
@@ -271,6 +296,43 @@ describe("Codex app-server adapter", () => {
     const turnText = turnParams.input[0]?.text ?? "";
     assert.match(turnText, /Allowed interaction types: selection/);
     assert.match(turnText, /MUST use `ragenius_request_input`/);
+  });
+
+  it("does not let turn completion override a denied required MCP operation", async () => {
+    const factory = new FakeFactory();
+    const adapter = new CodexAppServerAdapter(config(), factory);
+    const events: InteractiveProviderEvent[] = [];
+    await adapter.start({
+      ...preflightInput(),
+      providerContext: {
+        ...providerContext,
+        operation_plan: [{
+          operation_id: "agent_external_write",
+          kind: "external_write",
+          description: "Send one message.",
+          required: true,
+          minimum_verification: "provider_reported"
+        }]
+      },
+      capabilities: capabilities(),
+      protocolVersion: "0.146.0",
+      emit: async (event) => { events.push(event); }
+    });
+    await factory.transport.emit({
+      method: "item/completed",
+      params: { item: {
+        id: "mcp-1", type: "mcpToolCall", toolName: "gmail.send_message",
+        operationId: "agent_external_write", status: "failed",
+        error: { code: "permission_denied" }
+      } }
+    });
+    await factory.transport.emit({
+      method: "turn/completed",
+      params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } }
+    });
+    assert.equal(events.at(-1)?.type, "run_completed");
+    assert.equal(events.at(-1)?.payload.status, "failed");
+    assert.equal(events.at(-1)?.payload.failure_code, "MCP_OPERATION_BLOCKED");
   });
 
   it("maps multiple approvals and resolves only one-time decisions", async () => {

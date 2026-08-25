@@ -83,7 +83,13 @@ export class CodexAppServerCodec {
       };
     }
     if (method === "item/completed") {
-      return { type: "message_completed", payload: publicItemPayload(params) };
+      const payload = publicItemPayload(params);
+      return {
+        type: payload.item_type === "mcpToolCall" || payload.item_type === "mcp_tool_call"
+          ? "tool_completed"
+          : "message_completed",
+        payload
+      };
     }
     if (method === "item/started") {
       return { type: "tool_started", payload: publicItemPayload(params) };
@@ -120,10 +126,23 @@ function publicTurnPayload(params: Record<string, unknown>): Record<string, unkn
 
 function publicItemPayload(params: Record<string, unknown>): Record<string, unknown> {
   const item = recordValue(params.item);
+  const error = recordValue(item.error);
   return {
     ...(stringValue(item.id) ? { item_id: stringValue(item.id) } : {}),
-    ...(stringValue(item.type) ? { item_type: stringValue(item.type) } : {})
+    ...(stringValue(item.type) ? { item_type: stringValue(item.type) } : {}),
+    ...(boundedField(item.toolName || item.name, 200) ? { tool_name: boundedField(item.toolName || item.name, 200) } : {}),
+    ...(boundedField(item.status, 40) ? { status: boundedField(item.status, 40) } : {}),
+    ...(boundedField(item.operationId || item.operation_id, 200)
+      ? { operation_id: boundedField(item.operationId || item.operation_id, 200) }
+      : {}),
+    ...(boundedField(error.code || item.errorCode, 100)
+      ? { error_code: boundedField(error.code || item.errorCode, 100) }
+      : {})
   };
+}
+
+function boundedField(value: unknown, maxLength: number): string {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
 function publicMessage(params: Record<string, unknown>): string {

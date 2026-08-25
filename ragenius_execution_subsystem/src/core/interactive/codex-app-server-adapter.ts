@@ -46,6 +46,11 @@ import {
 } from "../agents/codex-workspace.js";
 import type { CodexStagedArtifact } from "../agents/codex-cli-types.js";
 import type { AgentInteractionType } from "./interactive-agent-types.js";
+import {
+  evaluateCodexInteractiveOperations,
+  type CodexMcpToolOutcome
+} from "./codex-interactive-result-evaluator.js";
+import type { AgentOperationPlanItem } from "../agents/agent-provider-context.js";
 
 export interface CodexAppServerInteractiveConfig {
   authHandoffEnabled?: boolean;
@@ -100,6 +105,8 @@ type CodexProtectedHandle = {
   messageDelta: string;
   messageDeltaTruncated: boolean;
   messageQueue: Promise<void>;
+  mcpOutcomes: CodexMcpToolOutcome[];
+  operationPlan: AgentOperationPlanItem[];
   pending: Map<string, PendingProviderRequest>;
   threadId: string | null;
   turnId: string | null;
@@ -179,6 +186,8 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
       messageDelta: "",
       messageDeltaTruncated: false,
       messageQueue: Promise.resolve(),
+      mcpOutcomes: [],
+      operationPlan: input.providerContext.operation_plan.map((operation) => ({ ...operation })),
       pending: new Map(),
       state: "running",
       threadId: null,
@@ -402,6 +411,28 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
       return;
     }
     await flushMessageDelta(state);
+    if (event.type === "tool_completed" && isMcpToolPayload(event.payload)) {
+      state.mcpOutcomes.push(mcpOutcomeFromPayload(event.payload));
+    }
+    if (event.type === "run_completed" && state.mcpOutcomes.length > 0) {
+      const evaluation = evaluateCodexInteractiveOperations({
+        operationPlan: state.operationPlan,
+        outcomes: state.mcpOutcomes
+      });
+      event.payload = {
+        ...event.payload,
+        status: evaluation.statusOverride,
+        operation_verification: evaluation.operationVerification,
+        ...(evaluation.failureCode
+          ? {
+              failure_code: evaluation.failureCode,
+              summary: evaluation.failureCode === "MCP_OPERATION_BLOCKED"
+                ? "A required MCP operation was blocked."
+                : "Required MCP operation evidence is incomplete."
+            }
+          : {})
+      };
+    }
     if (event.type === "run_completed") state.state = event.payload.status === "failed" ? "failed" : "completed";
     if (event.type === "run_cancelled") state.state = "cancelled";
     await state.emit(event);
@@ -717,6 +748,30 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
     const result = await verifier.verify({ executionId, target });
     if (!result.verified) throw new Error("AUTHENTICATION_HANDOFF_NOT_VERIFIED");
   }
+}
+
+function isMcpToolPayload(payload: Record<string, unknown>): boolean {
+  return payload.item_type === "mcpToolCall" || payload.item_type === "mcp_tool_call";
+}
+
+function mcpOutcomeFromPayload(payload: Record<string, unknown>): CodexMcpToolOutcome {
+  const rawStatus = stringValue(payload.status);
+  const errorCode = stringValue(payload.error_code);
+  const status: CodexMcpToolOutcome["status"] =
+    rawStatus === "completed" || rawStatus === "success"
+      ? "completed"
+      : rawStatus === "cancelled"
+        ? "cancelled"
+        : errorCode === "permission_denied" || rawStatus === "denied"
+          ? "denied"
+          : "failed";
+  return {
+    ...(errorCode ? { errorCode } : {}),
+    itemId: stringValue(payload.item_id),
+    ...(stringValue(payload.operation_id) ? { operationId: stringValue(payload.operation_id) } : {}),
+    status,
+    toolName: stringValue(payload.tool_name)
+  };
 }
 
 function buildInteractiveTurnText(
