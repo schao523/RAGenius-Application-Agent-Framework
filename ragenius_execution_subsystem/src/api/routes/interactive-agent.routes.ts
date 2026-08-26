@@ -101,7 +101,7 @@ function publicInteraction(record: AgentInteractionRecord): Record<string, unkno
   };
 }
 
-const PROTECTED_EVENT_PAYLOAD_KEYS = /^(?:credential|policy_binding_hash|provider_correlation_ref|provider_event_ref|provider_run_ref|provider_session_ref|provider_turn_ref|run_id|runid|secret|session_key|sessionkey|token)$/i;
+const PROTECTED_EVENT_PAYLOAD_KEYS = /^(?:_meta|auth_url|credential|elicitation_schema|launch_url|policy_binding_hash|provider_correlation_ref|provider_event_ref|provider_run_ref|provider_session_ref|provider_turn_ref|query_string|redirect_url|run_id|runid|schema|secret|session_key|sessionkey|token)$/i;
 
 function publicEventPayload(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(publicEventPayload);

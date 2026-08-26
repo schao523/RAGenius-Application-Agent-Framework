@@ -375,6 +375,9 @@ describe("interactive Agent routes", () => {
       occurredAt: new Date(),
       payload: {
         run_id: "provider-run-secret",
+        launch_url: "https://accounts.example/signin?token=secret",
+        _meta: { token: "metadata-secret" },
+        schema: { properties: { password: { type: "string" } } },
         nested: { provider_session_ref: "provider-session-secret", status: "ok" }
       },
       providerEventRef: "provider-event-secret",
@@ -392,6 +395,9 @@ describe("interactive Agent routes", () => {
     assert.equal(serialized.includes("provider-run-secret"), false);
     assert.equal(serialized.includes("provider-session-secret"), false);
     assert.equal(serialized.includes("provider-event-secret"), false);
+    assert.equal(serialized.includes("accounts.example"), false);
+    assert.equal(serialized.includes("metadata-secret"), false);
+    assert.equal(serialized.includes("password"), false);
     assert.equal(serialized.includes('"status":"ok"'), true);
   });
 

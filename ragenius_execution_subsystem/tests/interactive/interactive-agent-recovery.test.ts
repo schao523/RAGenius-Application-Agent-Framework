@@ -98,7 +98,7 @@ describe("interactive Agent restart recovery", () => {
         capabilitySnapshot: {
           cancellation: true,
           eventReplay: "none",
-          interactionTypes: ["approval"],
+          interactionTypes: ["authentication_handoff"],
           protocolTransport: true,
           reconnectReconciliation: false,
           sameSessionContinuation: true,
@@ -119,11 +119,17 @@ describe("interactive Agent restart recovery", () => {
           allowsFreeText: false,
           expiresAt: new Date("2099-01-01T00:00:00Z"),
           interactionId: "interaction_waiting",
-          options: [{ id: "allow_once", label: "Allow once" }],
+          options: [],
+          presentation: {
+            completionLabel: "Authentication completed",
+            launchAvailable: true,
+            targetHost: "accounts.example.com",
+            targetLabel: "Example sign-in"
+          },
           policyBindingHash: "policy-binding",
-          prompt: "Allow the operation?",
+          prompt: "Complete sign-in in the provider window.",
           providerCorrelationRef: "provider-interaction",
-          type: "approval"
+          type: "authentication_handoff"
         });
       }
     }
