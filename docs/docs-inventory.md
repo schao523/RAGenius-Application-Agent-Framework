@@ -90,6 +90,7 @@ Additional scan notes:
 - [2026-06-06-artifact-ux-and-execution-implementation-plan.md](/D:/GitHub/Codex-RAGenius-System/docs/superpowers/plans/2026-06-06-artifact-ux-and-execution-implementation-plan.md)
 - [2026-06-12-artifact-first-chat-reuse-gui-implementation-plan.md](/D:/GitHub/Codex-RAGenius-System/docs/superpowers/plans/2026-06-12-artifact-first-chat-reuse-gui-implementation-plan.md)
 - [2026-06-14-openclaw-agent-execution.md](/D:/GitHub/Codex-RAGenius-System/docs/superpowers/plans/2026-06-14-openclaw-agent-execution.md)
+- [2026-08-26-managed-authentication-verifier-registry.md](/D:/GitHub/Codex-RAGenius-System/docs/superpowers/plans/2026-08-26-managed-authentication-verifier-registry.md)
 
 ### Other
 
@@ -206,6 +207,7 @@ Additional scan notes:
 - [2026-05-29-typed-policy-config-design-for-builder-and-execution.md](/D:/GitHub/Codex-RAGenius-System/docs/superpowers/specs/2026-05-29-typed-policy-config-design-for-builder-and-execution.md)
 - [2026-06-02-notebooklm-adapter-and-user-workflow-integration-design.md](/D:/GitHub/Codex-RAGenius-System/docs/superpowers/specs/2026-06-02-notebooklm-adapter-and-user-workflow-integration-design.md)
 - [2026-06-03-builder-runtime-tool-inventory-and-skill-designer-design.md](/D:/GitHub/Codex-RAGenius-System/docs/superpowers/specs/2026-06-03-builder-runtime-tool-inventory-and-skill-designer-design.md)
+- [2026-08-26-managed-authentication-verifier-registry-design.md](/D:/GitHub/Codex-RAGenius-System/docs/superpowers/specs/2026-08-26-managed-authentication-verifier-registry-design.md)
 
 ### Plan
 

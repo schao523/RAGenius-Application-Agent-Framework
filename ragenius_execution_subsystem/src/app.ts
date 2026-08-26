@@ -114,6 +114,8 @@ import { InteractiveAgentSessionManager } from "./core/interactive/interactive-a
 import { resolveInteractiveRequirements } from "./core/interactive/interactive-requirement-resolver.js";
 import { CodexAppServerAdapter } from "./core/interactive/codex-app-server-adapter.js";
 import { CodexAppServerProcessFactory } from "./core/interactive/codex-app-server-process.js";
+import { CodexGmailAuthenticationVerifier } from "./core/interactive/codex-gmail-authentication-verifier.js";
+import { ManagedAuthenticationVerifierRegistry } from "./core/interactive/managed-authentication-verifier-registry.js";
 import { OpenClawGatewayAdapter } from "./core/interactive/openclaw-gateway-adapter.js";
 import { OpenClawGatewayClient } from "./core/interactive/openclaw-gateway-client.js";
 
@@ -150,6 +152,7 @@ export interface AppServices {
   executionStatusService: ExecutionStatusService;
   executionStore: ExecutionStore;
   interactiveSessionManager: InteractiveAgentSessionManager;
+  managedAuthenticationVerifierRegistry: ManagedAuthenticationVerifierRegistry;
   mcpDiscovery: McpDiscoveryState;
   permissionEngine: PermissionEngine;
   runtimeConfig: RuntimeConfig;
@@ -216,9 +219,15 @@ export function createAppServices(
           dependencies.prismaClient as unknown as AgentEventPrismaClient
         )
       : new InMemoryAgentEventStore());
+  const managedAuthenticationVerifierRegistry =
+    overrides.managedAuthenticationVerifierRegistry ??
+    new ManagedAuthenticationVerifierRegistry([
+      new CodexGmailAuthenticationVerifier()
+    ]);
   const codexAppServerAdapter = new CodexAppServerAdapter(
     runtimeConfig.providers.codexAppServer,
-    new CodexAppServerProcessFactory(runtimeConfig.providers.codexAppServer)
+    new CodexAppServerProcessFactory(runtimeConfig.providers.codexAppServer),
+    managedAuthenticationVerifierRegistry.asReadonlyMap()
   );
   const openClawGatewayConfig = runtimeConfig.providers.openClawGateway;
   const openClawGatewayAdapter = new OpenClawGatewayAdapter(
@@ -476,6 +485,7 @@ export function createAppServices(
     executionStatusService,
     executionStore,
     interactiveSessionManager,
+    managedAuthenticationVerifierRegistry,
     mcpDiscovery,
     permissionEngine,
     runtimeConfig,

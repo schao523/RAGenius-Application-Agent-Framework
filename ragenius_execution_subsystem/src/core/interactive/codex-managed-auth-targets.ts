@@ -36,7 +36,40 @@ export type CodexManagedAuthenticationTarget = Readonly<
 export interface ManagedAuthenticationVerificationInput {
   executionId: string;
   target: CodexManagedAuthenticationTarget;
+  context?: ManagedAuthenticationVerificationContext;
 }
+
+export type CodexMcpAuthenticationStatus =
+  | "unsupported"
+  | "notLoggedIn"
+  | "bearerToken"
+  | "oAuth";
+
+export interface CodexMcpServerVerificationStatus {
+  authStatus: CodexMcpAuthenticationStatus;
+  name: string;
+  tools: readonly string[];
+}
+
+export interface CodexMcpVerificationToolResult {
+  hasContent: boolean;
+  hasStructuredContent: boolean;
+  isError: boolean;
+}
+
+export interface CodexMcpAuthenticationVerificationFacade {
+  listServerStatus(): Promise<readonly CodexMcpServerVerificationStatus[]>;
+  callReadOnlyTool(input: {
+    server: string;
+    tool: string;
+    arguments: Readonly<Record<string, unknown>>;
+  }): Promise<CodexMcpVerificationToolResult>;
+}
+
+export type ManagedAuthenticationVerificationContext = Readonly<{
+  backend: "codex_cli";
+  codexMcp: CodexMcpAuthenticationVerificationFacade;
+}>;
 
 export interface ManagedAuthenticationVerifier {
   readonly id: string;

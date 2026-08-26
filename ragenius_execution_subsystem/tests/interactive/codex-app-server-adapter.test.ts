@@ -81,6 +81,23 @@ class FakeTransport implements CodexAppServerTransport {
     if (method === "turn/start") {
       return { turn: { id: "turn-1", status: "inProgress" } };
     }
+    if (method === "mcpServerStatus/list") {
+      return {
+        data: [{
+          name: "codex_apps",
+          authStatus: "bearerToken",
+          tools: { "gmail.get_profile": { name: "gmail.get_profile" } }
+        }],
+        nextCursor: null
+      };
+    }
+    if (method === "mcpServer/tool/call") {
+      return {
+        content: [{ type: "text", text: "private profile data" }],
+        structuredContent: { email: "private@example.com" },
+        isError: false
+      };
+    }
     if (method === "turn/interrupt") return {};
     throw new Error(`Unexpected request: ${method}`);
   }
@@ -473,8 +490,24 @@ describe("Codex app-server adapter", () => {
     let verifyCount = 0;
     const verifier: ManagedAuthenticationVerifier = {
       id: "gmail-auth-check",
-      async verify() {
+      async verify(input) {
         verifyCount += 1;
+        assert.equal(input.context?.backend, "codex_cli");
+        const statuses = await input.context!.codexMcp.listServerStatus();
+        assert.deepEqual(statuses, [{
+          name: "codex_apps",
+          authStatus: "bearerToken",
+          tools: ["gmail.get_profile"]
+        }]);
+        assert.deepEqual(await input.context!.codexMcp.callReadOnlyTool({
+          server: "codex_apps",
+          tool: "gmail.get_profile",
+          arguments: {}
+        }), {
+          isError: false,
+          hasContent: true,
+          hasStructuredContent: true
+        });
         return { verified: true };
       }
     };
@@ -519,6 +552,18 @@ describe("Codex app-server adapter", () => {
     await adapter.respond(handle, userActionClaim(events[0]!.interaction!.interactionId, "authentication_handoff"));
     assert.equal(verifyCount, 1);
     assert.equal((factory.transport.responses[0]?.result as { success: boolean }).success, true);
+    assert.deepEqual(factory.transport.requests.slice(-2), [{
+      method: "mcpServerStatus/list",
+      params: { detail: "toolsAndAuthOnly", limit: 100, threadId: "thread-1" }
+    }, {
+      method: "mcpServer/tool/call",
+      params: {
+        threadId: "thread-1",
+        server: "codex_apps",
+        tool: "gmail.get_profile",
+        arguments: {}
+      }
+    }]);
 
     const unavailable = new CodexAppServerAdapter(config({
       authHandoffEnabled: true,

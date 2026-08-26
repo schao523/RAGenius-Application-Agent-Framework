@@ -38,6 +38,8 @@ import {
 import {
   eligibleManagedAuthenticationTargets,
   type CodexManagedAuthenticationTarget,
+  type CodexMcpAuthenticationStatus,
+  type ManagedAuthenticationVerificationContext,
   type ManagedAuthenticationVerifier
 } from "./codex-managed-auth-targets.js";
 import {
@@ -292,7 +294,7 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
         pending.type === "authentication_handoff" &&
         stringValue(claim.responseSummary.outcome) === "completed"
       ) {
-        await this.verifyAuthentication(claim.interaction.executionId, pending);
+        await this.verifyAuthentication(claim.interaction.executionId, pending, state);
       }
       await state.transport.respond(
         pending.requestId,
@@ -301,7 +303,7 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
     } else if (pending.kind === "managed_authentication") {
       const outcome = stringValue(claim.responseSummary.outcome);
       if (outcome === "completed") {
-        await this.verifyAuthentication(claim.interaction.executionId, pending);
+        await this.verifyAuthentication(claim.interaction.executionId, pending, state);
       }
       await state.transport.respond(pending.requestId, {
         success: outcome === "completed",
@@ -738,16 +740,80 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
 
   private async verifyAuthentication(
     executionId: string,
-    pending: PendingProviderRequest
+    pending: PendingProviderRequest,
+    state: CodexProtectedHandle
   ): Promise<void> {
     const target = pending.verificationTarget;
     const verifier = target
       ? this.authenticationVerifiers.get(target.verifierId)
       : undefined;
     if (!target || !verifier) throw new Error("AUTHENTICATION_HANDOFF_NOT_VERIFIED");
-    const result = await verifier.verify({ executionId, target });
+    const result = await verifier.verify({
+      executionId,
+      target,
+      context: this.authenticationVerificationContext(state)
+    });
     if (!result.verified) throw new Error("AUTHENTICATION_HANDOFF_NOT_VERIFIED");
   }
+
+  private authenticationVerificationContext(
+    state: CodexProtectedHandle
+  ): ManagedAuthenticationVerificationContext {
+    const threadId = state.threadId;
+    if (!threadId) throw new Error("AUTHENTICATION_HANDOFF_NOT_VERIFIED");
+    return {
+      backend: "codex_cli",
+      codexMcp: {
+        listServerStatus: async () => {
+          const response = recordValue(await state.transport.request(
+            "mcpServerStatus/list",
+            { detail: "toolsAndAuthOnly", limit: 100, threadId }
+          ));
+          const entries = Array.isArray(response.data) ? response.data : [];
+          return entries.flatMap((entry) => {
+            const server = recordValue(entry);
+            const name = stringValue(server.name);
+            const authStatus = codexMcpAuthenticationStatus(server.authStatus);
+            if (!name || !authStatus) return [];
+            return [{
+              name,
+              authStatus,
+              tools: Object.freeze(Object.keys(recordValue(server.tools)).sort())
+            }];
+          });
+        },
+        callReadOnlyTool: async (request) => {
+          const response = recordValue(await state.transport.request(
+            "mcpServer/tool/call",
+            {
+              threadId,
+              server: request.server,
+              tool: request.tool,
+              arguments: request.arguments
+            }
+          ));
+          return {
+            isError: response.isError === true,
+            hasContent: Array.isArray(response.content) && response.content.length > 0,
+            hasStructuredContent:
+              response.structuredContent !== undefined &&
+              response.structuredContent !== null
+          };
+        }
+      }
+    };
+  }
+}
+
+function codexMcpAuthenticationStatus(
+  value: unknown
+): CodexMcpAuthenticationStatus | null {
+  return value === "unsupported" ||
+    value === "notLoggedIn" ||
+    value === "bearerToken" ||
+    value === "oAuth"
+    ? value
+    : null;
 }
 
 function isMcpToolPayload(payload: Record<string, unknown>): boolean {

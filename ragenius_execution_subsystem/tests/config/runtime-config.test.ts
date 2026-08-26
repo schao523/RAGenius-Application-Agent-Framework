@@ -10,6 +10,21 @@ import {
 } from "../../src/config/runtime-config.js";
 
 describe("runtime config", () => {
+  it("installs the trusted Codex Gmail authentication verifier", () => {
+    const runtimeConfig = buildRuntimeConfig(getEnv({
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public"
+    }));
+
+    const services = createAppServices({}, runtimeConfig);
+
+    assert.equal(
+      services.managedAuthenticationVerifierRegistry.has("codex-apps-gmail-auth"),
+      true
+    );
+    assert.equal(runtimeConfig.providers.codexAppServer.authHandoffEnabled, false);
+    assert.deepEqual(runtimeConfig.providers.codexAppServer.managedAuthTargets, []);
+  });
+
   it("builds bounded Agent input import defaults and normalized overrides", () => {
     const defaults = buildRuntimeConfig(getEnv({}));
     assert.deepEqual(defaults.artifactImports, {
