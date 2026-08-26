@@ -30,6 +30,26 @@ function Test-Enabled([string]$Value) {
     return @("1", "true", "yes", "on") -contains ([string]$Value).Trim().ToLowerInvariant()
 }
 
+function Set-DefaultProcessEnvironment([string]$Name, [string]$Value) {
+    if ([Environment]::GetEnvironmentVariable($Name, "Process") -eq $null) {
+        [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
+    }
+}
+
+Set-DefaultProcessEnvironment "CODEX_MCP_ELICITATION_ENABLED" "false"
+Set-DefaultProcessEnvironment "CODEX_INTERACTIVE_AUTH_HANDOFF_ENABLED" "false"
+Set-DefaultProcessEnvironment "CODEX_INTERACTIVE_USER_ACTION_ENABLED" "false"
+Set-DefaultProcessEnvironment "CODEX_MCP_AUTH_ALLOWED_HOSTS_JSON" "[]"
+Set-DefaultProcessEnvironment "CODEX_MANAGED_AUTH_TARGETS_JSON" "[]"
+
+try {
+    $codexAuthHosts = @($env:CODEX_MCP_AUTH_ALLOWED_HOSTS_JSON | ConvertFrom-Json)
+    $codexManagedAuthTargets = @($env:CODEX_MANAGED_AUTH_TARGETS_JSON | ConvertFrom-Json)
+}
+catch {
+    throw "Codex interactive authentication configuration must contain valid JSON arrays."
+}
+
 $codexInteractive = Test-Enabled $env:CODEX_APP_SERVER_INTERACTIVE_ENABLED
 $openClawInteractive = Test-Enabled $env:OPENCLAW_GATEWAY_INTERACTIVE_ENABLED
 $openClawChatLevel = Test-Enabled $env:OPENCLAW_GATEWAY_CHAT_LEVEL_ENABLED
@@ -49,6 +69,12 @@ if ($openClawInteractive) {
 }
 
 Write-Host "Interactive Agent transports: Codex=$codexInteractive OpenClaw=$openClawInteractive OpenClawChatLevel=$openClawChatLevel"
+Write-Host ("Codex interactive capabilities: McpElicitation={0} AuthHandoff={1} UserAction={2} AuthHosts={3} ManagedAuthTargets={4}" -f `
+    (Test-Enabled $env:CODEX_MCP_ELICITATION_ENABLED), `
+    (Test-Enabled $env:CODEX_INTERACTIVE_AUTH_HANDOFF_ENABLED), `
+    (Test-Enabled $env:CODEX_INTERACTIVE_USER_ACTION_ENABLED), `
+    $codexAuthHosts.Count, `
+    $codexManagedAuthTargets.Count)
 if ($openClawInteractive) {
     Write-Host "OpenClaw policy is not changed by this script. Verify the administrator-selected effective profile before accepting traffic."
 }

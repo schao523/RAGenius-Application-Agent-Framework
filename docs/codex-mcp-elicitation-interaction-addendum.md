@@ -7,6 +7,13 @@ Date: 2026-08-25
 Normative contract and execution-subsystem design addendum for generic MCP
 elicitation and managed skill/plugin handoffs in Codex Interactive Agent mode.
 
+Implementation status as of 2026-08-26: Tasks 1-9 are implemented and pass
+automated subsystem gates. Rollout remains disabled by default. Live acceptance
+rows are tracked in
+`ragenius_execution_subsystem/docs/codex-interactive-mcp-live-results-2026-08-25.md`.
+Managed authentication remains unavailable until a concrete trusted verifier is
+installed; configuration and user acknowledgement alone are insufficient.
+
 This addendum extends:
 
 - `docs/interactive-agent-execution-contract.md`
