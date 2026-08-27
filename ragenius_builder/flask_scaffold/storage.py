@@ -1429,6 +1429,25 @@ class DatabaseStore:
         )
         return [self._binding_from_row(row) for row in cursor.fetchall()]
 
+    def list_skill_bindings(self, skill_id: str) -> List[Dict[str, Any]]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT bindings.*, applications.name AS app_name
+            FROM app_skill_bindings AS bindings
+            JOIN applications ON applications.id = bindings.app_id
+            WHERE bindings.skill_id = ?
+            ORDER BY bindings.updated_at DESC, bindings.created_at DESC, bindings.rowid DESC
+            """,
+            (skill_id,),
+        )
+        bindings = []
+        for row in cursor.fetchall():
+            binding = self._binding_from_row(row)
+            binding["app_name"] = row["app_name"]
+            bindings.append(binding)
+        return bindings
+
     def get_published_skill_definition(self, *, skill_id: str, version: str | None = None) -> Optional[Dict[str, Any]]:
         skill = self.get_skill(skill_id)
         if not skill:

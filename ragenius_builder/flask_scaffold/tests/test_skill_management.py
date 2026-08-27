@@ -626,6 +626,11 @@ class SkillManagementTests(unittest.TestCase):
                 skill_version=published["version"],
                 permission_mode="auto_allow",
             )
+            store.conn.execute(
+                "UPDATE app_skill_bindings SET created_at = ?, updated_at = ?",
+                ("2026-08-27T00:00:00", "2026-08-27T00:00:00"),
+            )
+            store.conn.commit()
 
             client = app_module.app.test_client()
             response = client.get(f"/skills/{imported['skill']['id']}")

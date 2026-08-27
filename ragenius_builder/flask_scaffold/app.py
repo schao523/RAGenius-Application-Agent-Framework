@@ -1843,17 +1843,7 @@ def skill_detail(skill_id):
         version_view = dict(version)
         version_view.update(_build_skill_review_view(version_view))
         versions.append(version_view)
-    all_bindings = []
-    for app_obj in store.list_applications():
-        for binding in store.list_app_skill_bindings(app_obj["id"]):
-            if binding["skill_id"] == skill_id:
-                binding_view = dict(binding)
-                binding_view["app_name"] = app_obj["name"]
-                all_bindings.append(binding_view)
-    all_bindings.sort(
-        key=lambda binding: binding.get("updated_at") or binding.get("created_at") or "",
-        reverse=True,
-    )
+    all_bindings = store.list_skill_bindings(skill_id)
     return render_template(
         "skill_detail.html",
         skill=skill,
