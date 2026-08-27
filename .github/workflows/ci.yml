@@ -27,12 +27,12 @@ jobs:
       - name: Test RAG subsystem
         run: python -m pytest tests/test_rag_subsystem.py
       - name: Test app backend
-        run: python -m pytest --basetemp=tmp_sqlite_tests/app-backend ragenius_app_skeleton/backend/tests
+        run: python -m pytest --basetemp="$env:RUNNER_TEMP/ragenius-app-backend" ragenius_app_skeleton/backend/tests
       - name: Test Builder
         shell: pwsh
         run: |
           $tests = Get-ChildItem ragenius_builder/flask_scaffold/tests -File -Filter "test_*.py" | ForEach-Object FullName
-          python -m pytest --basetemp=tmp_sqlite_tests/builder @tests
+          python -m pytest --basetemp="$env:RUNNER_TEMP/ragenius-builder" @tests
 
   app-frontend:
     runs-on: windows-latest
