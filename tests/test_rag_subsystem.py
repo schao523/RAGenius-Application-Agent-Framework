@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 import pytest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -87,8 +88,7 @@ def test_default_model_dir_is_repo_relative_not_cwd_relative():
     try:
         os.chdir(os.path.join(ROOT, "ragenius_app_skeleton"))
         model_dir = _default_model_dir("bge-large-zh")
-        assert model_dir.exists()
-        assert model_dir.samefile(os.path.join(ROOT, "rag_subsystem", "models", "bge-large-zh"))
+        assert model_dir == Path(ROOT, "rag_subsystem", "models", "bge-large-zh").resolve()
     finally:
         os.chdir(original_cwd)
 
