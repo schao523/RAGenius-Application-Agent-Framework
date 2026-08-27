@@ -19,6 +19,9 @@ import { ArtifactStore } from "../../src/core/tools/providers/artifact-store.js"
 import { NotebookLmAdapter } from "../../src/core/tools/providers/notebooklm-adapter.js";
 
 const originalFetch = globalThis.fetch;
+const repositoryRoot = path.resolve(process.cwd(), "..");
+const repositoryDocsRoot = path.join(repositoryRoot, "docs");
+const repositoryOutputsRoot = path.join(repositoryRoot, "outputs");
 const mutationRoots = new Set<string>();
 
 async function claimPendingConfirmation(
@@ -1458,9 +1461,8 @@ describe("execution engine", () => {
       getEnv({
         DATABASE_URL:
           "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public",
-        FILESYSTEM_ALLOWED_ROOTS: "D:/GitHub/Codex-RAGenius-System/docs",
-        ARTIFACT_STORAGE_ROOT:
-          "D:/GitHub/Codex-RAGenius-System/outputs/test-artifacts-runtime",
+        FILESYSTEM_ALLOWED_ROOTS: repositoryDocsRoot,
+        ARTIFACT_STORAGE_ROOT: path.join(repositoryOutputsRoot, "test-artifacts-runtime"),
         MCP_SERVERS_JSON: "[]"
       })
     );
@@ -1488,7 +1490,7 @@ describe("execution engine", () => {
       session_id: "session-1",
       skill_id: "file_inventory",
       input: {
-        path: "D:/GitHub/Codex-RAGenius-System/docs"
+        path: repositoryDocsRoot
       },
       execution_options: { dry_run: false }
     });
@@ -1499,8 +1501,9 @@ describe("execution engine", () => {
   });
 
   it("executes a confirmed mutation skill within allowed roots", async () => {
-    const tempRoot = path.resolve(
-      `D:/GitHub/Codex-RAGenius-System/outputs/test-mutation-runtime-${Date.now()}`
+    const tempRoot = path.join(
+      repositoryOutputsRoot,
+      `test-mutation-runtime-${Date.now()}`
     );
     mutationRoots.add(tempRoot);
     await fs.mkdir(tempRoot, { recursive: true });
@@ -1515,8 +1518,7 @@ describe("execution engine", () => {
         FILESYSTEM_MUTATION_ROOTS: tempRoot,
         FILESYSTEM_MAX_WRITE_BYTES: "4096",
         FILESYSTEM_MAX_PATCH_BYTES: "4096",
-        ARTIFACT_STORAGE_ROOT:
-          "D:/GitHub/Codex-RAGenius-System/outputs/test-artifacts-runtime",
+        ARTIFACT_STORAGE_ROOT: path.join(repositoryOutputsRoot, "test-artifacts-runtime"),
         MCP_SERVERS_JSON: "[]"
       })
     );
@@ -1703,8 +1705,9 @@ describe("execution engine", () => {
   });
 
   it("executes a notebooklm generate report skill through the adapter service seam", async () => {
-    const artifactRoot = path.resolve(
-      `D:/GitHub/Codex-RAGenius-System/outputs/test-notebooklm-runtime-${Date.now()}`
+    const artifactRoot = path.join(
+      repositoryOutputsRoot,
+      `test-notebooklm-runtime-${Date.now()}`
     );
     mutationRoots.add(artifactRoot);
     const runtimeConfig = buildRuntimeConfig(
@@ -2561,8 +2564,7 @@ describe("execution routes", () => {
       DATABASE_URL:
         "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public",
       GOOGLE_DRIVE_MCP_ACCESS_TOKEN: "gdrive-token",
-      ARTIFACT_STORAGE_ROOT:
-        "D:/GitHub/Codex-RAGenius-System/outputs/test-artifacts-runtime",
+      ARTIFACT_STORAGE_ROOT: path.join(repositoryOutputsRoot, "test-artifacts-runtime"),
       MCP_SERVERS_JSON: JSON.stringify([
         {
           id: "gdrive",
@@ -2736,8 +2738,7 @@ describe("execution routes", () => {
       DATABASE_URL:
         "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public",
       GOOGLE_DRIVE_MCP_ACCESS_TOKEN: "gdrive-token",
-      ARTIFACT_STORAGE_ROOT:
-        "D:/GitHub/Codex-RAGenius-System/outputs/test-artifacts-runtime",
+      ARTIFACT_STORAGE_ROOT: path.join(repositoryOutputsRoot, "test-artifacts-runtime"),
       MCP_SERVERS_JSON: JSON.stringify([
         {
           id: "gdrive",
@@ -2975,8 +2976,7 @@ describe("execution routes", () => {
         "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public",
       GOOGLE_DRIVE_MCP_ACCESS_TOKEN: "gdrive-token",
       GMAIL_MCP_ACCESS_TOKEN: "gmail-token",
-      ARTIFACT_STORAGE_ROOT:
-        "D:/GitHub/Codex-RAGenius-System/outputs/test-artifacts-runtime",
+      ARTIFACT_STORAGE_ROOT: path.join(repositoryOutputsRoot, "test-artifacts-runtime"),
       MCP_SERVERS_JSON: JSON.stringify([
         {
           id: "gdrive",
@@ -3251,8 +3251,7 @@ describe("execution routes", () => {
         "postgresql://postgres:postgres@localhost:5432/ragenius_execution?schema=public",
       GOOGLE_DRIVE_MCP_ACCESS_TOKEN: "gdrive-token",
       GMAIL_MCP_ACCESS_TOKEN: "gmail-token",
-      ARTIFACT_STORAGE_ROOT:
-        "D:/GitHub/Codex-RAGenius-System/outputs/test-artifacts-runtime",
+      ARTIFACT_STORAGE_ROOT: path.join(repositoryOutputsRoot, "test-artifacts-runtime"),
       MCP_SERVERS_JSON: JSON.stringify([
         {
           id: "gdrive",

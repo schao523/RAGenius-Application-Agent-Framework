@@ -9,6 +9,7 @@ import { ArtifactStore } from "../../src/core/tools/providers/artifact-store.js"
 import { FilePolicy } from "../../src/core/tools/providers/file-policy.js";
 import { PhaseOneLocalToolProvider } from "../../src/core/tools/providers/local-tool-provider.js";
 
+const repositoryRoot = path.resolve(process.cwd(), "..");
 const artifactRoots = new Set<string>();
 const writeFileToolDefinition = {
   id: "write_file",
@@ -44,9 +45,7 @@ const patchFileToolDefinition = {
 };
 
 function createArtifactRoot(): string {
-  const root = path.resolve(
-    `D:/GitHub/Codex-RAGenius-System/outputs/test-artifacts-${randomUUID()}`
-  );
+  const root = path.join(repositoryRoot, "outputs", `test-artifacts-${randomUUID()}`);
   artifactRoots.add(root);
   return root;
 }
@@ -90,7 +89,7 @@ describe("local tool provider", () => {
   it("reads a text file within an allowed root", async () => {
     const provider = new PhaseOneLocalToolProvider(
       new FilePolicy({
-        allowedRoots: ["D:/GitHub/Codex-RAGenius-System"],
+        allowedRoots: [repositoryRoot],
         maxReadBytes: 4096
       }),
       new ArtifactStore(createArtifactRoot())
@@ -112,7 +111,7 @@ describe("local tool provider", () => {
         sideEffecting: false
       },
       {
-        path: "D:/GitHub/Codex-RAGenius-System/README.md"
+        path: path.join(repositoryRoot, "README.md")
       }
     );
 
@@ -123,7 +122,7 @@ describe("local tool provider", () => {
   it("stores and loads artifacts within the calling app scope", async () => {
     const provider = new PhaseOneLocalToolProvider(
       new FilePolicy({
-        allowedRoots: ["D:/GitHub/Codex-RAGenius-System"],
+        allowedRoots: [repositoryRoot],
         maxReadBytes: 4096
       }),
       new ArtifactStore(createArtifactRoot())
@@ -215,7 +214,7 @@ describe("local tool provider", () => {
   it("does not allow one app to load another app's artifact", async () => {
     const provider = new PhaseOneLocalToolProvider(
       new FilePolicy({
-        allowedRoots: ["D:/GitHub/Codex-RAGenius-System"],
+        allowedRoots: [repositoryRoot],
         maxReadBytes: 4096
       }),
       new ArtifactStore(createArtifactRoot())

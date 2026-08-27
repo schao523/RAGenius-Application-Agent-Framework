@@ -173,7 +173,7 @@ test("rejects symlink file-backed sources", async (t) => {
           payload: { file_path: linkPath, metadata: {} }
         })]
       }),
-      /symlink/i
+      /symlink|not a regular file/i
     );
   });
 });
