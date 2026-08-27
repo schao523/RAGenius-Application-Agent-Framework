@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a reproducible RAGenius defect
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, private artifacts, authentication links, or personal data.
+  - type: input
+    id: revision
+    attributes:
+      label: Revision
+      description: Commit hash or release version.
+    validations:
+      required: true
+  - type: dropdown
+    id: subsystem
+    attributes:
+      label: Subsystem
+      options:
+        - rag_subsystem
+        - ragenius_app_skeleton
+        - ragenius_builder
+        - ragenius_execution_subsystem
+        - cross-subsystem
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Minimal sanitized steps and configuration.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include sanitized logs only.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, personal data, private artifacts, and authentication material.
+          required: true

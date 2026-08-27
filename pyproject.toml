@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Deterministic Python RAG subsystem with ingestion and retrieval pipelines"
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{name = "Codex", email = "dev@example.com"}]
+authors = [{name = "schao523"}]
 license = {text = "MIT"}
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -28,8 +28,9 @@ local-embeddings = [
 pdf-extract = ["pdfplumber>=0.11", "pypdf>=6.0"]
 
 [project.urls]
-Homepage = "https://example.com/rag-subsystem"
-Repository = "https://example.com/rag-subsystem/repo"
+Homepage = "https://github.com/schao523/RAGenius-Application-Agent-Framework"
+Repository = "https://github.com/schao523/RAGenius-Application-Agent-Framework"
+Issues = "https://github.com/schao523/RAGenius-Application-Agent-Framework/issues"
 
 [tool.setuptools]
 packages = ["rag_subsystem", "rag_subsystem.vector_store", "rag_subsystem.utils"]

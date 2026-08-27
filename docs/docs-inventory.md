@@ -17,6 +17,8 @@ Grouping rules used here:
 
 Additional scan notes:
 
+- [open-source-secret-audit-2026-08-27.md](/D:/GitHub/Codex-RAGenius-System/docs/open-source-secret-audit-2026-08-27.md) records the sanitized pre-release history audit.
+- [open-source-release-readiness-2026-08-27.md](/D:/GitHub/Codex-RAGenius-System/docs/open-source-release-readiness-2026-08-27.md) records the local release gate and repository-host checklist.
 - `ragenius_app/01_system_specs/` and `ragenius_app/02_blackbox_contracts/` contain files.
 - `docs/superpowers/plans/` and `docs/superpowers/specs/` contain files.
 - other documentation-oriented directories under `ragenius_app/` were not found to contain files in this scan.
