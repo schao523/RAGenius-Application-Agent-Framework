@@ -114,7 +114,7 @@ const envSchema = z.object({
   CODEX_APP_SERVER_SUPPORTED_VERSIONS: z.string().default("0.146.0"),
   CODEX_APP_SERVER_INITIALIZATION_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
   CODEX_APP_SERVER_INTERACTION_TTL_MS: z.coerce.number().int().positive().default(900000),
-  CODEX_APP_SERVER_MAX_LINE_BYTES: z.coerce.number().int().positive().default(1048576),
+  CODEX_APP_SERVER_MAX_LINE_BYTES: z.coerce.number().int().positive().default(2097152),
   CODEX_APP_SERVER_MAX_DELTA_BYTES: z.coerce.number().int().positive().default(16384),
   CODEX_APP_SERVER_MAX_STDERR_BYTES: z.coerce.number().int().positive().default(65536),
   CODEX_MCP_ELICITATION_ENABLED: booleanEnv(false),

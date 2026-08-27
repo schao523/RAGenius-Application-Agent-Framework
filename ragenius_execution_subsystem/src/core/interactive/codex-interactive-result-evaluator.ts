@@ -37,8 +37,11 @@ export function evaluateCodexInteractiveOperations(input: {
         outcome.operationId === operation.operation_id ||
         (!outcome.operationId && soleRequiredOperationId === operation.operation_id)
     );
-    const failed = matches.find((outcome) => outcome.status !== "completed");
-    const completed = matches.find((outcome) => outcome.status === "completed");
+    const denied = matches.find(
+      (outcome) => outcome.status === "denied" || outcome.errorCode === "permission_denied"
+    );
+    const latest = matches.at(-1);
+    const failed = denied ?? (latest?.status !== "completed" ? latest : undefined);
     if (failed) {
       return {
         ...(failed.errorCode ? { error_code: failed.errorCode } : {}),
@@ -49,13 +52,13 @@ export function evaluateCodexInteractiveOperations(input: {
         tool_name: failed.toolName
       };
     }
-    if (completed) {
+    if (latest?.status === "completed") {
       return {
         level: "provider_reported" as const,
         operation: operation.description,
         operation_id: operation.operation_id,
         status: "completed" as const,
-        tool_name: completed.toolName
+        tool_name: latest.toolName
       };
     }
     return {

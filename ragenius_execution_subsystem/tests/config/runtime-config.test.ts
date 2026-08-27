@@ -71,6 +71,7 @@ describe("runtime config", () => {
     assert.equal(defaults.providers.codexAppServer.mcpElicitationEnabled, false);
     assert.equal(defaults.providers.codexAppServer.authHandoffEnabled, false);
     assert.equal(defaults.providers.codexAppServer.userActionEnabled, false);
+    assert.equal(defaults.providers.codexAppServer.maxLineBytes, 2097152);
     assert.deepEqual(defaults.providers.codexAppServer.mcpAuthAllowedHosts, []);
     assert.deepEqual(defaults.providers.codexAppServer.managedAuthTargets, []);
     assert.deepEqual(defaults.agentSkills.codex.inventory, {

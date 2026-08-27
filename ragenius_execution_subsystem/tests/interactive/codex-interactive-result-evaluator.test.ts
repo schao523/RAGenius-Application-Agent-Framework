@@ -40,6 +40,29 @@ describe("Codex interactive result evaluator", () => {
     assert.equal(result.failureCode, null);
   });
 
+  it("accepts a successful retry after a non-denial provider failure", () => {
+    const result = evaluateCodexInteractiveOperations({
+      operationPlan: [requiredSend],
+      outcomes: [
+        {
+          errorCode: "provider_error",
+          itemId: "mcp-1",
+          status: "failed",
+          toolName: "chrome.get_window_state"
+        },
+        {
+          itemId: "mcp-2",
+          status: "completed",
+          toolName: "chrome.get_window_state"
+        }
+      ]
+    });
+
+    assert.equal(result.statusOverride, "completed");
+    assert.equal(result.failureCode, null);
+    assert.equal(result.operationVerification[0]?.status, "completed");
+  });
+
   it("requires explicit correlation when more than one required operation exists", () => {
     const result = evaluateCodexInteractiveOperations({
       operationPlan: [requiredSend, { ...requiredSend, operation_id: "second_required" }],

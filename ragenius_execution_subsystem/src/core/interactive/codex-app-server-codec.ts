@@ -127,18 +127,36 @@ function publicTurnPayload(params: Record<string, unknown>): Record<string, unkn
 function publicItemPayload(params: Record<string, unknown>): Record<string, unknown> {
   const item = recordValue(params.item);
   const error = recordValue(item.error);
+  const serverName = boundedField(item.serverName || item.server, 200);
+  const toolName = boundedField(item.toolName || item.tool || item.name, 200);
+  const errorCode = publicErrorCode(error, item);
   return {
     ...(stringValue(item.id) ? { item_id: stringValue(item.id) } : {}),
     ...(stringValue(item.type) ? { item_type: stringValue(item.type) } : {}),
-    ...(boundedField(item.toolName || item.name, 200) ? { tool_name: boundedField(item.toolName || item.name, 200) } : {}),
+    ...(serverName ? { server_name: serverName } : {}),
+    ...(toolName ? { tool_name: toolName } : {}),
     ...(boundedField(item.status, 40) ? { status: boundedField(item.status, 40) } : {}),
     ...(boundedField(item.operationId || item.operation_id, 200)
       ? { operation_id: boundedField(item.operationId || item.operation_id, 200) }
       : {}),
-    ...(boundedField(error.code || item.errorCode, 100)
-      ? { error_code: boundedField(error.code || item.errorCode, 100) }
-      : {})
+    ...(errorCode ? { error_code: errorCode } : {})
   };
+}
+
+function publicErrorCode(
+  error: Record<string, unknown>,
+  item: Record<string, unknown>
+): string {
+  const explicitCode = boundedField(error.code || item.errorCode, 100);
+  if (explicitCode) return explicitCode;
+
+  const message = stringValue(error.message).toLowerCase();
+  if (!message) return "";
+  if (/(not approved|permission|denied|forbidden)/u.test(message)) return "permission_denied";
+  if (/(not found|no matching|unknown (?:tab|window|target))/u.test(message)) return "not_found";
+  if (/(authenticat|sign[ -]?in|log[ -]?in)/u.test(message)) return "authentication_required";
+  if (/(timed? out|timeout)/u.test(message)) return "timeout";
+  return "provider_error";
 }
 
 function boundedField(value: unknown, maxLength: number): string {

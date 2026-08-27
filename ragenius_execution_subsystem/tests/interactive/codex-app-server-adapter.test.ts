@@ -82,6 +82,17 @@ class FakeTransport implements CodexAppServerTransport {
       return { turn: { id: "turn-1", status: "inProgress" } };
     }
     if (method === "mcpServerStatus/list") {
+      const cursor = (params as { cursor?: string | null } | undefined)?.cursor ?? null;
+      if (cursor !== "gmail-page") {
+        return {
+          data: [{
+            name: "other_server",
+            authStatus: "unsupported",
+            tools: {}
+          }],
+          nextCursor: "gmail-page"
+        };
+      }
       return {
         data: [{
           name: "codex_apps",
@@ -170,6 +181,37 @@ describe("Codex app-server codec", () => {
       error_code: "permission_denied"
     });
   });
+
+  it("normalizes generated MCP tool fields and message-only errors", () => {
+    const codec = new CodexAppServerCodec({ maxLineBytes: 4096 });
+    const event = codec.normalizeNotification({
+      method: "item/completed",
+      params: { item: {
+        id: "mcp-browser-1",
+        type: "mcpToolCall",
+        server: "codex_apps",
+        tool: "chrome.get_window_state",
+        status: "failed",
+        error: { message: "Chrome control was not approved." },
+        arguments: { token: "secret" },
+        result: { window_state: "private" }
+      } }
+    });
+
+    assert.equal(event?.type, "tool_completed");
+    assert.deepEqual(event?.payload, {
+      item_id: "mcp-browser-1",
+      item_type: "mcpToolCall",
+      server_name: "codex_apps",
+      tool_name: "chrome.get_window_state",
+      status: "failed",
+      error_code: "permission_denied"
+    });
+    assert.equal(JSON.stringify(event).includes("not approved"), false);
+    assert.equal(JSON.stringify(event).includes("secret"), false);
+    assert.equal(JSON.stringify(event).includes("private"), false);
+  });
+
   it("frames correlated JSON-RPC messages and notifications", () => {
     const codec = new CodexAppServerCodec({ maxLineBytes: 1024 });
     assert.equal(codec.encodeRequest(7, "initialize", { clientInfo: { name: "RAGenius" } }),
@@ -480,7 +522,10 @@ describe("Codex app-server adapter", () => {
       id: "manual-1",
       result: {
         success: true,
-        contentItems: [{ type: "inputText", text: "The user reported completion. Verify the observable result before continuing." }]
+        contentItems: [{
+          type: "inputText",
+          text: "The user reported completion. Discard stale observations, but preserve the active provider session and any existing resource handle. Read fresh observable state through that handle; reacquire the resource only if the handle is invalid. Verify the observable result before continuing."
+        }]
       }
     });
   });
@@ -495,6 +540,10 @@ describe("Codex app-server adapter", () => {
         assert.equal(input.context?.backend, "codex_cli");
         const statuses = await input.context!.codexMcp.listServerStatus();
         assert.deepEqual(statuses, [{
+          name: "other_server",
+          authStatus: "unsupported",
+          tools: []
+        }, {
           name: "codex_apps",
           authStatus: "bearerToken",
           tools: ["gmail.get_profile"]
@@ -552,9 +601,22 @@ describe("Codex app-server adapter", () => {
     await adapter.respond(handle, userActionClaim(events[0]!.interaction!.interactionId, "authentication_handoff"));
     assert.equal(verifyCount, 1);
     assert.equal((factory.transport.responses[0]?.result as { success: boolean }).success, true);
-    assert.deepEqual(factory.transport.requests.slice(-2), [{
+    assert.deepEqual(factory.transport.requests.slice(-3), [{
       method: "mcpServerStatus/list",
-      params: { detail: "toolsAndAuthOnly", limit: 100, threadId: "thread-1" }
+      params: {
+        cursor: null,
+        detail: "toolsAndAuthOnly",
+        limit: 1,
+        threadId: "thread-1"
+      }
+    }, {
+      method: "mcpServerStatus/list",
+      params: {
+        cursor: "gmail-page",
+        detail: "toolsAndAuthOnly",
+        limit: 1,
+        threadId: "thread-1"
+      }
     }, {
       method: "mcpServer/tool/call",
       params: {

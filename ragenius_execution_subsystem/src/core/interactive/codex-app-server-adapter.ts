@@ -39,6 +39,7 @@ import {
   eligibleManagedAuthenticationTargets,
   type CodexManagedAuthenticationTarget,
   type CodexMcpAuthenticationStatus,
+  type CodexMcpServerVerificationStatus,
   type ManagedAuthenticationVerificationContext,
   type ManagedAuthenticationVerifier
 } from "./codex-managed-auth-targets.js";
@@ -321,7 +322,7 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
         contentItems: [{
           type: "inputText",
           text: completed
-            ? "The user reported completion. Verify the observable result before continuing."
+            ? "The user reported completion. Discard stale observations, but preserve the active provider session and any existing resource handle. Read fresh observable state through that handle; reacquire the resource only if the handle is invalid. Verify the observable result before continuing."
             : "The user cancelled the requested action."
         }]
       });
@@ -765,22 +766,35 @@ export class CodexAppServerAdapter implements InteractiveAgentAdapter {
       backend: "codex_cli",
       codexMcp: {
         listServerStatus: async () => {
-          const response = recordValue(await state.transport.request(
-            "mcpServerStatus/list",
-            { detail: "toolsAndAuthOnly", limit: 100, threadId }
-          ));
-          const entries = Array.isArray(response.data) ? response.data : [];
-          return entries.flatMap((entry) => {
-            const server = recordValue(entry);
-            const name = stringValue(server.name);
-            const authStatus = codexMcpAuthenticationStatus(server.authStatus);
-            if (!name || !authStatus) return [];
-            return [{
-              name,
-              authStatus,
-              tools: Object.freeze(Object.keys(recordValue(server.tools)).sort())
-            }];
-          });
+          const statuses: CodexMcpServerVerificationStatus[] = [];
+          const seenCursors = new Set<string>();
+          let cursor: string | null = null;
+
+          for (let page = 0; page < 100; page += 1) {
+            const response = recordValue(await state.transport.request(
+              "mcpServerStatus/list",
+              { cursor, detail: "toolsAndAuthOnly", limit: 1, threadId }
+            ));
+            const entries = Array.isArray(response.data) ? response.data : [];
+            for (const entry of entries) {
+              const server = recordValue(entry);
+              const name = stringValue(server.name);
+              const authStatus = codexMcpAuthenticationStatus(server.authStatus);
+              if (!name || !authStatus) continue;
+              statuses.push({
+                name,
+                authStatus,
+                tools: Object.freeze(Object.keys(recordValue(server.tools)).sort())
+              });
+            }
+
+            const nextCursor = stringValue(response.nextCursor);
+            if (!nextCursor || seenCursors.has(nextCursor)) break;
+            seenCursors.add(nextCursor);
+            cursor = nextCursor;
+          }
+
+          return statuses;
         },
         callReadOnlyTool: async (request) => {
           const response = recordValue(await state.transport.request(

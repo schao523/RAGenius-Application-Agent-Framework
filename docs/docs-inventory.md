@@ -134,6 +134,7 @@ Additional scan notes:
 
 ### Other
 
+- [codex-gmail-mcp-live-test-plan.md](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/codex-gmail-mcp-live-test-plan.md)
 - [openclaw-cli-test-checklist.md](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/openclaw-cli-test-checklist.md)
 - [openclaw-cli-test-results-2026-06-13.md](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/openclaw-cli-test-results-2026-06-13.md)
 - [workflow-execution-map.yaml](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/workflow-execution-map.yaml)
