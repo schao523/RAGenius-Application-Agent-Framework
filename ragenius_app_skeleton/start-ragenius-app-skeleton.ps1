@@ -25,6 +25,11 @@ if (-not (Test-Path -LiteralPath $envPath)) {
 
 Import-DotEnv $envPath
 $repoRoot = (Resolve-Path (Join-Path $Root "..")).Path
+$ragBackend = if ($env:RAG_VECTOR_STORE_BACKEND) { $env:RAG_VECTOR_STORE_BACKEND.Trim().ToLowerInvariant() } else { "pgvector" }
+if ($ragBackend -in @("pgvector", "postgres", "postgresql")) {
+    $ragDsn = if ($env:RAG_VECTOR_STORE_DSN) { $env:RAG_VECTOR_STORE_DSN } else { $env:DATABASE_URL }
+    & (Join-Path $repoRoot "scripts\Test-RageniusPostgres.ps1") -ConnectionString $ragDsn -Label "RAG database"
+}
 $pythonPaths = @($repoRoot)
 if ($env:PYTHONPATH) { $pythonPaths += $env:PYTHONPATH }
 $env:PYTHONPATH = $pythonPaths -join [System.IO.Path]::PathSeparator

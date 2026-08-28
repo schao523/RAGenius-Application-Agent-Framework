@@ -24,6 +24,12 @@ if (-not (Test-Path -LiteralPath $envPath)) {
 }
 
 Import-DotEnv $envPath
+$repoRoot = (Resolve-Path (Join-Path $Root "..")).Path
+$ragBackend = if ($env:RAG_VECTOR_STORE_BACKEND) { $env:RAG_VECTOR_STORE_BACKEND.Trim().ToLowerInvariant() } else { "pgvector" }
+if ($ragBackend -in @("pgvector", "postgres", "postgresql")) {
+    $ragDsn = if ($env:RAG_VECTOR_STORE_DSN) { $env:RAG_VECTOR_STORE_DSN } else { "postgresql://ragenius:ragenius@localhost:5433/ragenius" }
+    & (Join-Path $repoRoot "scripts\Test-RageniusPostgres.ps1") -ConnectionString $ragDsn -Label "RAG database"
+}
 Set-Location (Join-Path $Root "flask_scaffold")
 Write-Host "Starting ragenius_builder on port 8011..."
 python -m flask --app app.py run --host 127.0.0.1 --port 8011

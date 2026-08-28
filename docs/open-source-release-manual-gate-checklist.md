@@ -1,31 +1,61 @@
 # Open-Source Release Manual Gate Checklist
 
-Date prepared: 2026-08-28
+Date prepared and last reviewed: 2026-08-28
 
 Use this checklist after automated CI passes and before creating or announcing
 the first public release. It validates the contributor experience, repository
 security controls, clean installation path, and safe runtime defaults.
 
-## Current Baseline
+## Release Candidate Baseline
 
 - Repository: `schao523/RAGenius-Application-Agent-Framework`
-- Default branch: `main`
-- Baseline commit at preparation: `7a366ea`
-- Passing CI run: `33048298647`
+- Release-candidate branch: `main`
+- Release-candidate commit: record immediately before testing
+- Passing GitHub Actions run: record the run URL immediately before testing
 - Required CI checks: `python`, `app-frontend`, `execution-subsystem`
-- Secret-scanning alerts at preparation: `0`
-- Dependabot alerts at preparation: `0`
-- Frontend npm audit at preparation: `0` vulnerabilities
-- Execution npm audit recheck: `0` vulnerabilities after pinning Prisma CLI
-  and Client to `6.19.3` and overriding `deepmerge-ts` to `8.0.2`
-- Tracked execution runtime storage files: `0`
+- Expected secret-scanning alerts: `0`
+- Expected Dependabot alerts: `0`
+- Expected high or critical npm audit findings: `0`
+- Expected tracked files under `ragenius_execution_subsystem/storage`: `0`
 
-If `main` advances, record and test the newer commit instead of assuming this
-baseline is still current.
+Do not copy a historical commit or CI run into the evidence record. Immediately
+before the clean-PC test, obtain the exact `main` commit with:
 
-The dependency and storage values above must be reproduced from the committed
-release candidate. A clean-PC tester must report any regression and must not
-run `npm audit fix` in the release-candidate checkout.
+```powershell
+git switch main
+git pull --ff-only
+git rev-parse HEAD
+git status --short
+```
+
+Open the repository's Actions page and record the successful workflow run for
+that exact commit. If `main` advances afterward, restart the release-candidate
+gate against the newer commit.
+
+The dependency, alert, and storage expectations above must be reproduced from
+the committed release candidate. A clean-PC tester must report any regression
+and must not run `npm audit fix` in the release-candidate checkout.
+
+## Maintainer Handoff Before Gate 1
+
+The maintainer must complete these checks after the release pull request is
+merged and before asking the non-maintainer tester to begin:
+
+1. Confirm the required GitHub Actions checks passed on the final `main`
+   commit.
+2. Open the repository Security tab and confirm secret-scanning and Dependabot
+   have no unresolved release-blocking alerts.
+3. Run the following commands in a clean checkout of that commit:
+
+```powershell
+git status --short
+git ls-files "ragenius_execution_subsystem/storage/**"
+git ls-files "*.env"
+```
+
+Expected result: all three commands print nothing. Provide the tester with the
+exact commit SHA and successful Actions run URL. Do not provide credentials,
+maintainer cookies, ignored `.env` files, or local database volumes.
 
 ## Questions Answered
 
@@ -80,8 +110,9 @@ Only partially.
 | App skeleton | Runs frontend `npm install` only when `frontend/node_modules` is absent |
 | Builder | Does not install Python dependencies |
 
-The scripts do not install Git, Python, Node.js, npm, PostgreSQL, or the Python
-packages. Install those prerequisites before starting the system.
+The scripts do not install Git, Python, Node.js, npm, Docker, or the Python
+packages, and they do not start Docker Desktop. Install those prerequisites
+and start the Docker engine before starting the system.
 
 ## Gate 1: Non-Maintainer Repository Access
 
@@ -184,7 +215,7 @@ the time this guide was prepared:
 winget install --id Git.Git --exact --source winget
 winget install --id Python.Python.3.12 --exact --source winget
 winget install --id OpenJS.NodeJS.LTS --exact --source winget
-winget install --id PostgreSQL.PostgreSQL.16 --exact --source winget
+winget install --id Docker.DockerDesktop --exact --source winget
 ```
 
 The `winget` catalog can change. If an identifier is not found, search before
@@ -194,19 +225,16 @@ substituting a package:
 winget search Git
 winget search Python
 winget search Node.js
-winget search PostgreSQL
+winget search Docker Desktop
 ```
 
 Review the publisher and source before installing a search result. Prefer the
-official Git, Python Software Foundation, OpenJS Foundation, and PostgreSQL
-packages.
+official Git, Python Software Foundation, OpenJS Foundation, and Docker
+packages. Docker Desktop is the tested Windows runtime; another
+Docker-compatible runtime is acceptable if it supports Compose.
 
-During PostgreSQL installation:
-
-- Record the password selected for the local `postgres` administrator.
-- Select port `5433` if the installer permits it.
-- Install command-line tools, including `psql` and `pg_isready`.
-- Keep the database local to the test PC; do not expose it publicly.
+Launch Docker Desktop after installation and wait until its engine reports
+that it is running. RAGenius scripts do not launch the Docker application.
 
 Close and reopen PowerShell after installation so updated `PATH` values are
 loaded. Then run:
@@ -217,7 +245,8 @@ python --version
 py --version
 node --version
 npm --version
-Get-Service *postgres*
+docker version
+docker compose version
 ```
 
 Required baseline:
@@ -226,7 +255,8 @@ Required baseline:
 - Python 3.10 or newer
 - Node.js 20 or newer
 - npm
-- PostgreSQL
+- Docker Engine connectivity
+- Docker Compose
 
 If any command is unavailable, install that prerequisite before continuing.
 The RAGenius startup scripts do not install it.
@@ -238,6 +268,7 @@ git version 2.x
 Python 3.10 or newer
 Node.js v20 or newer
 npm 10 or newer
+Docker Engine and Compose versions supported by the installed runtime
 ```
 
 The npm version bundled with a supported Node.js release is sufficient. Do
@@ -292,104 +323,80 @@ Expected result:
 - The `git ls-files` command prints nothing; runtime and test artifacts are not
   version-controlled.
 
-## Gate 3: PostgreSQL
+## Gate 3: PostgreSQL and pgvector
 
-The tracked examples expect PostgreSQL on `127.0.0.1:5433` and two databases:
-`ragenius` and `ragenius_execution`.
+The canonical release-test path uses the root `compose.yml`. It runs one
+PostgreSQL 16/pgvector server on `127.0.0.1:5433` and creates two separate
+databases: `ragenius` and `ragenius_execution`.
 
-### Step 9. Check an installed PostgreSQL service
+### Step 9. Start the canonical database service
+
+Confirm that Docker is responsive, then start PostgreSQL from the repository
+root:
+
+```powershell
+docker version
+docker compose up -d --wait postgres
+```
+
+If `docker version` shows client information but reports that it cannot connect
+to the engine, open Docker Desktop and wait for startup to complete. Do not
+continue until the command reports both client and server information.
+
+Expected result: Compose reports the `postgres` service as healthy.
+
+### Step 10. Inspect service state and logs
 
 Run:
 
 ```powershell
-Get-Service *postgres*
-```
-
-If the service is stopped, start it from an Administrator PowerShell. Replace
-the example service name with the name returned on the test PC:
-
-```powershell
-Start-Service postgresql-x64-16
-```
-
-Verify the expected port:
-
-```powershell
+docker compose ps
+docker compose logs --tail 100 postgres
 Test-NetConnection 127.0.0.1 -Port 5433
 ```
 
-Expected result: `TcpTestSucceeded` is `True`.
+Expected results:
 
-If PostgreSQL listens on `5432`, either configure PostgreSQL to use `5433` or
-consistently change both generated `.env` files to use `5432`. Do not configure
-one subsystem for `5432` and the other for `5433`.
+- The `postgres` service is `running` and `healthy`.
+- The logs contain no initialization error.
+- `TcpTestSucceeded` is `True`.
 
-### Step 10. Locate `psql`
+### Step 11. Verify both databases and pgvector
 
-Check whether `psql` is on `PATH`:
-
-```powershell
-psql --version
-```
-
-If it is not, use PostgreSQL's installed binary directly. For PostgreSQL 16,
-the common path is:
+Use the PostgreSQL client inside the container; no host `psql` installation is
+required:
 
 ```powershell
-& "C:\Program Files\PostgreSQL\16\bin\psql.exe" --version
+docker compose exec postgres psql -U ragenius -d ragenius -c "SELECT current_database();"
+docker compose exec postgres psql -U ragenius -d ragenius_execution -c "SELECT current_database();"
+docker compose exec postgres psql -U ragenius -d ragenius -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+docker compose exec postgres psql -U ragenius -d ragenius -c "SELECT to_regclass('public.rag_chunks');"
 ```
 
-You can add the PostgreSQL binary directory to the current terminal without
-changing the machine-wide `PATH`:
+Expected results:
+
+- The first two commands identify `ragenius` and `ragenius_execution`.
+- The vector query returns an installed version.
+- The final query returns `rag_chunks`.
+
+### Step 12. Understand persistent and destructive operations
+
+The named volume preserves data across `docker compose stop` and
+`docker compose down`. Do not run the following destructive reset during the
+manual gate:
 
 ```powershell
-$env:PATH = "C:\Program Files\PostgreSQL\16\bin;$env:PATH"
-psql --version
-pg_isready --version
+docker compose down -v
 ```
 
-Verify that the server is accepting connections before creating databases:
+That command permanently deletes the local RAG and execution databases. It is
+appropriate only for an intentional clean reset with no data to preserve.
 
-```powershell
-pg_isready -h 127.0.0.1 -p 5433
-```
-
-Expected result: `127.0.0.1:5433 - accepting connections`.
-
-### Step 11. Create the local test role and databases
-
-Connect as the PostgreSQL administrator. Use the actual port and administrator
-password selected during PostgreSQL installation:
-
-```powershell
-psql -U postgres -h 127.0.0.1 -p 5433
-```
-
-On a fresh test PostgreSQL instance, run:
-
-```sql
-CREATE USER ragenius WITH PASSWORD 'replace-with-a-local-test-password';
-CREATE DATABASE ragenius OWNER ragenius;
-CREATE DATABASE ragenius_execution OWNER postgres;
-\q
-```
-
-Do not reuse a production password. Store the chosen values only in ignored
-local `.env` files.
-
-If the role or databases already exist, do not recreate or delete them. Verify
-that their credentials and ownership match the URLs you will configure.
-
-### Step 12. Verify database connectivity
-
-Run tests using the selected credentials:
-
-```powershell
-psql -U ragenius -h 127.0.0.1 -p 5433 -d ragenius -c "SELECT 1;"
-psql -U postgres -h 127.0.0.1 -p 5433 -d ragenius_execution -c "SELECT 1;"
-```
-
-Expected result: both commands return one row containing `1`.
+Native PostgreSQL 16 with pgvector is an advanced alternative. If it is used,
+the tester must independently create both databases, apply
+`rag_subsystem/sql/init_pgvector.sql` to `ragenius`, expose the selected port,
+and update every corresponding ignored `.env` file consistently. The Docker
+path remains the required clean-PC release gate.
 
 ## Gate 4: Dependencies and Local Configuration
 
@@ -489,27 +496,28 @@ git status --short
 
 Expected result: the three `.env` files do not appear in Git status.
 
-### Step 15. Configure database URLs
+### Step 15. Verify canonical database URLs
 
-Edit `ragenius_execution_subsystem/.env` so `DATABASE_URL` points to the test
-`ragenius_execution` database and uses the real local PostgreSQL administrator
-password.
-
-Example shape:
+The copied templates already target the root Compose service. Verify these
+values in `ragenius_execution_subsystem/.env`:
 
 ```dotenv
-DATABASE_URL="postgresql://postgres:LOCAL_PASSWORD@127.0.0.1:5433/ragenius_execution?schema=public"
+DATABASE_URL="postgresql://ragenius:ragenius@localhost:5433/ragenius_execution?schema=public"
 ```
 
-Edit `ragenius_app_skeleton/.env` so `DATABASE_URL` uses the local `ragenius`
-role password:
+Verify these values in both `ragenius_app_skeleton/.env` and
+`ragenius_builder/.env`:
 
 ```dotenv
-DATABASE_URL=postgresql://ragenius:LOCAL_PASSWORD@127.0.0.1:5433/ragenius
+RAG_VECTOR_STORE_BACKEND=pgvector
+RAG_VECTOR_STORE_DSN=postgresql://ragenius:ragenius@localhost:5433/ragenius
+RAG_PGVECTOR_BOOTSTRAP=true
 ```
 
-Percent-encode reserved URL characters in passwords, or choose local test
-passwords that do not require URL encoding.
+The tracked password is only for an isolated local development database. If
+`RAGENIUS_POSTGRES_PASSWORD` was set before the first Compose initialization,
+percent-encode that password where necessary and update all three ignored
+`.env` files consistently.
 
 ### Step 16. Preserve safe Agent defaults
 
@@ -547,7 +555,7 @@ service authentication and use distinct random credentials with scoped access.
 ### Step 17A. Validate Prisma and database preparation
 
 After the execution `.env` file contains the correct `DATABASE_URL`, validate
-the Prisma schema and generate the client:
+the Prisma schema, generate the client, and apply execution migrations:
 
 ```powershell
 Push-Location ragenius_execution_subsystem
@@ -602,6 +610,7 @@ powershell -ExecutionPolicy Bypass -File .\ragenius_execution_subsystem\start-ra
 
 This script automatically:
 
+- Verifies that the execution database endpoint is reachable.
 - Runs `npm install` for the execution subsystem.
 - Generates the Prisma client.
 - Applies pending Prisma migrations.
@@ -610,6 +619,7 @@ This script automatically:
 Confirm the startup output includes equivalent values:
 
 ```text
+Execution database endpoint is reachable at localhost:5433.
 Interactive Agent transports: Codex=False OpenClaw=False OpenClawChatLevel=False
 Codex interactive capabilities: McpElicitation=False AuthHandoff=False UserAction=False AuthHosts=0 ManagedAuthTargets=0
 ```
@@ -628,7 +638,8 @@ powershell -ExecutionPolicy Bypass -File .\ragenius_builder\start-ragenius-build
 ```
 
 The Builder script does not install Python dependencies. Step 13 must already
-have completed. Expected endpoint: `http://127.0.0.1:8011`.
+have completed. Confirm it reports that the RAG database endpoint is reachable
+at `localhost:5433`. Expected endpoint: `http://127.0.0.1:8011`.
 
 ### Step 20. Start the app skeleton
 
@@ -641,7 +652,9 @@ powershell -ExecutionPolicy Bypass -File .\ragenius_app_skeleton\start-ragenius-
 ```
 
 The app script installs frontend npm dependencies only when `node_modules` is
-absent. It starts the backend on port `8000` and frontend on port `5173`.
+absent. Confirm it reports that the RAG database endpoint is reachable at
+`localhost:5433`. It starts the backend on port `8000` and frontend on port
+`5173`.
 
 ## Gate 6: Runtime Smoke Test
 
@@ -701,6 +714,12 @@ remains active, identify the owning process before terminating anything:
 Get-NetTCPConnection -State Listen | Where-Object LocalPort -In 3001,8011,8000,5173 | Select-Object LocalPort,OwningProcess
 ```
 
+Stop PostgreSQL without deleting its named volume:
+
+```powershell
+docker compose stop postgres
+```
+
 ## Gate 7: Evidence and Release Decision
 
 ### Step 24. Record results
@@ -727,7 +746,9 @@ Clean clone and prerequisite installation: PASS/FAIL
 Python dependency check: PASS/FAIL
 Execution npm install and audit: PASS/FAIL
 Frontend npm install and audit: PASS/FAIL
-PostgreSQL connectivity: PASS/FAIL
+Docker database bootstrap: PASS/FAIL
+Both PostgreSQL databases present: PASS/FAIL
+pgvector extension and RAG schema present: PASS/FAIL
 Execution subsystem startup: PASS/FAIL
 Builder startup: PASS/FAIL
 App backend and frontend startup: PASS/FAIL

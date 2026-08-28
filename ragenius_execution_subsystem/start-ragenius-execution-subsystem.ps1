@@ -26,6 +26,9 @@ if (-not (Test-Path ".env")) {
 
 Import-DotEnv (Join-Path $Root ".env")
 
+$databasePreflight = Join-Path (Resolve-Path (Join-Path $Root "..")) "scripts\Test-RageniusPostgres.ps1"
+& $databasePreflight -ConnectionString $env:DATABASE_URL -Label "Execution database"
+
 function Test-Enabled([string]$Value) {
     return @("1", "true", "yes", "on") -contains ([string]$Value).Trim().ToLowerInvariant()
 }

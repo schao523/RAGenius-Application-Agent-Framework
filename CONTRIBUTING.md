@@ -16,9 +16,10 @@ and subsystem improvements.
 
 ## Development Setup
 
-Follow the root `README.md`. Use tracked `.env.example` files as templates and
-keep real credentials in ignored local `.env` files. Do not use production
-accounts or data in tests.
+Follow the root `README.md` and the
+[`Contributor Startup Guide`](docs/contributor-startup-guide.md). Use tracked
+`.env.example` files as templates and keep real credentials in ignored local
+`.env` files. Do not use production accounts or data in tests.
 
 ## Change Expectations
 

@@ -25,7 +25,7 @@ jobs:
           python -m pip install -r ragenius_app_skeleton/backend/requirements.txt
           python -m pip install -r ragenius_builder/requirements.txt
       - name: Test RAG subsystem
-        run: python -m pytest tests/test_rag_subsystem.py
+        run: python -m pytest tests/test_rag_subsystem.py tests/test_local_database_bootstrap.py
       - name: Test app backend
         run: python -m pytest --basetemp="$env:RUNNER_TEMP/ragenius-app-backend" ragenius_app_skeleton/backend/tests
       - name: Test Builder
