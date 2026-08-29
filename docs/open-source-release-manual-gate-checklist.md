@@ -166,14 +166,41 @@ In the fork:
 2. Add a harmless file named `docs/manual-gate-probe.md`.
 3. Put only `Manual release gate probe. No product change.` in the file.
 4. Commit the file to `manual-gate-probe`, not to the fork's `main`.
-5. Open a pull request from the fork branch to the upstream `main` branch.
+5. Return to the upstream repository, not the fork's Pull requests page:
+
+   `https://github.com/schao523/RAGenius-Application-Agent-Framework/pulls`
+
+6. Select `New pull request`, then select `compare across forks` if GitHub does
+   not already show the fork. Verify all four fields before creating the pull
+   request:
+
+   | Field | Required value |
+   | --- | --- |
+   | Base repository | `schao523/RAGenius-Application-Agent-Framework` |
+   | Base branch | `main` |
+   | Head repository | `<NON_MAINTAINER>/RAGenius-Application-Agent-Framework` |
+   | Compare branch | `manual-gate-probe` |
+
+   The resulting pull-request URL must begin with
+   `https://github.com/schao523/RAGenius-Application-Agent-Framework/pull/`.
+   A URL under `<NON_MAINTAINER>/RAGenius-Application-Agent-Framework/pull/`
+   is a pull request inside the fork and does not test upstream CI or branch
+   protection.
+
+If the probe was accidentally merged into the fork's `main`, do not merge or
+push anything to upstream. The `manual-gate-probe` branch can still be compared
+against upstream `main` as long as its probe commit is not present upstream.
+Repeat steps 5 and 6 with the correct base repository.
 
 Expected result: the pull request can be opened, but the contributor cannot
 push directly to upstream `main`.
 
 ### Step 5. Verify required checks and review protection
 
-On the test pull request, confirm these checks appear:
+First confirm that the browser URL begins with
+`https://github.com/schao523/RAGenius-Application-Agent-Framework/pull/` and
+that the pull request header identifies the non-maintainer fork as the source.
+On that upstream test pull request, confirm these checks appear:
 
 - `python`
 - `app-frontend`
