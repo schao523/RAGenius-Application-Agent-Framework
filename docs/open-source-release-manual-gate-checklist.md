@@ -264,7 +264,28 @@ Launch Docker Desktop after installation and wait until its engine reports
 that it is running. RAGenius scripts do not launch the Docker application.
 
 Close and reopen PowerShell after installation so updated `PATH` values are
-loaded. Then run:
+loaded.
+
+Before calling npm from PowerShell, inspect the effective script policy:
+
+```powershell
+Get-ExecutionPolicy -List
+```
+
+If PowerShell reports that `npm.ps1` cannot be loaded because running scripts
+are disabled, allow locally created scripts for the current user:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+Review and accept the prompt, then close and reopen PowerShell. This setting
+does not use the unsafe `Unrestricted` policy. If organizational Group Policy
+prevents changing the effective policy, record the restriction and use
+`npm.cmd --version` only as a diagnostic; the clean-PC gate remains blocked
+until the startup and dependency commands can run under an approved policy.
+
+Then run:
 
 ```powershell
 git --version
@@ -285,6 +306,12 @@ Required baseline:
 - Docker Engine connectivity
 - Docker Compose
 
+`docker version` must show both `Client` and `Server` sections. If it shows
+only `Client` followed by a named-pipe or daemon connection error, Docker is
+installed but Docker Desktop is not running or has not finished starting.
+Open Docker Desktop, complete any first-run setup, wait for the engine to
+report that it is running, and repeat `docker version`.
+
 If any command is unavailable, install that prerequisite before continuing.
 The RAGenius startup scripts do not install it.
 
@@ -300,16 +327,8 @@ Docker Engine and Compose versions supported by the installed runtime
 
 The npm version bundled with a supported Node.js release is sufficient. Do
 not install an unrelated global npm version unless the bundled npm is broken.
-
-If PowerShell prevents virtual-environment activation scripts, allow locally
-created scripts for the current user:
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-```
-
-This changes the current user's PowerShell policy. Review the prompt before
-accepting it; do not use `Unrestricted` as a workaround.
+The `RemoteSigned` policy above also permits the repository's locally created
+Python virtual-environment activation script.
 
 ### Step 7. Clone and enter the repository root
 
