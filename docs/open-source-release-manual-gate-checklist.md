@@ -266,6 +266,47 @@ that it is running. RAGenius scripts do not launch the Docker application.
 Close and reopen PowerShell after installation so updated `PATH` values are
 loaded.
 
+Confirm the Windows architecture before selecting a Docker Desktop installer:
+
+```powershell
+[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+```
+
+Use the Windows Arm installer when this reports `Arm64`; do not install the
+x86-64 build merely because it is the first download offered. The Windows Arm
+build uses the WSL 2 backend. Before starting Docker Desktop, verify WSL and
+the required optional Windows features from an Administrator PowerShell:
+
+```powershell
+wsl --version
+Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux
+Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform
+```
+
+Both optional features must report `Enabled`, and Docker currently requires
+WSL 2.1.5 or newer. If either feature is disabled, enable it and restart the
+PC before opening Docker Desktop:
+
+```powershell
+dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+Restart-Computer
+```
+
+After restart, update WSL and select WSL 2 as the default:
+
+```powershell
+wsl --update
+wsl --set-default-version 2
+wsl --status
+```
+
+Microsoft Surface devices normally have firmware virtualization enabled. If
+Docker still reports that virtualization is not detected after both Windows
+features are enabled and the PC has restarted, install pending Windows and
+Surface firmware updates. Then inspect Task Manager's CPU Performance page or
+`systeminfo.exe` for hypervisor status before changing UEFI settings.
+
 Before calling npm from PowerShell, inspect the effective script policy:
 
 ```powershell
