@@ -57,6 +57,12 @@ Expected result: all three commands print nothing. Provide the tester with the
 exact commit SHA and successful Actions run URL. Do not provide credentials,
 maintainer cookies, ignored `.env` files, or local database volumes.
 
+This is the normal release path. For the first public release only, a solo
+maintainer who cannot obtain an eligible independent review may use the
+documented bootstrap exception below. That exception requires provisional
+testing of the exact pull-request head before an administrative merge and a
+fresh authoritative test of merged `main` afterward.
+
 ## Questions Answered
 
 ### Should the test use a different PC?
@@ -807,6 +813,90 @@ Stop PostgreSQL without deleting its named volume:
 docker compose stop postgres
 ```
 
+## Solo-Maintainer Bootstrap Exception
+
+This exception is available only for the initial public release when the
+repository has no independent collaborator with write access who can provide
+an approval that satisfies branch protection. It does not count as an
+independent approval and must not be described as one.
+
+The exception is permitted only when all of these conditions hold:
+
+- Gate 1 passed using a genuine non-maintainer account.
+- The exact pull-request head passed `python`, `app-frontend`, and
+  `execution-subsystem` CI checks.
+- Secret scanning, Dependabot, npm audit, and tracked-storage expectations
+  have no unresolved release blocker.
+- The pull request has no unresolved review conversation or requested change.
+- No eligible independent reviewer is reasonably available for the bootstrap
+  release.
+- The maintainer accepts responsibility for an explicitly documented
+  administrative bypass.
+
+### Provisional pre-merge verification
+
+Do not test the older upstream `main`. On the clean PC, fetch and detach the
+exact pull-request head:
+
+```powershell
+git fetch origin
+git switch --detach origin/codex/release-blocker-remediation
+$provisionalCommit = git rev-parse HEAD
+$provisionalCommit
+git status --short
+git ls-files "ragenius_execution_subsystem/storage/**"
+```
+
+Record the commit and its passing Actions run. The last two commands must print
+nothing. Do not push or commit from this detached checkout. Complete Gates 2
+through 6 and record the results as provisional evidence. Any failure blocks
+the administrative merge.
+
+After the provisional run passes, add a public comment to the release pull
+request using this record:
+
+```text
+Solo-maintainer bootstrap exception
+
+No eligible independent reviewer with write access was available for the
+initial public release. This is an administrative bootstrap exception, not an
+independent approval.
+
+Provisional pull-request commit:
+Passing GitHub Actions run:
+Clean-PC tester and environment:
+Gates completed:
+Unexpected external action observed: YES/NO
+Open blocker: NONE or describe
+
+No release tag will be created until merged-main verification passes.
+```
+
+Confirm that no commit was added after the recorded provisional commit. The
+maintainer may then merge using the repository administrator bypass. Do not
+disable branch protection and do not fabricate an approval from another
+account controlled by the maintainer.
+
+### Authoritative post-merge verification
+
+After the administrative merge:
+
+1. Confirm all required CI checks pass on the exact merged `main` commit.
+2. Stop the provisional services. If the Docker database contains only manual
+   gate test data, intentionally remove that test-only Compose volume with
+   `docker compose down -v`. Do not run this command against data that must be
+   preserved.
+3. Create a fresh clone in a new directory, check out merged `main`, and record
+   `git rev-parse HEAD`.
+4. Repeat Gates 2 through 6 against merged `main`, including fresh database
+   initialization and dependency installation.
+5. Record the final merged commit, Actions run, and authoritative results in
+   Gate 7.
+
+The exception ends after this first release. Keep the one-approval branch rule
+enabled and use independent review for later releases once an eligible
+collaborator is available.
+
 ## Gate 7: Evidence and Release Decision
 
 ### Step 24. Record results
@@ -817,6 +907,10 @@ issue:
 ```text
 Release candidate commit:
 GitHub Actions run:
+Review path: independent approval / solo-maintainer bootstrap exception
+Provisional PR commit (bootstrap exception only):
+Provisional GitHub Actions run (bootstrap exception only):
+Bootstrap exception PR comment URL (bootstrap exception only):
 Test date and timezone:
 Tester:
 Test PC and Windows version:
@@ -888,3 +982,6 @@ The manual gate is complete only when:
 - No credentials are committed or pasted into public issues, pull requests,
   logs, screenshots, or release notes.
 - The release candidate commit passes all required GitHub Actions checks.
+- The release pull request has either an eligible independent approval or a
+  documented initial-release solo-maintainer bootstrap exception with passing
+  provisional and authoritative post-merge evidence.
