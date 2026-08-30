@@ -54,3 +54,14 @@ def test_database_consumers_run_shared_preflight() -> None:
         startup_script = _read(relative_path)
         assert "Test-RageniusPostgres.ps1" in startup_script
         assert variable_name in startup_script
+
+
+def test_python_database_requirements_support_windows_arm64() -> None:
+    app_requirements = _read("ragenius_app_skeleton/backend/requirements.txt")
+    root_project = _read("pyproject.toml")
+    subsystem_project = _read("rag_subsystem/pyproject.toml")
+
+    assert "pg8000>=1.31,<2" in app_requirements
+    assert "psycopg[binary]" not in app_requirements
+    assert 'pgvector = ["pg8000>=1.31,<2"]' in root_project
+    assert 'pgvector = ["pg8000>=1.31,<2"]' in subsystem_project
