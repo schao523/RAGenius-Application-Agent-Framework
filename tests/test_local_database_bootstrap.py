@@ -41,6 +41,20 @@ def test_environment_templates_use_canonical_database_urls() -> None:
     assert f'DATABASE_URL="{execution_dsn}"' in execution_env
 
 
+def test_execution_environment_template_preserves_safe_agent_defaults() -> None:
+    execution_env = _read("ragenius_execution_subsystem/.env.example")
+
+    expected_defaults = (
+        'CODEX_MCP_ELICITATION_ENABLED="false"',
+        'CODEX_INTERACTIVE_AUTH_HANDOFF_ENABLED="false"',
+        'CODEX_INTERACTIVE_USER_ACTION_ENABLED="false"',
+        'CODEX_MCP_AUTH_ALLOWED_HOSTS_JSON="[]"',
+        'CODEX_MANAGED_AUTH_TARGETS_JSON="[]"',
+    )
+    for setting in expected_defaults:
+        assert setting in execution_env
+
+
 def test_database_consumers_run_shared_preflight() -> None:
     preflight = REPO_ROOT / "scripts" / "Test-RageniusPostgres.ps1"
     assert preflight.is_file()
