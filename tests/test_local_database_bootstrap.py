@@ -63,5 +63,9 @@ def test_python_database_requirements_support_windows_arm64() -> None:
 
     assert "pg8000>=1.31,<2" in app_requirements
     assert "psycopg[binary]" not in app_requirements
+    assert "uvicorn[standard]" not in app_requirements
+    assert "\nuvicorn\n" in f"\n{app_requirements}"
+    assert "pdfplumber" not in app_requirements
+    assert "pypdf>=5.0.0" in app_requirements
     assert 'pgvector = ["pg8000>=1.31,<2"]' in root_project
     assert 'pgvector = ["pg8000>=1.31,<2"]' in subsystem_project
