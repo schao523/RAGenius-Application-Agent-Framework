@@ -26,6 +26,9 @@ if (-not (Test-Path ".env")) {
 
 Import-DotEnv (Join-Path $Root ".env")
 
+$databasePreflight = Join-Path (Resolve-Path (Join-Path $Root "..")) "scripts\Test-RageniusPostgres.ps1"
+& $databasePreflight -ConnectionString $env:DATABASE_URL -Label "Execution database"
+
 function Test-Enabled([string]$Value) {
     return @("1", "true", "yes", "on") -contains ([string]$Value).Trim().ToLowerInvariant()
 }
@@ -36,6 +39,19 @@ function Set-DefaultProcessEnvironment([string]$Name, [string]$Value) {
     }
 }
 
+$nodePlatform = (& node -p "process.platform").Trim()
+if ($LASTEXITCODE -ne 0) { throw "Unable to determine the Node.js platform." }
+$nodeArchitecture = (& node -p "process.arch").Trim()
+if ($LASTEXITCODE -ne 0) { throw "Unable to determine the Node.js architecture." }
+
+if ($nodePlatform -eq "win32" -and $nodeArchitecture -eq "arm64") {
+    Set-DefaultProcessEnvironment "PRISMA_CLIENT_ENGINE_TYPE" "binary"
+    if ($env:PRISMA_CLIENT_ENGINE_TYPE.Trim().ToLowerInvariant() -ne "binary") {
+        throw "Native Windows ARM64 Node.js requires PRISMA_CLIENT_ENGINE_TYPE=binary with Prisma 6.19.3."
+    }
+    Write-Host "Prisma client engine: binary (Windows ARM64 compatibility mode)."
+}
+
 Set-DefaultProcessEnvironment "CODEX_MCP_ELICITATION_ENABLED" "false"
 Set-DefaultProcessEnvironment "CODEX_INTERACTIVE_AUTH_HANDOFF_ENABLED" "false"
 Set-DefaultProcessEnvironment "CODEX_INTERACTIVE_USER_ACTION_ENABLED" "false"
@@ -43,8 +59,8 @@ Set-DefaultProcessEnvironment "CODEX_MCP_AUTH_ALLOWED_HOSTS_JSON" "[]"
 Set-DefaultProcessEnvironment "CODEX_MANAGED_AUTH_TARGETS_JSON" "[]"
 
 try {
-    $codexAuthHosts = @($env:CODEX_MCP_AUTH_ALLOWED_HOSTS_JSON | ConvertFrom-Json)
-    $codexManagedAuthTargets = @($env:CODEX_MANAGED_AUTH_TARGETS_JSON | ConvertFrom-Json)
+    $codexAuthHosts = @(($env:CODEX_MCP_AUTH_ALLOWED_HOSTS_JSON | ConvertFrom-Json))
+    $codexManagedAuthTargets = @(($env:CODEX_MANAGED_AUTH_TARGETS_JSON | ConvertFrom-Json))
 }
 catch {
     throw "Codex interactive authentication configuration must contain valid JSON arrays."

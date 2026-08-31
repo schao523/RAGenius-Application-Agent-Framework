@@ -1,3 +1,5 @@
+# Legacy execution-only development stack. Prefer the repository-root
+# compose.yml, which creates both required databases on the canonical port.
 services:
   postgres:
     image: postgres:16

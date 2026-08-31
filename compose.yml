@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ragenius
+      POSTGRES_PASSWORD: ${RAGENIUS_POSTGRES_PASSWORD:-ragenius}
+      POSTGRES_DB: ragenius
+    ports:
+      - "${RAGENIUS_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - ragenius_postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init/10-create-execution-database.sql:/docker-entrypoint-initdb.d/10-create-execution-database.sql:ro
+      - ./rag_subsystem/sql/init_pgvector.sql:/docker-entrypoint-initdb.d/20-init-pgvector.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ragenius -d ragenius"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  ragenius_postgres_data:

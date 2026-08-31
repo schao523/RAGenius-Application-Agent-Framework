@@ -1,12 +1,17 @@
 """pgvector-backed vector store."""
 from __future__ import annotations
+import json
+from contextlib import closing
 from typing import Any, Dict, List, Sequence, Tuple
+from urllib.parse import unquote, urlparse
 try:
     import psycopg2
-    from psycopg2.extras import Json
 except ImportError:  # pragma: no cover - optional dependency
     psycopg2 = None
-    Json = None
+try:
+    import pg8000.dbapi as pg8000_dbapi
+except ImportError:  # pragma: no cover - optional dependency
+    pg8000_dbapi = None
 from .base import VectorStore
 from .doc_filter import normalize_doc_filter
 from ..schemas import Chunk
@@ -64,9 +69,21 @@ class PgVectorStore(VectorStore):
         self.ensure_ready()
 
     def _conn(self):  # pragma: no cover - requires postgres
-        if psycopg2 is None:
-            raise RuntimeError("psycopg2 not installed")
-        return psycopg2.connect(self.dsn)
+        if psycopg2 is not None:
+            return psycopg2.connect(self.dsn)
+        if pg8000_dbapi is None:
+            raise RuntimeError("PostgreSQL driver not installed; install the pgvector extra")
+
+        parsed = urlparse(self.dsn)
+        if parsed.scheme not in {"postgres", "postgresql"} or not parsed.hostname:
+            raise ValueError("RAG_VECTOR_STORE_DSN must be a PostgreSQL URL")
+        return pg8000_dbapi.connect(
+            user=unquote(parsed.username or ""),
+            password=unquote(parsed.password or ""),
+            host=parsed.hostname,
+            port=parsed.port or 5432,
+            database=unquote(parsed.path.lstrip("/")),
+        )
 
     @staticmethod
     def _to_vector_literal(values: List[float]) -> str:
@@ -102,7 +119,7 @@ class PgVectorStore(VectorStore):
             params.append(filename_in_norm)
 
     def _schema_is_ready(self) -> bool:
-        with self._conn() as conn, conn.cursor() as cur:
+        with self._conn() as conn, closing(conn.cursor()) as cur:
             cur.execute("SELECT 1 FROM pg_extension WHERE extname='vector'")
             has_vector = cur.fetchone() is not None
             cur.execute("SELECT to_regclass('public.rag_chunks')")
@@ -131,7 +148,7 @@ class PgVectorStore(VectorStore):
 
     def ensure_ready(self) -> None:
         if self.bootstrap_schema:
-            with self._conn() as conn, conn.cursor() as cur:
+            with self._conn() as conn, closing(conn.cursor()) as cur:
                 cur.execute(SQL_SCHEMA)
                 conn.commit()
         if not self._schema_is_ready():
@@ -142,7 +159,7 @@ class PgVectorStore(VectorStore):
 
     def upsert(self, chunks: Sequence[Chunk]) -> None:  # pragma: no cover - requires postgres
         with self._conn() as conn:
-            with conn.cursor() as cur:
+            with closing(conn.cursor()) as cur:
                 for chunk in chunks:
                     app_id = str(chunk.metadata.get("app_id", "")).strip()
                     if not app_id:
@@ -150,7 +167,7 @@ class PgVectorStore(VectorStore):
                     cur.execute(
                         """
                         INSERT INTO rag_chunks(doc_id, chunk_id, app_id, namespace, text, section_path, ordering, embedding, metadata, hash, language, embedding_model)
-                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s)
                         ON CONFLICT(chunk_id) DO UPDATE SET
                             app_id=EXCLUDED.app_id,
                             text=EXCLUDED.text,
@@ -172,7 +189,7 @@ class PgVectorStore(VectorStore):
                             chunk.section_path,
                             chunk.order,
                             self._to_vector_literal(chunk.embedding),
-                            Json(chunk.metadata),
+                            json.dumps(chunk.metadata, ensure_ascii=False),
                             chunk.hash,
                             chunk.language,
                             chunk.embedding_model,
@@ -195,7 +212,7 @@ class PgVectorStore(VectorStore):
         self._append_doc_filter_sql(where_clauses, params, doc_filter)
         where_sql = " AND ".join(where_clauses)
         vector_literal = self._to_vector_literal(query_embedding)
-        with self._conn() as conn, conn.cursor() as cur:
+        with self._conn() as conn, closing(conn.cursor()) as cur:
             cur.execute(
                 f"""SELECT doc_id, chunk_id, text, section_path, ordering, embedding, metadata, hash, language, embedding_model,
                 1 - (embedding <=> %s::vector) as score FROM rag_chunks WHERE {where_sql} ORDER BY embedding <=> %s::vector LIMIT %s""",
@@ -241,7 +258,7 @@ class PgVectorStore(VectorStore):
         where_sql = " AND ".join(where_clauses)
         sql = f"SELECT doc_id, chunk_id, text, section_path, ordering, embedding, metadata, hash, language, embedding_model FROM rag_chunks WHERE {where_sql} LIMIT %s"
         params.append(top_k)
-        with self._conn() as conn, conn.cursor() as cur:
+        with self._conn() as conn, closing(conn.cursor()) as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
             return [
@@ -278,7 +295,7 @@ class PgVectorStore(VectorStore):
         params: List[Any] = [app_id, namespace, f"%{query_text}%"]
         self._append_doc_filter_sql(where_clauses, params, doc_filter)
         where_sql = " AND ".join(where_clauses)
-        with self._conn() as conn, conn.cursor() as cur:
+        with self._conn() as conn, closing(conn.cursor()) as cur:
             cur.execute(
                 f"""
                 SELECT doc_id, chunk_id, text, section_path, ordering, embedding, metadata, hash, language, embedding_model,
@@ -315,6 +332,6 @@ class PgVectorStore(VectorStore):
     def delete_by_doc_id(self, doc_id: str, app_id: str | None = None) -> None:  # pragma: no cover
         if not app_id:
             raise ValueError("app_id is required for delete_by_doc_id")
-        with self._conn() as conn, conn.cursor() as cur:
+        with self._conn() as conn, closing(conn.cursor()) as cur:
             cur.execute("DELETE FROM rag_chunks WHERE doc_id=%s AND app_id=%s", (doc_id, app_id))
             conn.commit()

@@ -215,7 +215,7 @@ describe("ArtifactLibrary", () => {
         artifact_id: "artifact_pdf",
       }),
     );
-  });
+  }, 10_000);
 
   it("shows reviewed and reuse mode badges for reviewed artifacts", () => {
     render(

@@ -1,3 +1,5 @@
+# Legacy app-skeleton-only stack. Prefer the repository-root compose.yml plus
+# the tracked PowerShell startup scripts for integrated development.
 version: "3.9"
 
 services:

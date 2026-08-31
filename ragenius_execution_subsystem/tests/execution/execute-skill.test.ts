@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { FastifyInstance } from "fastify";
@@ -80,11 +81,18 @@ async function cleanupMutationRoot(root: string): Promise<void> {
 
 describe("health routes", () => {
   let app: FastifyInstance | undefined;
+  const temporaryArtifactRoots = new Set<string>();
 
   afterEach(async () => {
     await app?.close();
     app = undefined;
     globalThis.fetch = originalFetch;
+    await Promise.all(
+      [...temporaryArtifactRoots].map(async (root) => {
+        await cleanupMutationRoot(root);
+        temporaryArtifactRoots.delete(root);
+      })
+    );
   });
 
   it("returns ok for /healthz", async () => {
@@ -390,11 +398,10 @@ describe("health routes", () => {
   });
 
   it("returns app-scoped artifact inventory with policy eligibility filtering", async () => {
-    const artifactRoot = path.join(
-      process.cwd(),
-      "storage",
-      `test-artifacts-list-${Date.now()}`
+    const artifactRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "ragenius-artifacts-list-")
     );
+    temporaryArtifactRoots.add(artifactRoot);
     app = buildApp(
       {},
       buildRuntimeConfig(

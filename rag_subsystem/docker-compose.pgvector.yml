@@ -1,3 +1,5 @@
+# Legacy pgvector-only development stack. Prefer the repository-root compose.yml
+# for integrated RAGenius development and release verification.
 version: "3.9"
 
 services:

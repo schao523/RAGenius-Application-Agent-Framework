@@ -1,4 +1,5 @@
 import os
+import json
 import sys
 from pathlib import Path
 import pytest
@@ -20,6 +21,7 @@ from rag_subsystem.vector_store.in_memory_store import InMemoryVectorStore
 from rag_subsystem.vector_store.json_file_store import JsonFileVectorStore
 from rag_subsystem.vector_store.pgvector_store import PgVectorStore
 from rag_subsystem.vector_store.pgvector_store import SQL_SCHEMA
+from rag_subsystem.vector_store import pgvector_store as pgvector_module
 from rag_subsystem.vector_store import factory as store_factory
 from rag_subsystem.vector_store.factory import (
     create_vector_store,
@@ -28,6 +30,80 @@ from rag_subsystem.vector_store.factory import (
 )
 from rag_subsystem.config import ProcessConfig, RetrievalConfig
 from rag_subsystem.embedding import embed_text, _default_model_dir
+
+
+def test_pgvector_uses_pure_python_fallback_when_psycopg2_is_unavailable(monkeypatch):
+    captured = {}
+    expected_connection = object()
+
+    class FakePg8000:
+        @staticmethod
+        def connect(**kwargs):
+            captured.update(kwargs)
+            return expected_connection
+
+    monkeypatch.setattr(pgvector_module, "psycopg2", None)
+    monkeypatch.setattr(pgvector_module, "pg8000_dbapi", FakePg8000, raising=False)
+
+    store = object.__new__(PgVectorStore)
+    store.dsn = "postgresql://rag%20user:p%40ss@db.example:5544/rag%20db"
+
+    assert store._conn() is expected_connection
+    assert captured == {
+        "user": "rag user",
+        "password": "p@ss",
+        "host": "db.example",
+        "port": 5544,
+        "database": "rag db",
+    }
+
+
+def test_pgvector_upsert_serializes_json_for_all_dbapi_drivers():
+    calls = []
+    cursor_state = {"closed": False}
+
+    class FakeCursor:
+        def execute(self, sql, params):
+            calls.append((sql, params))
+
+        def close(self):
+            cursor_state["closed"] = True
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+        def commit(self):
+            pass
+
+    store = object.__new__(PgVectorStore)
+    store._conn = lambda: FakeConnection()
+    chunk = Chunk(
+        doc_id="doc-1",
+        chunk_id="chunk-1",
+        text="text",
+        section_path=None,
+        order=0,
+        language="en",
+        embedding_model="test",
+        namespace="app:test",
+        embedding=[0.1, 0.2],
+        metadata={"app_id": "app-1", "nested": {"ok": True}},
+        hash="hash-1",
+    )
+
+    store.upsert([chunk])
+
+    sql, params = calls[0]
+    assert "%s::jsonb" in sql
+    assert json.loads(params[8]) == chunk.metadata
+    assert cursor_state["closed"] is True
 
 
 def test_normalize_and_fallbacks():

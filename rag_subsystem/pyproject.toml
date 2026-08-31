@@ -19,7 +19,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-pgvector = ["psycopg2-binary>=2.9"]
+pgvector = ["pg8000>=1.31,<2"]
 local-embeddings = [
   "sentence-transformers>=2.7",
   "torch>=2.2",

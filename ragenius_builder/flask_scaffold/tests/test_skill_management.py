@@ -640,7 +640,11 @@ class SkillManagementTests(unittest.TestCase):
             store.close()
 
         self.assertEqual(response.status_code, 200)
-        self.assertLess(body.index("Newer App"), body.index("Older App"))
+        bindings_section = body.split(">Bindings</h2>", 1)[1]
+        self.assertLess(
+            bindings_section.index("Newer App"),
+            bindings_section.index("Older App"),
+        )
 
     def test_skill_test_page_prefills_research_topic_from_published_skill_schema(self) -> None:
         store = DatabaseStore(

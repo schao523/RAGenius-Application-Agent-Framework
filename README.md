@@ -21,7 +21,9 @@ are additionally session-scoped. Retrieval logic belongs only in
 ## Current Platform Support
 
 The integrated developer startup path is tested on Windows with PowerShell,
-Python 3.10+, Node.js 20+, npm, PostgreSQL, and optional WSL for OpenClaw.
+Python 3.10+, Node.js 20+, npm, a Docker-compatible runtime, and optional WSL
+for OpenClaw. Native PostgreSQL 16 with pgvector is supported as an advanced
+alternative to the canonical Docker database path.
 Individual Python and Node test suites may run elsewhere, but Linux and macOS
 are not yet supported as complete three-subsystem runtime environments.
 
@@ -31,12 +33,43 @@ their own licenses, accounts, usage charges, or security requirements.
 
 ## Quick Start
 
-1. Install Python 3.10+, Node.js 20+, npm, PostgreSQL, and Git.
-2. Create and activate a virtual environment.
-3. Install the Python dependencies.
-4. Copy each tracked environment template to its ignored `.env` file.
-5. Start the execution subsystem, Builder, and app skeleton in separate
+For a complete clean-machine walkthrough and troubleshooting guidance, see
+the [Contributor Startup Guide](docs/contributor-startup-guide.md).
+
+1. Install Python 3.10+, Node.js 20+, npm, Git, and a Docker-compatible runtime.
+2. Start the Docker runtime and initialize the local databases.
+3. Create and activate a virtual environment.
+4. Install the Python dependencies.
+5. Copy each tracked environment template to its ignored `.env` file.
+6. Start the execution subsystem, Builder, and app skeleton in separate
    PowerShell terminals.
+
+From the repository root, start the canonical PostgreSQL 16/pgvector service:
+
+```powershell
+docker compose up -d --wait postgres
+docker compose ps
+docker compose exec postgres psql -U ragenius -d ragenius -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+docker compose exec postgres psql -U ragenius -d ragenius_execution -c "SELECT 1;"
+```
+
+The root Compose stack exposes PostgreSQL on `127.0.0.1:5433`, persists data
+in a named volume, creates both `ragenius` and `ragenius_execution`, and
+initializes the RAG pgvector schema. Docker Desktop or another compatible
+runtime must already be running; subsystem startup scripts do not launch it.
+The tracked `ragenius` password is for isolated local development only.
+
+If another local service already owns `5433`, either stop that service or use
+an alternate host port and update all copied `.env` database URLs to match:
+
+```powershell
+$env:RAGENIUS_POSTGRES_PORT = "55433"
+docker compose up -d --wait postgres
+```
+
+The root stack uses its own named volume and does not automatically adopt data
+from the legacy subsystem-specific Compose projects. Back up and migrate data
+deliberately before retiring an existing database volume.
 
 ```powershell
 python -m venv .venv
@@ -67,6 +100,15 @@ powershell -ExecutionPolicy Bypass -File .\ragenius_app_skeleton\start-ragenius-
 The default local endpoints are Builder `http://127.0.0.1:8011`, app backend
 `http://127.0.0.1:8000`, app frontend `http://127.0.0.1:5173`, and execution
 subsystem `http://127.0.0.1:3001`.
+
+Stop the database without deleting its data:
+
+```powershell
+docker compose stop postgres
+```
+
+`docker compose down -v` permanently deletes the local database volume. Use it
+only when an intentional clean reset is required.
 
 ## Safe Defaults
 

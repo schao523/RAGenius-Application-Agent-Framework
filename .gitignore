@@ -217,6 +217,7 @@ outputs/
 
 # RAGenius local runtime state
 ragenius_app_skeleton/backend/.state/
+ragenius_app_skeleton/backend/.test_state/
 ragenius_app_skeleton/.test_state/
 ragenius_app_skeleton/runtime_state.db
 ragenius_app_skeleton/backend/app/builder_data.db
