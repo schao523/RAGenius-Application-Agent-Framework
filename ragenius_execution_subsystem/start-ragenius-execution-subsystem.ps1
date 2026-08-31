@@ -39,6 +39,19 @@ function Set-DefaultProcessEnvironment([string]$Name, [string]$Value) {
     }
 }
 
+$nodePlatform = (& node -p "process.platform").Trim()
+if ($LASTEXITCODE -ne 0) { throw "Unable to determine the Node.js platform." }
+$nodeArchitecture = (& node -p "process.arch").Trim()
+if ($LASTEXITCODE -ne 0) { throw "Unable to determine the Node.js architecture." }
+
+if ($nodePlatform -eq "win32" -and $nodeArchitecture -eq "arm64") {
+    Set-DefaultProcessEnvironment "PRISMA_CLIENT_ENGINE_TYPE" "binary"
+    if ($env:PRISMA_CLIENT_ENGINE_TYPE.Trim().ToLowerInvariant() -ne "binary") {
+        throw "Native Windows ARM64 Node.js requires PRISMA_CLIENT_ENGINE_TYPE=binary with Prisma 6.19.3."
+    }
+    Write-Host "Prisma client engine: binary (Windows ARM64 compatibility mode)."
+}
+
 Set-DefaultProcessEnvironment "CODEX_MCP_ELICITATION_ENABLED" "false"
 Set-DefaultProcessEnvironment "CODEX_INTERACTIVE_AUTH_HANDOFF_ENABLED" "false"
 Set-DefaultProcessEnvironment "CODEX_INTERACTIVE_USER_ACTION_ENABLED" "false"

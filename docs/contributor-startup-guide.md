@@ -35,6 +35,11 @@ docker compose version
 that it cannot connect to the engine, start Docker Desktop and wait for it to
 finish initializing. RAGenius does not launch Docker Desktop automatically.
 
+On Windows ARM64, native ARM64 Node.js is supported through an automatic
+Prisma 6 compatibility mode. The execution startup script detects
+`process.platform=win32` and `process.arch=arm64`, then generates Prisma Client
+with the separate binary query engine. No x64 Node.js replacement is required.
+
 ## 2. Clone the Repository
 
 ```powershell
@@ -266,6 +271,21 @@ services or another contributor's runtime.
 Stop every running execution-subsystem Node.js process before regenerating the
 Prisma client. A running process can hold
 `query_engine-windows.dll.node` open and cause an `EPERM` rename failure.
+
+### Prisma Reports "Not a Valid Win32 Application" on Windows ARM64
+
+Confirm the Node.js architecture:
+
+```powershell
+node -p "JSON.stringify({platform: process.platform, arch: process.arch, version: process.version})"
+```
+
+For `win32` and `arm64`, use the repository startup script rather than invoking
+the generated client directly. The script selects
+`PRISMA_CLIENT_ENGINE_TYPE=binary` before regenerating Prisma Client and prints
+`Prisma client engine: binary (Windows ARM64 compatibility mode).` Do not force
+the setting back to `library`; that mode attempts to load Prisma's x64 Windows
+DLL into the ARM64 Node.js process.
 
 ### Basic Startup Works but an External Provider Does Not
 

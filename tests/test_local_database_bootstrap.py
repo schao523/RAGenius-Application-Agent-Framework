@@ -70,6 +70,21 @@ def test_database_consumers_run_shared_preflight() -> None:
         assert variable_name in startup_script
 
 
+def test_execution_startup_selects_prisma_binary_engine_on_windows_arm64() -> None:
+    startup_script = _read(
+        "ragenius_execution_subsystem/start-ragenius-execution-subsystem.ps1"
+    )
+
+    platform_probe = 'node -p "process.platform"'
+    architecture_probe = 'node -p "process.arch"'
+    engine_setting = 'Set-DefaultProcessEnvironment "PRISMA_CLIENT_ENGINE_TYPE" "binary"'
+
+    assert platform_probe in startup_script
+    assert architecture_probe in startup_script
+    assert engine_setting in startup_script
+    assert startup_script.index(engine_setting) < startup_script.index("npx prisma generate")
+
+
 def test_python_database_requirements_support_windows_arm64() -> None:
     app_requirements = _read("ragenius_app_skeleton/backend/requirements.txt")
     root_project = _read("pyproject.toml")

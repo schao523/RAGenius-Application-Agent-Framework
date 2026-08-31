@@ -339,6 +339,7 @@ git --version
 python --version
 py --version
 node --version
+node -p "JSON.stringify({platform: process.platform, arch: process.arch, version: process.version})"
 npm --version
 docker version
 docker compose version
@@ -376,6 +377,11 @@ The npm version bundled with a supported Node.js release is sufficient. Do
 not install an unrelated global npm version unless the bundled npm is broken.
 The `RemoteSigned` policy above also permits the repository's locally created
 Python virtual-environment activation script.
+
+On a Windows ARM64 PC, `node -p` may report `"arch":"arm64"`. This is
+supported: the execution startup script automatically selects Prisma's
+separate binary query engine before generating the client. Do not replace
+native ARM64 Node.js with x64 Node.js merely for the clean-PC gate.
 
 ### Step 7. Clone and enter the repository root
 
@@ -648,9 +654,14 @@ service authentication and use distinct random credentials with scoped access.
 ### Step 17A. Validate Prisma and database preparation
 
 After the execution `.env` file contains the correct `DATABASE_URL`, validate
-the Prisma schema, generate the client, and apply execution migrations:
+the Prisma schema, generate the client, and apply execution migrations. The
+first command selects Prisma's separate binary engine only when Node.js is
+running natively on Windows ARM64:
 
 ```powershell
+if ((node -p "process.platform") -eq "win32" -and (node -p "process.arch") -eq "arm64") {
+    $env:PRISMA_CLIENT_ENGINE_TYPE = "binary"
+}
 Push-Location ragenius_execution_subsystem
 npx prisma validate
 npx prisma generate
@@ -667,6 +678,10 @@ Expected results:
 The execution startup script repeats dependency synchronization, Prisma client
 generation, and migration deployment. Running these commands here is an
 intentional preflight, not an additional runtime requirement.
+
+On native Windows ARM64 Node.js, keep the temporary setting in the current
+terminal through Step 18. The startup output must include
+`Prisma client engine: binary (Windows ARM64 compatibility mode).`
 
 ### Dependency troubleshooting rules
 
@@ -715,6 +730,12 @@ Confirm the startup output includes equivalent values:
 Execution database endpoint is reachable at localhost:5433.
 Interactive Agent transports: Codex=False OpenClaw=False OpenClawChatLevel=False
 Codex interactive capabilities: McpElicitation=False AuthHandoff=False UserAction=False AuthHosts=0 ManagedAuthTargets=0
+```
+
+On native Windows ARM64 Node.js, also confirm:
+
+```text
+Prisma client engine: binary (Windows ARM64 compatibility mode).
 ```
 
 Failure conditions include an unexpected enabled capability, nonempty
