@@ -101,6 +101,28 @@ The default local endpoints are Builder `http://127.0.0.1:8011`, app backend
 `http://127.0.0.1:8000`, app frontend `http://127.0.0.1:5173`, and execution
 subsystem `http://127.0.0.1:3001`.
 
+## DeepSeek LLM Configuration
+
+The currently documented and tested LLM provider for the integrated normal
+chat path is DeepSeek through its OpenAI-compatible API. Basic local startup
+and deterministic fallback behavior do not require an LLM credential, but
+model-backed planning and answer generation require a DeepSeek API key and
+Builder task-model settings that select the `deepseek` provider.
+
+Add the key only to the ignored `ragenius_app_skeleton/.env` file:
+
+```dotenv
+DEEPSEEK_API_KEY=replace-with-your-deepseek-api-key
+```
+
+The runtime uses `https://api.deepseek.com` by default. Advanced deployments
+may override it with `DEEPSEEK_BASE_URL` or `RAGENIUS_LLM_BASE_URL`.
+`RAGENIUS_LLM_API_KEY` is accepted as a provider-neutral fallback secret, but
+`DEEPSEEK_API_KEY` is the recommended setting for the supported DeepSeek path.
+Never commit a real API key or place it in Builder settings, frontend code, or
+tracked environment templates. Without a configured key, the application can
+start, but it cannot call DeepSeek and may use deterministic fallback behavior.
+
 Stop the database without deleting its data:
 
 ```powershell

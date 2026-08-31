@@ -55,6 +55,15 @@ def test_execution_environment_template_preserves_safe_agent_defaults() -> None:
         assert setting in execution_env
 
 
+def test_readme_documents_deepseek_chat_requirement() -> None:
+    readme = _read("README.md")
+
+    assert "## DeepSeek LLM Configuration" in readme
+    assert "DEEPSEEK_API_KEY" in readme
+    assert "https://api.deepseek.com" in readme
+    assert "Never commit" in readme
+
+
 def test_database_consumers_run_shared_preflight() -> None:
     preflight = REPO_ROOT / "scripts" / "Test-RageniusPostgres.ps1"
     assert preflight.is_file()
