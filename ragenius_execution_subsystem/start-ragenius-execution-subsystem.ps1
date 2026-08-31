@@ -59,8 +59,8 @@ Set-DefaultProcessEnvironment "CODEX_MCP_AUTH_ALLOWED_HOSTS_JSON" "[]"
 Set-DefaultProcessEnvironment "CODEX_MANAGED_AUTH_TARGETS_JSON" "[]"
 
 try {
-    $codexAuthHosts = @($env:CODEX_MCP_AUTH_ALLOWED_HOSTS_JSON | ConvertFrom-Json)
-    $codexManagedAuthTargets = @($env:CODEX_MANAGED_AUTH_TARGETS_JSON | ConvertFrom-Json)
+    $codexAuthHosts = @(($env:CODEX_MCP_AUTH_ALLOWED_HOSTS_JSON | ConvertFrom-Json))
+    $codexManagedAuthTargets = @(($env:CODEX_MANAGED_AUTH_TARGETS_JSON | ConvertFrom-Json))
 }
 catch {
     throw "Codex interactive authentication configuration must contain valid JSON arrays."

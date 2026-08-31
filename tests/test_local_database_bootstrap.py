@@ -85,6 +85,15 @@ def test_execution_startup_selects_prisma_binary_engine_on_windows_arm64() -> No
     assert startup_script.index(engine_setting) < startup_script.index("npx prisma generate")
 
 
+def test_execution_startup_counts_empty_interactive_allowlists_as_zero() -> None:
+    startup_script = _read(
+        "ragenius_execution_subsystem/start-ragenius-execution-subsystem.ps1"
+    )
+
+    assert '@(($env:CODEX_MCP_AUTH_ALLOWED_HOSTS_JSON | ConvertFrom-Json))' in startup_script
+    assert '@(($env:CODEX_MANAGED_AUTH_TARGETS_JSON | ConvertFrom-Json))' in startup_script
+
+
 def test_python_database_requirements_support_windows_arm64() -> None:
     app_requirements = _read("ragenius_app_skeleton/backend/requirements.txt")
     root_project = _read("pyproject.toml")
