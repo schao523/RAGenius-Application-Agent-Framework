@@ -1,0 +1,762 @@
+{
+  "apps": [
+    {
+      "description": "教會事工指令設計師（Church Ministry Prompt Designer）: 幫助你快速生成高品質、結構化的 Prompt，適用於教牧 GPT、通用 LLM 與 Agent 工具，支援靈修、查經、門訓與教會內容創作。",
+      "documents": [
+        {
+          "filename": "AI 工具套餐體系.pdf",
+          "id": "1316f69f-6574-4584-b89c-39f56e9c889e",
+          "language": "zh",
+          "mime_type": "application/pdf",
+          "seed_path": "documents/053eb2ca-54e0-49bf-b7dd-604c9608489e/AI 工具套餐體系.pdf",
+          "sha256": "0af0e096925e1dc72f2e4bb44b44acc65512579e0c557295c9d9d83fb656745a",
+          "size_bytes": 4173693,
+          "tags": []
+        },
+        {
+          "filename": "AI 工具套餐體系總覽清單.pdf",
+          "id": "0b5672c5-0cc2-44e9-b53c-e2994b4a4108",
+          "language": "zh",
+          "mime_type": "application/pdf",
+          "seed_path": "documents/053eb2ca-54e0-49bf-b7dd-604c9608489e/AI 工具套餐體系總覽清單.pdf",
+          "sha256": "df22693b74311346ef6e99c96c1a2143105c32dcfd83a6dd189f089606e075a8",
+          "size_bytes": 4117177,
+          "tags": []
+        },
+        {
+          "filename": "Optimization Strategy Library.md",
+          "id": "b1b80d79-855d-489c-8369-d8eef30e4751",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/053eb2ca-54e0-49bf-b7dd-604c9608489e/Optimization Strategy Library.md",
+          "sha256": "cb5795830f142a241df8499f3fe0269e8458a0b19d2fb79726309dc0dc8e7da7",
+          "size_bytes": 4003,
+          "tags": []
+        },
+        {
+          "filename": "delimiter_rules.md",
+          "id": "5d0fb48a-9351-4835-bd53-79f4525f2322",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/053eb2ca-54e0-49bf-b7dd-604c9608489e/delimiter_rules.md",
+          "sha256": "1b2cdd524660e33f8bcd22f7d3016b0e8a9fc63df00f7b54a40d750187bce08d",
+          "size_bytes": 2873,
+          "tags": []
+        },
+        {
+          "filename": "dynamic_prompt_optimizer.md",
+          "id": "c4a80672-2ea6-4952-ba68-c0b7eafd1d56",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/053eb2ca-54e0-49bf-b7dd-604c9608489e/dynamic_prompt_optimizer.md",
+          "sha256": "38d7c74d7e59eb0f7230b4c47a59ae202511ea79ec2b3ac681591a75e8897cda",
+          "size_bytes": 4416,
+          "tags": []
+        },
+        {
+          "filename": "prompt_design_rules.md",
+          "id": "82fbd8dc-0cbd-4e4d-9d1d-56a33ea96ddc",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/053eb2ca-54e0-49bf-b7dd-604c9608489e/prompt_design_rules.md",
+          "sha256": "f1ee04647c4b3eef547dbb990ca71ea0280bf1714242203b0ce7e664a8bd1b7e",
+          "size_bytes": 3125,
+          "tags": []
+        },
+        {
+          "filename": "suite_tool_mapping.md",
+          "id": "8c23cfb9-8145-4551-afee-b7c56b6d9df4",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/053eb2ca-54e0-49bf-b7dd-604c9608489e/suite_tool_mapping.md",
+          "sha256": "bf840611c41c817b25706b41e98770f78f6da2a830c86ccba7d4517b29e16245",
+          "size_bytes": 2674,
+          "tags": []
+        },
+        {
+          "filename": "suite_type_mapping.md",
+          "id": "8a4dc2cc-4ba9-4709-bae2-5543fcecd66f",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/053eb2ca-54e0-49bf-b7dd-604c9608489e/suite_type_mapping.md",
+          "sha256": "2560222f6d389079c4097a046f6d3516a403bd5e329929180b05c6714149801d",
+          "size_bytes": 2285,
+          "tags": []
+        },
+        {
+          "filename": "template_library.md",
+          "id": "e7c983b7-7742-4a82-b606-ebe121572c34",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/053eb2ca-54e0-49bf-b7dd-604c9608489e/template_library.md",
+          "sha256": "24763c7b983469974a7b13e230964f904b3ee7d06e318290235a260171d907b3",
+          "size_bytes": 3939,
+          "tags": []
+        }
+      ],
+      "id": "053eb2ca-54e0-49bf-b7dd-604c9608489e",
+      "instructions": {
+        "seed_path": "instructions/053eb2ca-54e0-49bf-b7dd-604c9608489e/instructions.md",
+        "sha256": "672392d4290c587248239132de1cc2468f20ff34cc60aeb6a5ad23c76d5ca1d7",
+        "uri": "instructions/053eb2ca-54e0-49bf-b7dd-604c9608489e/instructions.md",
+        "version": "v1"
+      },
+      "name": "教會事工指令設計師  Church Ministry Prompt Designer",
+      "purpose": "Prompt design workflow demo for church ministry content and structured prompt generation.",
+      "settings": {
+        "config_schema": {
+          "properties": {
+            "llm": {
+              "properties": {
+                "models": {
+                  "properties": {
+                    "adapter_generation": {
+                      "default": "deepseek-v4-pro",
+                      "type": "string"
+                    },
+                    "answer_generation": {
+                      "default": "deepseek-v4-flash",
+                      "type": "string"
+                    },
+                    "config_extraction_fallback": {
+                      "default": "deepseek-v4-flash",
+                      "type": "string"
+                    },
+                    "evidence_analysis": {
+                      "default": "deepseek-v4-flash",
+                      "type": "string"
+                    },
+                    "planner": {
+                      "default": "deepseek-v4-pro",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "provider": {
+                  "default": "deepseek",
+                  "type": "string"
+                },
+                "temperature": {
+                  "properties": {
+                    "adapter_generation": {
+                      "default": 0.0,
+                      "type": "number"
+                    },
+                    "answer_generation": {
+                      "default": 0.2,
+                      "type": "number"
+                    },
+                    "evidence_analysis": {
+                      "default": 0.1,
+                      "type": "number"
+                    },
+                    "planner": {
+                      "default": 0.1,
+                      "type": "number"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "config_settings": {
+          "instruction_understanding_mode": "hybrid_active",
+          "llm": {
+            "models": {
+              "adapter_generation": "deepseek-v4-flash",
+              "answer_generation": "deepseek-v4-flash",
+              "config_extraction_fallback": "deepseek-v4-flash",
+              "evidence_analysis": "deepseek-v4-flash",
+              "instruction_understanding_compile": "deepseek-v4-pro",
+              "instruction_understanding_review": "deepseek-v4-pro",
+              "instruction_understanding_revision": "deepseek-v4-pro",
+              "planner": "deepseek-v4-flash"
+            },
+            "provider": "deepseek",
+            "temperature": {
+              "adapter_generation": 0,
+              "answer_generation": 0.2,
+              "evidence_analysis": 0.1,
+              "instruction_understanding_compile": 0,
+              "instruction_understanding_review": 0,
+              "instruction_understanding_revision": 0,
+              "planner": 0.1
+            }
+          },
+          "planner_mode": "hybrid_active"
+        }
+      },
+      "slug": "prompt-writing",
+      "snapshot": {
+        "compiled_at": "2026-05-21T21:49:39.036618+00:00",
+        "compiled_status": "ready",
+        "freshness": "fresh",
+        "id": "c417296b-ddc9-418e-80e4-13f7b24d478c",
+        "instruction_source_hash": "672392d4290c587248239132de1cc2468f20ff34cc60aeb6a5ad23c76d5ca1d7",
+        "metadata": {
+          "preserved_active_record_id": null,
+          "procedure_count": 3,
+          "publish_status": "active",
+          "semantic_compile_attached": true,
+          "semantic_compile_empty": false,
+          "semantic_compile_valid": true,
+          "service_block_count": 5
+        },
+        "resource_catalog_hash": "a88f436dcb8d37f3460bdaed01ec84286f32888598696eaaee03ca50c13d5235",
+        "seed_path": "snapshots/053eb2ca-54e0-49bf-b7dd-604c9608489e/understanding.json"
+      },
+      "starter_questions": [
+        "我想透過【主題或經文】幫助人更深認識神的真理，請幫我建立一個能支持這目的的最佳化提示（prompt）。",
+        "請協助我生成一個能鼓勵與牧養【對象】、帶來屬靈更新與安慰的提示（prompt）。",
+        "我希望激勵信徒回應呼召、參與服事或外展，請幫我創建一個能啟發行動的提示（prompt）。",
+        "我想促進教會群體的連結與成長，請幫我生成一個能帶來互動、反思與實踐的提示（prompt）。"
+      ]
+    },
+    {
+      "description": "透過精心設計的引導式『歸納釋經法』，深入挖掘聖經經文及其歷史背景，發現智慧與真理，享受信仰的喜悅與生命的更新。",
+      "documents": [
+        {
+          "filename": "Bible 新約聖經和合本.pdf",
+          "id": "5d486309-8b00-411e-935c-2254dfa030a0",
+          "language": "zh",
+          "mime_type": "application/pdf",
+          "seed_path": "documents/2302c77b-3d82-4650-bd15-e0ff9c0faab7/Bible 新約聖經和合本.pdf",
+          "sha256": "4f0f9ef4c4a78b83f918c74e8f368a7e0eae515c17866c7767c310ca75786490",
+          "size_bytes": 1557874,
+          "tags": []
+        },
+        {
+          "filename": "Bible 舊約聖經和合本.pdf",
+          "id": "37382cbc-f9c5-41b3-8b7b-1498726a7c3d",
+          "language": "zh",
+          "mime_type": "application/pdf",
+          "seed_path": "documents/2302c77b-3d82-4650-bd15-e0ff9c0faab7/Bible 舊約聖經和合本.pdf",
+          "sha256": "2740a6f824f96374cb127d78c3d646b489963898dacc252b842d9a8894a91125",
+          "size_bytes": 4427709,
+          "tags": []
+        },
+        {
+          "filename": "answer_questions_guide.md",
+          "id": "5390203a-57d7-4aea-81bc-91c3dac3a3c7",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/2302c77b-3d82-4650-bd15-e0ff9c0faab7/answer_questions_guide.md",
+          "sha256": "ce079b141f93a658bc931b29ef9678eb34eb16f9dfb1e6abe7b264ec87fd0fb6",
+          "size_bytes": 3893,
+          "tags": []
+        },
+        {
+          "filename": "apply_in_action_guide.md",
+          "id": "2ede9576-ed66-4fb3-9762-df302095d721",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/2302c77b-3d82-4650-bd15-e0ff9c0faab7/apply_in_action_guide.md",
+          "sha256": "1fb7cbf8f420ff52431e9c9070c5ee4c1a734fbbb8fb38c8da82fd2bf957fd61",
+          "size_bytes": 2126,
+          "tags": []
+        },
+        {
+          "filename": "examine_structure_guide.md",
+          "id": "a4ca397c-f79a-45ab-be43-96bd558b7188",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/2302c77b-3d82-4650-bd15-e0ff9c0faab7/examine_structure_guide.md",
+          "sha256": "5c79d2842844d7cb5a4e8700082fcb34c5cd44637c637094e7f3efaf62dc4c78",
+          "size_bytes": 3429,
+          "tags": []
+        },
+        {
+          "filename": "formulate_questions_guide.md",
+          "id": "6044be2d-5fbc-4444-ae12-8bb7548be4bb",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/2302c77b-3d82-4650-bd15-e0ff9c0faab7/formulate_questions_guide.md",
+          "sha256": "60c085dec2c25c0a5390e0319da722f3dbb4cac211a2d77699c8f10eb478814c",
+          "size_bytes": 3260,
+          "tags": []
+        },
+        {
+          "filename": "identify_relationships_guide.md",
+          "id": "4814b07c-6928-45ff-a6af-cb4d377f8cf2",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/2302c77b-3d82-4650-bd15-e0ff9c0faab7/identify_relationships_guide.md",
+          "sha256": "dd384b8914c3b466506abde7feef26385b343fe2391f7a07ee336df3abaae5f1",
+          "size_bytes": 3481,
+          "tags": []
+        },
+        {
+          "filename": "identify_theme_guide.md",
+          "id": "bd0273d4-c7aa-4037-9a45-a669f394efdd",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/2302c77b-3d82-4650-bd15-e0ff9c0faab7/identify_theme_guide.md",
+          "sha256": "ead5b5369d2e5b8055480abea3218346004e025aa3273cd5dfd335b386c1d798",
+          "size_bytes": 3638,
+          "tags": []
+        },
+        {
+          "filename": "list_specifics_guide.md",
+          "id": "a5209c6e-81fb-47b8-94c8-384822c36168",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/2302c77b-3d82-4650-bd15-e0ff9c0faab7/list_specifics_guide.md",
+          "sha256": "821b4852c28b50073a3f905bf627da4df507c1a7bfe37585d7b7dfa8a1cd9c98",
+          "size_bytes": 2516,
+          "tags": []
+        },
+        {
+          "filename": "observation_guide.md",
+          "id": "bd65db2a-7790-403e-90fd-f6debd67c616",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/2302c77b-3d82-4650-bd15-e0ff9c0faab7/observation_guide.md",
+          "sha256": "c08e58050868545b1dc6efd9f50e2ccbbdfe2cdf5bc79f036c3505ad8a6d96b1",
+          "size_bytes": 3243,
+          "tags": []
+        },
+        {
+          "filename": "summarize_meaning_guide.md",
+          "id": "133528c1-6ee9-4938-8775-f07281185d34",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/2302c77b-3d82-4650-bd15-e0ff9c0faab7/summarize_meaning_guide.md",
+          "sha256": "10a7207f4b7477afc8a520544b622c9be5d0deabc8c03b7708a3155f75ed24f8",
+          "size_bytes": 3244,
+          "tags": []
+        },
+        {
+          "filename": "write_principles_guide.md",
+          "id": "65709ebc-adde-4575-b7ce-8d96887c9f10",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/2302c77b-3d82-4650-bd15-e0ff9c0faab7/write_principles_guide.md",
+          "sha256": "151cb5ba5066933f3cb47379df19f7f16f99af006bd1a808827604635c031349",
+          "size_bytes": 4371,
+          "tags": []
+        },
+        {
+          "filename": "合法處境補充材料.pdf",
+          "id": "59e40a94-c8d9-48be-b387-e410cc10c066",
+          "language": "zh",
+          "mime_type": "application/pdf",
+          "seed_path": "documents/2302c77b-3d82-4650-bd15-e0ff9c0faab7/合法處境補充材料.pdf",
+          "sha256": "d49faa810311e446d88a08a68aa2d37f8114a7a49be4acba14bfc3e625a0efec",
+          "size_bytes": 4731513,
+          "tags": []
+        }
+      ],
+      "id": "2302c77b-3d82-4650-bd15-e0ff9c0faab7",
+      "instructions": {
+        "seed_path": "instructions/2302c77b-3d82-4650-bd15-e0ff9c0faab7/instructions.md",
+        "sha256": "7fb9863dbbc4205cc291dd1896e7a7aad9f3c96fe41b68f3b1c55af5a98c7bcf",
+        "uri": "instructions/2302c77b-3d82-4650-bd15-e0ff9c0faab7/instructions.md",
+        "version": "v1"
+      },
+      "name": "Bible Tutor 酷聖經教師  4.0",
+      "purpose": "RAG and guided Bible-study workflow demo with app-scoped resources.",
+      "settings": {
+        "config_schema": {
+          "properties": {
+            "llm": {
+              "properties": {
+                "models": {
+                  "properties": {
+                    "adapter_generation": {
+                      "default": "deepseek-v4-pro",
+                      "type": "string"
+                    },
+                    "answer_generation": {
+                      "default": "deepseek-v4-flash",
+                      "type": "string"
+                    },
+                    "config_extraction_fallback": {
+                      "default": "deepseek-v4-flash",
+                      "type": "string"
+                    },
+                    "evidence_analysis": {
+                      "default": "deepseek-v4-flash",
+                      "type": "string"
+                    },
+                    "planner": {
+                      "default": "deepseek-v4-pro",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "provider": {
+                  "default": "deepseek",
+                  "type": "string"
+                },
+                "temperature": {
+                  "properties": {
+                    "adapter_generation": {
+                      "default": 0.0,
+                      "type": "number"
+                    },
+                    "answer_generation": {
+                      "default": 0.2,
+                      "type": "number"
+                    },
+                    "evidence_analysis": {
+                      "default": 0.1,
+                      "type": "number"
+                    },
+                    "planner": {
+                      "default": 0.1,
+                      "type": "number"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "config_settings": {
+          "instruction_understanding_mode": "hybrid_active",
+          "llm": {
+            "models": {
+              "adapter_generation": "deepseek-v4-flash",
+              "answer_generation": "deepseek-v4-flash",
+              "config_extraction_fallback": "deepseek-v4-flash",
+              "evidence_analysis": "deepseek-v4-flash",
+              "instruction_understanding_compile": "deepseek-v4-pro",
+              "instruction_understanding_review": "deepseek-v4-pro",
+              "instruction_understanding_revision": "deepseek-v4-pro",
+              "planner": "deepseek-v4-flash"
+            },
+            "provider": "deepseek",
+            "temperature": {
+              "adapter_generation": 0,
+              "answer_generation": 0.2,
+              "evidence_analysis": 0.1,
+              "instruction_understanding_compile": 0,
+              "instruction_understanding_review": 0,
+              "instruction_understanding_revision": 0,
+              "planner": 0.1
+            }
+          },
+          "planner_mode": "hybrid_active"
+        }
+      },
+      "slug": "education",
+      "snapshot": {
+        "compiled_at": "2026-05-21T21:29:05.661312+00:00",
+        "compiled_status": "ready",
+        "freshness": "fresh",
+        "id": "a49bb75d-1459-49f0-a399-4e64cd611e87",
+        "instruction_source_hash": "7fb9863dbbc4205cc291dd1896e7a7aad9f3c96fe41b68f3b1c55af5a98c7bcf",
+        "metadata": {
+          "preserved_active_record_id": null,
+          "procedure_count": 3,
+          "publish_status": "active",
+          "semantic_compile_attached": true,
+          "semantic_compile_empty": false,
+          "semantic_compile_valid": true,
+          "service_block_count": 3
+        },
+        "resource_catalog_hash": "5b91b0982d416e50a7a28061b1ea4e5b59f340dcb93f5a2d88e41591dd1a47be",
+        "seed_path": "snapshots/2302c77b-3d82-4650-bd15-e0ff9c0faab7/understanding.json"
+      },
+      "starter_questions": [
+        "我想查考一段經文",
+        "我遇到一段難解的經文，想請你陪我一起探討它的意思。",
+        "我最近在思考一個神學問題，想和你一起聊聊、從聖經找找看答案。",
+        "我正在面對生活中的一些問題，想知道聖經怎麼教導或給我方向。"
+      ]
+    },
+    {
+      "description": "你的專屬 GPT 應用設計顧問，從需求分析到測試優化，協助生成設計聲明、System Instructions、資源與測試方案，並提供 GPTs Builder 可直接使用的配置與調整指引。",
+      "documents": [
+        {
+          "filename": "Human-in-the-Loop_Guide.md",
+          "id": "f9531382-afd2-4ddf-a3b8-b7488331b1c3",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/Human-in-the-Loop_Guide.md",
+          "sha256": "490e19be70b1a6886afb4765bae1d1305c0af9a4e3caf7b1e672b6680c8e40a8",
+          "size_bytes": 885,
+          "tags": []
+        },
+        {
+          "filename": "builder_guide.md",
+          "id": "6ca78c29-51dd-46c4-afd9-348ad87f78f5",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/builder_guide.md",
+          "sha256": "006d1fb1a7981e7d72aadb158620da8c9d6b74e8b6d83d493b51a1ac014690f5",
+          "size_bytes": 4475,
+          "tags": []
+        },
+        {
+          "filename": "interaction_patterns_guide.md",
+          "id": "b2e02469-ae38-4105-98a3-6756d45db529",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/interaction_patterns_guide.md",
+          "sha256": "fc77d59ecb8cafb7a08f86993050f084daf462630bf7dec97fe86d32e3d8c605",
+          "size_bytes": 2032,
+          "tags": []
+        },
+        {
+          "filename": "knowledge_module_template.md",
+          "id": "32f0dff5-38ee-4c95-9911-411846d83aac",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/knowledge_module_template.md",
+          "sha256": "dd71beed2b1395c2198903943c0389ed66bf2861753765a678e3815538e58cea",
+          "size_bytes": 794,
+          "tags": []
+        },
+        {
+          "filename": "modular_design_guide.md",
+          "id": "9c76eabf-e9d2-4eef-82aa-cb6236448f6a",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/modular_design_guide.md",
+          "sha256": "bb9ef68d14da09a8a5c9fb5b323736747c6f8f136dafc58fe206274cdac44579",
+          "size_bytes": 4517,
+          "tags": []
+        },
+        {
+          "filename": "prompt_refactoring_patterns.md",
+          "id": "9e83a56c-dd55-4098-a57a-3cd62706f5ed",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/prompt_refactoring_patterns.md",
+          "sha256": "eb2fabc97397998366dc76325a54a85230a04ac1e861342ab0f33baea1f63bb7",
+          "size_bytes": 1461,
+          "tags": []
+        },
+        {
+          "filename": "resource_binding_patterns.md",
+          "id": "c14ba86e-b615-4a16-b40a-28cbdc227372",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/resource_binding_patterns.md",
+          "sha256": "8e39935ca412fae6369400974a03f9640dbeaa93ba299435015b5a4f8bdd5b4c",
+          "size_bytes": 1659,
+          "tags": []
+        },
+        {
+          "filename": "resource_evaluation_guide.md",
+          "id": "823e7682-83aa-406c-8995-40abcae1b277",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/resource_evaluation_guide.md",
+          "sha256": "6a75667d514b9a1530f98bd2c654174fc9d333df8ebd4dd0c593b40b063fc8ed",
+          "size_bytes": 1252,
+          "tags": []
+        },
+        {
+          "filename": "resource_types_guide.md",
+          "id": "3ef5b782-d2d9-4700-82fa-f402cb7daec3",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/resource_types_guide.md",
+          "sha256": "6e7f9056e194b36f7be5033740d6249699e9ead71458c2847d949f079423af19",
+          "size_bytes": 1385,
+          "tags": []
+        },
+        {
+          "filename": "testing_guide.md",
+          "id": "c3143374-22f2-4330-a104-1bc7c21789b1",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/testing_guide.md",
+          "sha256": "130d692779c127207d45037748280358e90b637cd2655d5fbc2cc9903982fe45",
+          "size_bytes": 2725,
+          "tags": []
+        },
+        {
+          "filename": "use_case_brainstorm_guide.md",
+          "id": "0177a429-82e5-4561-a2c8-a755eff8e9a7",
+          "language": "zh",
+          "mime_type": "application/octet-stream",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/use_case_brainstorm_guide.md",
+          "sha256": "022854c3dc0b46ab276d6d3c1c7d9af27a03f37c4eda8508a1819557dc1618c7",
+          "size_bytes": 1310,
+          "tags": []
+        },
+        {
+          "filename": "分析與設計AI教牧助手.pdf",
+          "id": "c83b2e00-f528-4cc2-8542-da7253dbbf80",
+          "language": "zh",
+          "mime_type": "application/pdf",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/分析與設計AI教牧助手.pdf",
+          "sha256": "8b3ae4a505f542a77ad859303e1693ff886fc70b044804b89f6363184f660fbb",
+          "size_bytes": 1957216,
+          "tags": []
+        },
+        {
+          "filename": "測試與優化AI教牧助手.pdf",
+          "id": "bdbdfade-acfe-4927-afe5-222e9cac245c",
+          "language": "zh",
+          "mime_type": "application/pdf",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/測試與優化AI教牧助手.pdf",
+          "sha256": "0a1b1ef84c91636fee8a5ded74082c4f3b3a0ba9e2f9465da40391bb0d13e99e",
+          "size_bytes": 502435,
+          "tags": []
+        },
+        {
+          "filename": "配置與功能實現AI教牧助手.pdf",
+          "id": "e17b131d-9b61-4556-a230-74f46856984f",
+          "language": "zh",
+          "mime_type": "application/pdf",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/配置與功能實現AI教牧助手.pdf",
+          "sha256": "bbf37c1cc0a5041a7105d04e7606a81884116ae50ccbeb5f189556f30ce0e355",
+          "size_bytes": 818510,
+          "tags": []
+        },
+        {
+          "filename": "酷聖經輔導.pdf",
+          "id": "c0840af9-f3db-46d6-9517-f22747726c64",
+          "language": "zh",
+          "mime_type": "application/pdf",
+          "seed_path": "documents/dd494ba5-face-4eaf-95d1-a55cb9f80c78/酷聖經輔導.pdf",
+          "sha256": "c94653fdc5f91c331b6f8cd343e85cd0c03c50597cbfba334de7301d3a93f28c",
+          "size_bytes": 721238,
+          "tags": []
+        }
+      ],
+      "id": "dd494ba5-face-4eaf-95d1-a55cb9f80c78",
+      "instructions": {
+        "seed_path": "instructions/dd494ba5-face-4eaf-95d1-a55cb9f80c78/instructions.md",
+        "sha256": "d667f7f24423a321e2504aa1957ab0527a3c49583400f6b060a64580b4d5e24a",
+        "uri": "instructions/dd494ba5-face-4eaf-95d1-a55cb9f80c78/instructions.md",
+        "version": "v1"
+      },
+      "name": "酷 GPT 應用設計助理 Pro  GPT Application Design Assistant",
+      "purpose": "GPT application design workflow demo for Builder-authored application design support.",
+      "settings": {
+        "config_schema": {
+          "properties": {
+            "llm": {
+              "properties": {
+                "models": {
+                  "properties": {
+                    "adapter_generation": {
+                      "default": "deepseek-v4-pro",
+                      "type": "string"
+                    },
+                    "answer_generation": {
+                      "default": "deepseek-v4-flash",
+                      "type": "string"
+                    },
+                    "config_extraction_fallback": {
+                      "default": "deepseek-v4-flash",
+                      "type": "string"
+                    },
+                    "evidence_analysis": {
+                      "default": "deepseek-v4-flash",
+                      "type": "string"
+                    },
+                    "planner": {
+                      "default": "deepseek-v4-pro",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "provider": {
+                  "default": "deepseek",
+                  "type": "string"
+                },
+                "temperature": {
+                  "properties": {
+                    "adapter_generation": {
+                      "default": 0.0,
+                      "type": "number"
+                    },
+                    "answer_generation": {
+                      "default": 0.2,
+                      "type": "number"
+                    },
+                    "evidence_analysis": {
+                      "default": 0.1,
+                      "type": "number"
+                    },
+                    "planner": {
+                      "default": 0.1,
+                      "type": "number"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "config_settings": {
+          "instruction_understanding_mode": "hybrid_active",
+          "llm": {
+            "models": {
+              "adapter_generation": "deepseek-v4-flash",
+              "answer_generation": "deepseek-v4-flash",
+              "config_extraction_fallback": "deepseek-v4-flash",
+              "evidence_analysis": "deepseek-v4-flash",
+              "instruction_understanding_compile": "deepseek-v4-pro",
+              "instruction_understanding_review": "deepseek-v4-pro",
+              "instruction_understanding_revision": "deepseek-v4-pro",
+              "planner": "deepseek-v4-flash"
+            },
+            "provider": "deepseek",
+            "temperature": {
+              "adapter_generation": 0,
+              "answer_generation": 0.2,
+              "evidence_analysis": 0.1,
+              "instruction_understanding_compile": 0,
+              "instruction_understanding_review": 0,
+              "instruction_understanding_revision": 0,
+              "planner": 0.1
+            }
+          },
+          "planner_mode": "hybrid_active"
+        }
+      },
+      "slug": "gpt-design",
+      "snapshot": {
+        "compiled_at": "2026-06-15T09:45:27.822488+00:00",
+        "compiled_status": "ready",
+        "freshness": "fresh",
+        "id": "7f565401-60ab-4a4d-9447-7eee46b18371",
+        "instruction_source_hash": "d667f7f24423a321e2504aa1957ab0527a3c49583400f6b060a64580b4d5e24a",
+        "metadata": {
+          "preserved_active_record_id": null,
+          "procedure_count": 5,
+          "publish_status": "active",
+          "semantic_compile_attached": true,
+          "semantic_compile_empty": false,
+          "semantic_compile_valid": true,
+          "service_block_count": 11
+        },
+        "resource_catalog_hash": "dbfdb9b128b607714ed00c49cca852a941d131684f7eb552a35b33d2418496d8",
+        "seed_path": "snapshots/dd494ba5-face-4eaf-95d1-a55cb9f80c78/understanding.json"
+      },
+      "starter_questions": [
+        "我想設計一個 GPT，請幫我先釐清「受眾」與「應用情境」，並協助定義合適的角色與目標。",
+        "啟動「配置實現支持模組」：請幫我檢查我的 System Instructions、Starter Questions 和資源設定，並提出修訂或優化建議。",
+        "啟動「互動邏輯支持模組」: 請幫我檢查我的系統配置指令 (System Instructions) 中的「互動模式」，轉換成 GPTs Builder 可執行的邏輯，提出修訂或優化建議，並提供測試其效果方法。",
+        "啟動「測試與優化支持模組: 請幫我按照GPT應用場景和System Instructions，設計一份測試卡（Test Cards）和評估標準，測試GPT的功能是否符合預期，優化並建立持續改進流程。"
+      ]
+    }
+  ],
+  "schema_version": 1,
+  "source": {
+    "builder_db": "ragenius_builder/flask_scaffold/rag_app.db",
+    "instruction_root": "ragenius_builder/flask_scaffold/instructions",
+    "snapshot_root": "ragenius_app_skeleton/backend/.state/instruction_understanding_snapshots",
+    "upload_root": "ragenius_builder/flask_scaffold/storage/uploads"
+  }
+}

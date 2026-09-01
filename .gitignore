@@ -208,8 +208,12 @@ __marimo__/
 
 # Local generated state and probe outputs
 .shared_state/
+.tmp/
+tmp/
+runtime/
 tmp_*.py
 tmp_*.json
+tmp_pytest_*/
 runtime_state.db
 builder_skill_tests_*/
 tmp_sqlite_tests/

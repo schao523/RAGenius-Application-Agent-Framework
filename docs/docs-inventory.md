@@ -19,6 +19,7 @@ Additional scan notes:
 
 - [open-source-secret-audit-2026-08-27.md](/D:/GitHub/Codex-RAGenius-System/docs/open-source-secret-audit-2026-08-27.md) records the sanitized pre-release history audit.
 - [open-source-release-readiness-2026-08-27.md](/D:/GitHub/Codex-RAGenius-System/docs/open-source-release-readiness-2026-08-27.md) records the local release gate and repository-host checklist.
+- [source-checkout-demo-runner-guide.md](/D:/GitHub/Codex-RAGenius-System/docs/source-checkout-demo-runner-guide.md) documents the source-checkout public demo runner and seed-data refresh workflow.
 - `ragenius_app/01_system_specs/` and `ragenius_app/02_blackbox_contracts/` contain files.
 - `docs/superpowers/plans/` and `docs/superpowers/specs/` contain files.
 - other documentation-oriented directories under `ragenius_app/` were not found to contain files in this scan.
@@ -97,6 +98,7 @@ Additional scan notes:
 ### Other
 
 - [agent-skill-discovery-selection-verification-checklist.md](/D:/GitHub/Codex-RAGenius-System/docs/agent-skill-discovery-selection-verification-checklist.md)
+- [source-checkout-demo-runner-guide.md](/D:/GitHub/Codex-RAGenius-System/docs/source-checkout-demo-runner-guide.md)
 - [2026-05-13-instruction-understanding-remaining-phases.md](/D:/GitHub/Codex-RAGenius-System/docs/2026-05-13-instruction-understanding-remaining-phases.md)
 - [2026-05-14-phase-4-ragenius-app-admin-panel-checklist.md](/D:/GitHub/Codex-RAGenius-System/docs/2026-05-14-phase-4-ragenius-app-admin-panel-checklist.md)
 - [2026-05-14-phase-5-real-llm-verification-checklist.md](/D:/GitHub/Codex-RAGenius-System/docs/2026-05-14-phase-5-real-llm-verification-checklist.md)

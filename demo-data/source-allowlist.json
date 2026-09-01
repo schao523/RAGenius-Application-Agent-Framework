@@ -1,0 +1,28 @@
+{
+  "apps": [
+    {
+      "app_id": "053eb2ca-54e0-49bf-b7dd-604c9608489e",
+      "include_ready_documents": true,
+      "name": "教會事工指令設計師  Church Ministry Prompt Designer",
+      "purpose": "Prompt design workflow demo for church ministry content and structured prompt generation."
+    },
+    {
+      "app_id": "2302c77b-3d82-4650-bd15-e0ff9c0faab7",
+      "include_ready_documents": true,
+      "name": "Bible Tutor 酷聖經教師  4.0",
+      "purpose": "RAG and guided Bible-study workflow demo with app-scoped resources."
+    },
+    {
+      "app_id": "dd494ba5-face-4eaf-95d1-a55cb9f80c78",
+      "include_ready_documents": true,
+      "name": "酷 GPT 應用設計助理 Pro  GPT Application Design Assistant",
+      "purpose": "GPT application design workflow demo for Builder-authored application design support."
+    }
+  ],
+  "notes": [
+    "This allowlist intentionally excludes the Christian Parenting Coach app from the public demo seed.",
+    "Documents are copied from ready document records only."
+  ],
+  "schema_version": 1,
+  "snapshot_source": "ragenius_app_skeleton/backend/.state/instruction_understanding_snapshots"
+}

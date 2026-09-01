@@ -36,6 +36,12 @@ their own licenses, accounts, usage charges, or security requirements.
 For a complete clean-machine walkthrough and troubleshooting guidance, see
 the [Contributor Startup Guide](docs/contributor-startup-guide.md).
 
+For a faster source-checkout public demo path using the committed demo seed,
+see the [Source-Checkout Demo Runner Developer Guide](docs/source-checkout-demo-runner-guide.md).
+That path uses `Copy-Item .env.template .env` followed by
+`.\scripts\Start-Demo.ps1`, and it includes instructions for updating an
+older local `main` checkout so the demo runner files are present.
+
 1. Install Python 3.10+, Node.js 20+, npm, Git, and a Docker-compatible runtime.
 2. Start the Docker runtime and initialize the local databases.
 3. Create and activate a virtual environment.
