@@ -14,14 +14,16 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$runtimePath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $RuntimeRoot))
-if ([System.IO.Path]::IsPathRooted($RuntimeRoot)) {
-  $runtimePath = [System.IO.Path]::GetFullPath($RuntimeRoot)
+
+function Resolve-DemoPath([string]$PathValue, [string]$BasePath) {
+  if ([System.IO.Path]::IsPathRooted($PathValue)) {
+    return [System.IO.Path]::GetFullPath($PathValue)
+  }
+  return [System.IO.Path]::GetFullPath((Join-Path $BasePath $PathValue))
 }
-$demoDataPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $DemoDataDir))
-if ([System.IO.Path]::IsPathRooted($DemoDataDir)) {
-  $demoDataPath = [System.IO.Path]::GetFullPath($DemoDataDir)
-}
+
+$runtimePath = Resolve-DemoPath -PathValue $RuntimeRoot -BasePath $repoRoot
+$demoDataPath = Resolve-DemoPath -PathValue $DemoDataDir -BasePath $repoRoot
 
 function Require-Command([string]$Name, [string]$InstallHint) {
   if ($null -eq (Get-Command $Name -ErrorAction SilentlyContinue)) {
@@ -77,7 +79,8 @@ function Set-DemoEnvironment([string]$RuntimeRootPath) {
   New-Item -ItemType Directory -Force -Path $values.RAGENIUS_APP_UPLOADS_DIR | Out-Null
 
   $envPath = Join-Path $RuntimeRootPath "demo-runtime.env.json"
-  $values | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $envPath -Encoding UTF8
+  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($envPath, ($values | ConvertTo-Json -Depth 4), $utf8NoBom)
   return $values
 }
 

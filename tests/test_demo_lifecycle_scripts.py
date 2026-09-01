@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _powershell() -> str:
-    return shutil.which("pwsh") or shutil.which("powershell") or "powershell"
+    return shutil.which("powershell") or shutil.which("pwsh") or "powershell"
 
 
 def _run_script(script_name: str, *args: str) -> subprocess.CompletedProcess[str]:
