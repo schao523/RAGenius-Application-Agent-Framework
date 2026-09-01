@@ -1,0 +1,107 @@
+name: GHCR Demo Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: ${{ github.repository_owner }}
+  IMAGE_TAG: ${{ github.ref_name }}
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: python -m pip install pytest
+
+      - name: Run demo package tests
+        run: python -m pytest tests/test_ghcr_demo_package.py tests/test_demo_seed_exporter.py tests/test_demo_seed_installer.py tests/test_demo_lifecycle_scripts.py -q
+
+  build-and-package:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Builder image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/builder.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ragenius-builder:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/ragenius-builder:latest
+
+      - name: Build and push app backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/app-backend.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ragenius-app-backend:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/ragenius-app-backend:latest
+
+      - name: Build and push app frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/app-frontend.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ragenius-app-frontend:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/ragenius-app-frontend:latest
+
+      - name: Build and push execution subsystem image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/execution-subsystem.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ragenius-execution-subsystem:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/ragenius-execution-subsystem:latest
+
+      - name: Build Windows demo package
+        shell: pwsh
+        run: ./scripts/Build-DemoPackage.ps1 -Version $env:GITHUB_REF_NAME
+
+      - name: Upload demo package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RAGenius-Demo-${{ github.ref_name }}-Windows.zip
+          path: dist/RAGenius-Demo-${{ github.ref_name }}-Windows.zip
+
+      - name: Attach demo package to GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" "dist/RAGenius-Demo-${{ github.ref_name }}-Windows.zip" --clobber

@@ -1,0 +1,118 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ragenius}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ragenius}
+      POSTGRES_DB: ${POSTGRES_DB:-ragenius}
+    ports:
+      - "${RAGENIUS_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - ragenius_demo_postgres:/var/lib/postgresql/data
+      - ./docker/postgres/init/10-create-execution-database.sql:/docker-entrypoint-initdb.d/10-create-execution-database.sql:ro
+      - ./rag_subsystem/sql/init_pgvector.sql:/docker-entrypoint-initdb.d/20-init-pgvector.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ragenius} -d ${POSTGRES_DB:-ragenius}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  seed-init:
+    image: ghcr.io/${RAGENIUS_GHCR_OWNER:-schao523}/ragenius-app-backend:${RAGENIUS_IMAGE_TAG:-latest}
+    command:
+      - python
+      - /app/scripts/install_demo_seed.py
+      - --demo-data-dir
+      - /seed/demo-data
+      - --runtime-root
+      - /runtime/demo
+      - --force
+    volumes:
+      - ragenius_demo_runtime:/runtime
+      - ./demo-data:/seed/demo-data:ro
+    restart: "no"
+
+  execution:
+    image: ghcr.io/${RAGENIUS_GHCR_OWNER:-schao523}/ragenius-execution-subsystem:${RAGENIUS_IMAGE_TAG:-latest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ragenius}:${POSTGRES_PASSWORD:-ragenius}@postgres:5432/ragenius_execution?schema=public
+      ARTIFACT_STORAGE_ROOT: /runtime/execution/artifacts
+      RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED: ${RAGENIUS_EXECUTION_SERVICE_AUTH_REQUIRED:-false}
+      RAGENIUS_EXECUTION_SERVICE_ID: ${RAGENIUS_EXECUTION_SERVICE_ID:-ragenius_app}
+      CODEX_CLI_ENABLED: ${CODEX_CLI_ENABLED:-false}
+      CODEX_APP_SERVER_INTERACTIVE_ENABLED: ${CODEX_APP_SERVER_INTERACTIVE_ENABLED:-false}
+      CODEX_MCP_ELICITATION_ENABLED: ${CODEX_MCP_ELICITATION_ENABLED:-false}
+      CODEX_INTERACTIVE_AUTH_HANDOFF_ENABLED: ${CODEX_INTERACTIVE_AUTH_HANDOFF_ENABLED:-false}
+      CODEX_INTERACTIVE_USER_ACTION_ENABLED: ${CODEX_INTERACTIVE_USER_ACTION_ENABLED:-false}
+      OPENCLAW_GATEWAY_INTERACTIVE_ENABLED: ${OPENCLAW_GATEWAY_INTERACTIVE_ENABLED:-false}
+      OPENCLAW_GATEWAY_CHAT_LEVEL_ENABLED: ${OPENCLAW_GATEWAY_CHAT_LEVEL_ENABLED:-false}
+    ports:
+      - "${RAGENIUS_EXECUTION_PORT:-3001}:3001"
+    volumes:
+      - ragenius_demo_runtime:/runtime
+
+  builder:
+    image: ghcr.io/${RAGENIUS_GHCR_OWNER:-schao523}/ragenius-builder:${RAGENIUS_IMAGE_TAG:-latest}
+    depends_on:
+      seed-init:
+        condition: service_completed_successfully
+      execution:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      RAGENIUS_BUILDER_DB: /runtime/demo/builder/rag_app.db
+      RAGENIUS_BUILDER_STORAGE_ROOT: /runtime/demo/builder
+      RAGENIUS_INSTRUCTION_MODEL_SNAPSHOT_ROOT: /runtime/demo/builder/instruction_understanding
+      RAGENIUS_EXECUTION_BASE_URL: http://execution:3001
+      RAG_VECTOR_STORE_BACKEND: pgvector
+      RAG_VECTOR_STORE_DSN: postgresql://${POSTGRES_USER:-ragenius}:${POSTGRES_PASSWORD:-ragenius}@postgres:5432/${POSTGRES_DB:-ragenius}
+      RAG_PGVECTOR_BOOTSTRAP: "true"
+    ports:
+      - "${RAGENIUS_BUILDER_PORT:-8011}:8011"
+    volumes:
+      - ragenius_demo_runtime:/runtime
+
+  app-backend:
+    image: ghcr.io/${RAGENIUS_GHCR_OWNER:-schao523}/ragenius-app-backend:${RAGENIUS_IMAGE_TAG:-latest}
+    depends_on:
+      seed-init:
+        condition: service_completed_successfully
+      execution:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      RAGENIUS_BUILDER_DB: /runtime/demo/builder/rag_app.db
+      RAGENIUS_APP_STATE_DB: /runtime/demo/app/.state/runtime_state.db
+      RAGENIUS_APP_UPLOADS_DIR: /runtime/demo/app/.state/session_uploads
+      RAGENIUS_EXECUTION_SUBSYSTEM_URL: http://execution:3001/v1
+      RAG_VECTOR_STORE_BACKEND: pgvector
+      RAG_VECTOR_STORE_DSN: postgresql://${POSTGRES_USER:-ragenius}:${POSTGRES_PASSWORD:-ragenius}@postgres:5432/${POSTGRES_DB:-ragenius}
+      RAG_PGVECTOR_BOOTSTRAP: "true"
+    ports:
+      - "${RAGENIUS_APP_BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ragenius_demo_runtime:/runtime
+
+  app-frontend:
+    image: ghcr.io/${RAGENIUS_GHCR_OWNER:-schao523}/ragenius-app-frontend:${RAGENIUS_IMAGE_TAG:-latest}
+    depends_on:
+      app-backend:
+        condition: service_started
+    ports:
+      - "${RAGENIUS_APP_FRONTEND_PORT:-5173}:80"
+
+volumes:
+  ragenius_demo_runtime:
+  ragenius_demo_postgres:
