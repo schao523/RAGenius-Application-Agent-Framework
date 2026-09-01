@@ -267,7 +267,7 @@ Stop services started by the demo runner:
 .\scripts\Stop-Demo.ps1
 ```
 
-`Stop-Demo.ps1` stops recorded demo PIDs and also checks known demo ports `3001`, `8000`, `8011`, and `5173` for leftover listeners. Use `-SkipPortCleanup` only when you intentionally want to leave a process on one of those ports running.
+`Stop-Demo.ps1` stops recorded demo process trees and also checks known demo ports `3001`, `8000`, `8011`, and `5173` for leftover listeners. This is important because `npm run dev` can leave child `node` or `tsx` processes alive after the parent process exits. Use `-SkipPortCleanup` only when you intentionally want to leave a process on one of those ports running.
 
 Run with a custom runtime directory:
 
@@ -453,6 +453,18 @@ Or force reinstall during startup:
 
 ```powershell
 .\scripts\Start-Demo.ps1 -ForceInstall
+```
+
+If reset fails because a file under `runtime/demo/demo-logs/` is still being used by another process, stop the recorded process trees and known demo ports first:
+
+```powershell
+.\scripts\Stop-Demo.ps1
+```
+
+Then retry:
+
+```powershell
+.\scripts\Start-Demo.ps1 -PrepareOnly -ForceInstall
 ```
 
 ### Ports are already in use

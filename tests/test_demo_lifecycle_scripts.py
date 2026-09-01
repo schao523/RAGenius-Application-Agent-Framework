@@ -120,6 +120,9 @@ def test_stop_demo_ignores_missing_process_file(scratch_dir: Path):
 def test_stop_demo_cleans_known_demo_ports():
     script = (REPO_ROOT / "scripts" / "Stop-Demo.ps1").read_text(encoding="utf-8")
 
+    assert "Stop-ProcessTree" in script
+    assert "Win32_Process" in script
+    assert "ParentProcessId" in script
     assert "Stop-KnownDemoPortListeners" in script
     assert "5173" in script
     assert "8000" in script
