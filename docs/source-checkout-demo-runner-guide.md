@@ -240,6 +240,12 @@ Prepare runtime data without launching services:
 .\scripts\Start-Demo.ps1 -PrepareOnly
 ```
 
+Install Python dependencies into the active `python` environment:
+
+```powershell
+.\scripts\Install-PythonDependencies.ps1
+```
+
 Force reinstall demo seed data into `runtime/demo/`:
 
 ```powershell
@@ -257,6 +263,8 @@ Stop services started by the demo runner:
 ```powershell
 .\scripts\Stop-Demo.ps1
 ```
+
+`Stop-Demo.ps1` stops recorded demo PIDs and also checks known demo ports `3001`, `8000`, `8011`, and `5173` for leftover listeners. Use `-SkipPortCleanup` only when you intentionally want to leave a process on one of those ports running.
 
 Run with a custom runtime directory:
 
@@ -457,6 +465,37 @@ The default ports are:
 | PostgreSQL on host | `5433` |
 
 Stop the conflicting process or change the relevant component startup command before running the demo.
+
+### Backend or Builder does not start
+
+The runner starts services as background processes. Logs are written under:
+
+```text
+runtime/demo/demo-logs/
+```
+
+Check the backend and Builder logs first:
+
+```powershell
+Get-Content .\runtime\demo\demo-logs\ragenius_app_skeleton_backend.err.log
+Get-Content .\runtime\demo\demo-logs\ragenius_builder.err.log
+```
+
+If the error says a Python module such as `flask` or `uvicorn` is missing, install Python dependencies into the same active Python environment used by the runner:
+
+```powershell
+python -c "import sys; print(sys.executable)"
+.\scripts\Install-PythonDependencies.ps1
+python -c "import flask; print('Flask OK')"
+python -c "import uvicorn; print('uvicorn OK')"
+```
+
+Then restart:
+
+```powershell
+.\scripts\Stop-Demo.ps1
+.\scripts\Start-Demo.ps1
+```
 
 ### Stop script says no process file exists
 

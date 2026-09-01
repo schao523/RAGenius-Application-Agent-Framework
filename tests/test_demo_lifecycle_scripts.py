@@ -88,6 +88,24 @@ def test_start_demo_prepare_only_installs_seed_data_and_writes_runtime_environme
     assert "Prepare-only mode" in result.stdout
 
 
+def test_start_demo_sets_pythonpath_and_preflights_backend_modules():
+    script = (REPO_ROOT / "scripts" / "Start-Demo.ps1").read_text(encoding="utf-8")
+
+    assert "function Add-PythonPath" in script
+    assert 'Add-PythonPath -PathToAdd $repoRoot' in script
+    assert 'Require-PythonModule -ModuleName "flask"' in script
+    assert 'Require-PythonModule -ModuleName "uvicorn"' in script
+    assert "Install-PythonDependencies.ps1" in script
+
+
+def test_start_demo_writes_process_logs_under_runtime_root():
+    script = (REPO_ROOT / "scripts" / "Start-Demo.ps1").read_text(encoding="utf-8")
+
+    assert "demo-logs" in script
+    assert "-RedirectStandardOutput" in script
+    assert "-RedirectStandardError" in script
+
+
 def test_stop_demo_ignores_missing_process_file(scratch_dir: Path):
     result = _run_script(
         "Stop-Demo.ps1",
@@ -97,3 +115,14 @@ def test_stop_demo_ignores_missing_process_file(scratch_dir: Path):
 
     assert result.returncode == 0, result.stderr
     assert "No demo process file found" in result.stdout
+
+
+def test_stop_demo_cleans_known_demo_ports():
+    script = (REPO_ROOT / "scripts" / "Stop-Demo.ps1").read_text(encoding="utf-8")
+
+    assert "Stop-KnownDemoPortListeners" in script
+    assert "5173" in script
+    assert "8000" in script
+    assert "8011" in script
+    assert "3001" in script
+    assert "Get-NetTCPConnection" in script

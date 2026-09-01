@@ -31,6 +31,42 @@ function Require-Command([string]$Name, [string]$InstallHint) {
   }
 }
 
+function Add-PythonPath([string]$PathToAdd) {
+  $paths = @($PathToAdd)
+  if ($env:PYTHONPATH) {
+    $paths += $env:PYTHONPATH.Split([System.IO.Path]::PathSeparator)
+  }
+  $deduped = @()
+  foreach ($path in $paths) {
+    if ($path -and -not ($deduped -contains $path)) {
+      $deduped += $path
+    }
+  }
+  $env:PYTHONPATH = $deduped -join [System.IO.Path]::PathSeparator
+}
+
+function Test-PythonModule([string]$ModuleName) {
+  $probe = "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('$ModuleName') else 1)"
+  python -c $probe *> $null
+  return $LASTEXITCODE -eq 0
+}
+
+function Require-PythonModule([string]$ModuleName, [string]$InstallHint) {
+  if (-not (Test-PythonModule -ModuleName $ModuleName)) {
+    throw "Python module '$ModuleName' is required but is not installed for the active python executable. $InstallHint"
+  }
+}
+
+function Install-PythonDependenciesIfNeeded() {
+  if ($SkipDependencyInstall) {
+    return
+  }
+  if ((Test-PythonModule -ModuleName "flask") -and (Test-PythonModule -ModuleName "uvicorn")) {
+    return
+  }
+  & (Join-Path $PSScriptRoot "Install-PythonDependencies.ps1")
+}
+
 function Set-DefaultProcessEnvironment([string]$Name, [string]$Value) {
   if ([Environment]::GetEnvironmentVariable($Name, "Process") -eq $null) {
     [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
@@ -100,12 +136,17 @@ function Invoke-NpmInstallIfNeeded([string]$WorkingDirectory) {
   }
 }
 
-function Start-DemoProcess([string]$Name, [string]$FilePath, [string[]]$ArgumentList, [string]$WorkingDirectory) {
+function Start-DemoProcess([string]$Name, [string]$FilePath, [string[]]$ArgumentList, [string]$WorkingDirectory, [string]$LogRoot) {
   Write-Host "Starting $Name..."
+  New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
+  $stdoutPath = Join-Path $LogRoot "$Name.out.log"
+  $stderrPath = Join-Path $LogRoot "$Name.err.log"
   $process = Start-Process `
     -FilePath $FilePath `
     -ArgumentList $ArgumentList `
     -WorkingDirectory $WorkingDirectory `
+    -RedirectStandardOutput $stdoutPath `
+    -RedirectStandardError $stderrPath `
     -WindowStyle Hidden `
     -PassThru
   return [ordered]@{
@@ -113,6 +154,8 @@ function Start-DemoProcess([string]$Name, [string]$FilePath, [string[]]$Argument
     pid = $process.Id
     started_at = (Get-Date).ToString("o")
     working_directory = $WorkingDirectory
+    stdout_log = $stdoutPath
+    stderr_log = $stderrPath
   }
 }
 
@@ -171,6 +214,13 @@ if ($PrepareOnly) {
 Require-Command "node" "Install Node.js 20+ and ensure node.exe is on PATH."
 Require-Command "npm" "Install npm with Node.js and ensure npm.cmd is on PATH."
 
+Add-PythonPath -PathToAdd $repoRoot
+Install-PythonDependenciesIfNeeded
+Require-PythonModule -ModuleName "flask" -InstallHint "Run .\scripts\Install-PythonDependencies.ps1 from the repository root."
+Require-PythonModule -ModuleName "uvicorn" -InstallHint "Run .\scripts\Install-PythonDependencies.ps1 from the repository root."
+
+$logRoot = Join-Path $runtimePath "demo-logs"
+
 if (-not $SkipInfrastructure) {
   Require-Command "docker" "Install Docker Desktop and ensure docker.exe is on PATH, or rerun with -SkipInfrastructure if PostgreSQL is already running."
   Write-Host "Starting demo PostgreSQL/pgvector infrastructure..."
@@ -200,7 +250,8 @@ if (-not $SkipExecutionSubsystem) {
     -Name "ragenius_execution_subsystem" `
     -FilePath "npm.cmd" `
     -ArgumentList @("run", "dev") `
-    -WorkingDirectory $executionDir
+    -WorkingDirectory $executionDir `
+    -LogRoot $logRoot
 }
 
 if (-not $SkipBuilder) {
@@ -210,7 +261,8 @@ if (-not $SkipBuilder) {
     -Name "ragenius_builder" `
     -FilePath "python" `
     -ArgumentList @("-m", "flask", "--app", "app.py", "run", "--host", "127.0.0.1", "--port", "8011") `
-    -WorkingDirectory $builderAppDir
+    -WorkingDirectory $builderAppDir `
+    -LogRoot $logRoot
 }
 
 if (-not $SkipAppBackend) {
@@ -219,7 +271,8 @@ if (-not $SkipAppBackend) {
     -Name "ragenius_app_skeleton_backend" `
     -FilePath "python" `
     -ArgumentList @("-m", "uvicorn", "backend.app.main:app", "--host", "127.0.0.1", "--port", "8000") `
-    -WorkingDirectory $appDir
+    -WorkingDirectory $appDir `
+    -LogRoot $logRoot
 }
 
 if (-not $SkipAppFrontend) {
@@ -229,15 +282,18 @@ if (-not $SkipAppFrontend) {
     -Name "ragenius_app_skeleton_frontend" `
     -FilePath "npm.cmd" `
     -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", "5173") `
-    -WorkingDirectory $frontendDir
+    -WorkingDirectory $frontendDir `
+    -LogRoot $logRoot
 }
 
 $processFile = Join-Path $runtimePath "demo-processes.json"
-$processes | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $processFile -Encoding UTF8
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($processFile, ($processes | ConvertTo-Json -Depth 6), $utf8NoBom)
 
 Write-Host "RAGenius demo services launched."
 Write-Host "App frontend: http://127.0.0.1:5173"
 Write-Host "App backend:   http://127.0.0.1:8000"
 Write-Host "Builder:       http://127.0.0.1:8011"
 Write-Host "Execution:     http://127.0.0.1:3001"
+Write-Host "Logs:          $logRoot"
 Write-Host "Stop with:     .\scripts\Stop-Demo.ps1"
