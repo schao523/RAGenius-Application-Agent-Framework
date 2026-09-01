@@ -40,7 +40,7 @@ def test_build_demo_package_script_copies_seed_and_templates():
     assert "RAGenius-Demo-$Version-Windows" in script
     assert "demo-data" in script
     assert ".env.template" in script
-    assert "Compress-Archive" in script
+    assert "System.IO.Compression.ZipFile" in script
 
 
 def test_github_workflow_builds_and_packages_demo():
@@ -83,6 +83,8 @@ def test_build_demo_package_includes_seed_documents(scratch_dir):
     with zipfile.ZipFile(zip_path) as archive:
         names = set(archive.namelist())
 
+    assert "RAGenius-Demo/.env.template" in names
+    assert "RAGenius-Demo/compose.demo.yml" in names
     assert (
         "RAGenius-Demo/demo-data/documents/053eb2ca-54e0-49bf-b7dd-604c9608489e/AI 工具套餐體系.pdf"
         in names

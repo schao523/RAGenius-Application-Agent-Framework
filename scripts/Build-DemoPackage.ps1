@@ -65,6 +65,7 @@ Get-ChildItem -LiteralPath $payloadDir -Recurse -Force | ForEach-Object {
     }
 }
 
-Compress-Archive -Path $payloadDir -DestinationPath $zipPath -Force
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory($packageDir, $zipPath)
 
 Write-Host "Created $zipPath"
