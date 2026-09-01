@@ -3,12 +3,19 @@ $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $scriptRoot
 
+function Invoke-DemoCompose {
+    docker compose -f compose.demo.yml @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "docker compose failed with exit code $LASTEXITCODE"
+    }
+}
+
 if (-not (Test-Path ".env")) {
     Copy-Item ".env.template" ".env"
     Write-Host "Created .env from .env.template. Edit .env and set your LLM API key before using chat."
 }
 
-docker compose -f compose.demo.yml pull
+Invoke-DemoCompose pull
 
 Write-Host ""
 Write-Host "Images downloaded. Start the demo with:"

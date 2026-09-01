@@ -3,8 +3,15 @@ $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $scriptRoot
 
-docker compose -f compose.demo.yml down -v
-docker compose -f compose.demo.yml up -d
+function Invoke-DemoCompose {
+    docker compose -f compose.demo.yml @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "docker compose failed with exit code $LASTEXITCODE"
+    }
+}
+
+Invoke-DemoCompose down -v
+Invoke-DemoCompose up -d
 
 Write-Host ""
 Write-Host "RAGenius demo reset complete. Runtime data was recreated from demo-data."

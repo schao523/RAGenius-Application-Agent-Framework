@@ -26,7 +26,9 @@ def test_release_package_scripts_exist_and_reference_compose():
     for name in ["Install.ps1", "Start.ps1", "Stop.ps1", "Reset.ps1"]:
         path = ROOT / "packaging" / "demo" / name
         assert path.is_file()
-        assert "compose.demo.yml" in path.read_text(encoding="utf-8")
+        script = path.read_text(encoding="utf-8")
+        assert "compose.demo.yml" in script
+        assert "$LASTEXITCODE" in script
 
 
 def test_build_demo_package_script_copies_seed_and_templates():
