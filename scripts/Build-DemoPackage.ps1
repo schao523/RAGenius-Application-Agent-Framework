@@ -6,7 +6,11 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$outputRootPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $OutputRoot))
+if ([System.IO.Path]::IsPathRooted($OutputRoot)) {
+    $outputRootPath = [System.IO.Path]::GetFullPath($OutputRoot)
+} else {
+    $outputRootPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $OutputRoot))
+}
 $packageName = "RAGenius-Demo-$Version-Windows"
 $packageDir = Join-Path $outputRootPath $packageName
 $payloadDir = Join-Path $packageDir "RAGenius-Demo"
@@ -53,6 +57,13 @@ Copy-Item -Path (Join-Path $repoRoot "docker/postgres/init/10-create-execution-d
 $packageRagSql = Join-Path $payloadDir "rag_subsystem/sql"
 New-Item -ItemType Directory -Path $packageRagSql -Force | Out-Null
 Copy-Item -Path (Join-Path $repoRoot "rag_subsystem/sql/init_pgvector.sql") -Destination $packageRagSql -Force
+
+$hiddenFlag = [System.IO.FileAttributes]::Hidden
+Get-ChildItem -LiteralPath $payloadDir -Recurse -Force | ForEach-Object {
+    if (($_.Attributes -band $hiddenFlag) -ne 0) {
+        $_.Attributes = [System.IO.FileAttributes]([int]$_.Attributes -band (-bnot [int]$hiddenFlag))
+    }
+}
 
 Compress-Archive -Path $payloadDir -DestinationPath $zipPath -Force
 
