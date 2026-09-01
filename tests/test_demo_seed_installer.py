@@ -36,6 +36,7 @@ def _make_demo_data(root: Path) -> Path:
             "compiled_status": "ready",
             "is_active": True,
             "instruction_source_hash": "hash",
+            "compiled_contract": {"semantic_runtime": {"primary_service_mode": "single_default_workflow"}},
         },
     )
     app_payload = {
@@ -126,6 +127,9 @@ def test_install_demo_seed_creates_builder_db_runtime_files_and_snapshots(scratc
         / "instruction_understanding_snapshots"
         / APP_ID
         / "understanding.json"
+    ).is_file()
+    assert (
+        runtime_root / "builder" / "instruction_understanding" / APP_ID / "understanding.json"
     ).is_file()
     installed_doc = runtime_root / "builder" / "storage" / "uploads" / APP_ID / "doc-1_guide.md"
     assert installed_doc.read_text(encoding="utf-8") == "# Demo Guide\n"

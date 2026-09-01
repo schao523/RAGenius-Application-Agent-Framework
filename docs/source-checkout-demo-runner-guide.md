@@ -219,6 +219,7 @@ runtime/demo/
   builder/
     rag_app.db
     instructions/{app_id}/instructions.md
+    instruction_understanding/{app_id}/understanding.json
     storage/uploads/{app_id}/{document_id}_{filename}
   app/.state/
     runtime_state.db
@@ -227,6 +228,8 @@ runtime/demo/
   demo-runtime.env.json
   demo-processes.json
 ```
+
+The installer writes compiled instruction-understanding snapshots to `runtime/demo/builder/instruction_understanding/`, which is the path the app backend uses when it loads Builder-backed runtime context. It also keeps a copy under `runtime/demo/app/.state/instruction_understanding_snapshots/` for compatibility with the exported app-state snapshot layout.
 
 The installer rewrites document `file_path` values in `runtime/demo/builder/rag_app.db` to absolute paths on the current PC. This is required because the original development-machine paths are not portable.
 

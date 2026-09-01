@@ -23,13 +23,15 @@ def install_demo_seed(demo_data_dir: Path, runtime_root: Path, force: bool = Fal
     app_state_root = runtime_root / "app" / ".state"
     upload_root = builder_root / "storage" / "uploads"
     instruction_root = builder_root / "instructions"
-    snapshot_root = app_state_root / "instruction_understanding_snapshots"
+    snapshot_root = builder_root / "instruction_understanding"
+    app_state_snapshot_root = app_state_root / "instruction_understanding_snapshots"
     builder_db = builder_root / "rag_app.db"
 
     builder_root.mkdir(parents=True, exist_ok=True)
     upload_root.mkdir(parents=True, exist_ok=True)
     instruction_root.mkdir(parents=True, exist_ok=True)
     snapshot_root.mkdir(parents=True, exist_ok=True)
+    app_state_snapshot_root.mkdir(parents=True, exist_ok=True)
 
     now = dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat()
     apps = apps_payload.get("apps") or []
@@ -46,6 +48,10 @@ def install_demo_seed(demo_data_dir: Path, runtime_root: Path, force: bool = Fal
             _copy_seed_file(
                 demo_data_dir / app["snapshot"]["seed_path"],
                 snapshot_root / app_id / "understanding.json",
+            )
+            _copy_seed_file(
+                demo_data_dir / app["snapshot"]["seed_path"],
+                app_state_snapshot_root / app_id / "understanding.json",
             )
 
             con.execute(
@@ -127,6 +133,7 @@ def install_demo_seed(demo_data_dir: Path, runtime_root: Path, force: bool = Fal
         "runtime_root": str(runtime_root),
         "builder_db": str(builder_db),
         "snapshot_root": str(snapshot_root),
+        "app_state_snapshot_root": str(app_state_snapshot_root),
     }
 
 
