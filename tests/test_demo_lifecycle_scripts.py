@@ -102,6 +102,7 @@ def test_start_demo_writes_process_logs_under_runtime_root():
     script = (REPO_ROOT / "scripts" / "Start-Demo.ps1").read_text(encoding="utf-8")
 
     assert "demo-logs" in script
+    assert 'Join-Path (Split-Path -Parent $runtimePath) "demo-logs"' in script
     assert "-RedirectStandardOutput" in script
     assert "-RedirectStandardError" in script
 

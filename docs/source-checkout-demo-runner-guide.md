@@ -455,7 +455,9 @@ Or force reinstall during startup:
 .\scripts\Start-Demo.ps1 -ForceInstall
 ```
 
-If reset fails because a file under `runtime/demo/demo-logs/` is still being used by another process, stop the recorded process trees and known demo ports first:
+Service logs are written outside `runtime/demo/`, under `runtime/demo-logs/`, so locked log files do not block `-ForceInstall` from rebuilding the demo database and snapshots.
+
+If reset still fails because a process is holding runtime files open, stop the recorded process trees and known demo ports first:
 
 ```powershell
 .\scripts\Stop-Demo.ps1
@@ -486,14 +488,14 @@ Stop the conflicting process or change the relevant component startup command be
 The runner starts services as background processes. Logs are written under:
 
 ```text
-runtime/demo/demo-logs/
+runtime/demo-logs/
 ```
 
 Check the backend and Builder logs first:
 
 ```powershell
-Get-Content .\runtime\demo\demo-logs\ragenius_app_skeleton_backend.err.log
-Get-Content .\runtime\demo\demo-logs\ragenius_builder.err.log
+Get-Content .\runtime\demo-logs\ragenius_app_skeleton_backend.err.log
+Get-Content .\runtime\demo-logs\ragenius_builder.err.log
 ```
 
 If the error says a Python module such as `flask` or `uvicorn` is missing, install Python dependencies into the same active Python environment used by the runner:

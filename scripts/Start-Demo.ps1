@@ -219,7 +219,7 @@ Install-PythonDependenciesIfNeeded
 Require-PythonModule -ModuleName "flask" -InstallHint "Run .\scripts\Install-PythonDependencies.ps1 from the repository root."
 Require-PythonModule -ModuleName "uvicorn" -InstallHint "Run .\scripts\Install-PythonDependencies.ps1 from the repository root."
 
-$logRoot = Join-Path $runtimePath "demo-logs"
+$logRoot = Join-Path (Split-Path -Parent $runtimePath) "demo-logs"
 
 if (-not $SkipInfrastructure) {
   Require-Command "docker" "Install Docker Desktop and ensure docker.exe is on PATH, or rerun with -SkipInfrastructure if PostgreSQL is already running."
