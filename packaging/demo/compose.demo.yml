@@ -76,6 +76,7 @@ services:
       RAG_VECTOR_STORE_BACKEND: pgvector
       RAG_VECTOR_STORE_DSN: postgresql://${POSTGRES_USER:-ragenius}:${POSTGRES_PASSWORD:-ragenius}@postgres:5432/${POSTGRES_DB:-ragenius}
       RAG_PGVECTOR_BOOTSTRAP: "true"
+      RAG_EMBEDDING_BACKEND: ${RAG_EMBEDDING_BACKEND:-hash}
     ports:
       - "${RAGENIUS_BUILDER_PORT:-8011}:8011"
     volumes:
@@ -100,6 +101,7 @@ services:
       RAG_VECTOR_STORE_BACKEND: pgvector
       RAG_VECTOR_STORE_DSN: postgresql://${POSTGRES_USER:-ragenius}:${POSTGRES_PASSWORD:-ragenius}@postgres:5432/${POSTGRES_DB:-ragenius}
       RAG_PGVECTOR_BOOTSTRAP: "true"
+      RAG_EMBEDDING_BACKEND: ${RAG_EMBEDDING_BACKEND:-hash}
     ports:
       - "${RAGENIUS_APP_BACKEND_PORT:-8000}:8000"
     volumes:

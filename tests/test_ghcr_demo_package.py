@@ -35,6 +35,13 @@ def test_demo_compose_uses_public_ghcr_images_and_volumes():
     assert "ghcr.io/${RAGENIUS_GHCR_OWNER:-schao523}/ragenius-execution-subsystem:${RAGENIUS_IMAGE_TAG:-latest}" in compose
     assert "ragenius_demo_runtime:" in compose
     assert "./demo-data:/seed/demo-data:ro" in compose
+    assert "RAG_EMBEDDING_BACKEND: ${RAG_EMBEDDING_BACKEND:-hash}" in compose
+
+
+def test_demo_env_template_uses_hash_embeddings_for_public_demo():
+    template = (ROOT / "packaging" / "demo" / ".env.template").read_text(encoding="utf-8")
+
+    assert "RAG_EMBEDDING_BACKEND=hash" in template
 
 
 def test_release_package_scripts_exist_and_reference_compose():
