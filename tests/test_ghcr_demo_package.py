@@ -56,6 +56,14 @@ def test_demo_env_template_does_not_use_hash_embeddings_by_default():
     assert "RAG_EMBEDDING_MODEL_PATH_E5_LARGE=/models/e5-large" in template
 
 
+def test_demo_package_defaults_ghcr_images_to_amd64_for_windows_arm_hosts():
+    compose = (ROOT / "packaging" / "demo" / "compose.demo.yml").read_text(encoding="utf-8")
+    template = (ROOT / "packaging" / "demo" / ".env.template").read_text(encoding="utf-8")
+
+    assert "RAGENIUS_DOCKER_PLATFORM=linux/amd64" in template
+    assert compose.count("platform: ${RAGENIUS_DOCKER_PLATFORM:-linux/amd64}") >= 5
+
+
 def test_source_checkout_embedding_setup_script_contract():
     script = (ROOT / "scripts" / "Setup-Embeddings.ps1").read_text(encoding="utf-8")
     downloader = (ROOT / "scripts" / "download_embeddings.py").read_text(encoding="utf-8")
