@@ -8,6 +8,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY rag_subsystem ./rag_subsystem
+COPY shared ./shared
 COPY ragenius_builder/requirements.txt ./ragenius_builder/requirements.txt
 
 RUN python -m pip install --upgrade pip \

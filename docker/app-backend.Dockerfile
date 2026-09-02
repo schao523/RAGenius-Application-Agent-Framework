@@ -8,6 +8,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY rag_subsystem ./rag_subsystem
+COPY shared ./shared
 COPY ragenius_app_skeleton/backend/requirements.txt ./ragenius_app_skeleton/backend/requirements.txt
 COPY ragenius_builder/requirements.txt ./ragenius_builder/requirements.txt
 

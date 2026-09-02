@@ -14,6 +14,12 @@ def test_dockerfiles_exist_for_public_demo_images():
     assert (ROOT / "docker" / "execution-subsystem.Dockerfile").is_file()
 
 
+def test_python_demo_images_include_shared_package():
+    for name in ["builder.Dockerfile", "app-backend.Dockerfile"]:
+        dockerfile = (ROOT / "docker" / name).read_text(encoding="utf-8")
+        assert "COPY shared ./shared" in dockerfile
+
+
 def test_demo_compose_uses_public_ghcr_images_and_volumes():
     compose = (ROOT / "packaging" / "demo" / "compose.demo.yml").read_text(encoding="utf-8")
 
