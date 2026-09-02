@@ -14,6 +14,12 @@ def test_dockerfiles_exist_for_public_demo_images():
     assert (ROOT / "docker" / "execution-subsystem.Dockerfile").is_file()
 
 
+def test_python_demo_images_include_local_embedding_runtime_dependencies():
+    for name in ["builder.Dockerfile", "app-backend.Dockerfile"]:
+        dockerfile = (ROOT / "docker" / name).read_text(encoding="utf-8")
+        assert "local-embeddings" in dockerfile
+
+
 def test_python_demo_images_include_shared_package():
     for name in ["builder.Dockerfile", "app-backend.Dockerfile"]:
         dockerfile = (ROOT / "docker" / name).read_text(encoding="utf-8")
@@ -35,7 +41,10 @@ def test_demo_compose_uses_public_ghcr_images_and_volumes():
     assert "ghcr.io/${RAGENIUS_GHCR_OWNER:-schao523}/ragenius-execution-subsystem:${RAGENIUS_IMAGE_TAG:-latest}" in compose
     assert "ragenius_demo_runtime:" in compose
     assert "./demo-data:/seed/demo-data:ro" in compose
+    assert "./models:/models:ro" in compose
     assert "RAG_EMBEDDING_BACKEND: ${RAG_EMBEDDING_BACKEND:-local}" in compose
+    assert "RAG_EMBEDDING_MODEL_PATH_BGE_LARGE_ZH: ${RAG_EMBEDDING_MODEL_PATH_BGE_LARGE_ZH:-/models/bge-large-zh}" in compose
+    assert "RAG_EMBEDDING_MODEL_PATH_E5_LARGE: ${RAG_EMBEDDING_MODEL_PATH_E5_LARGE:-/models/e5-large}" in compose
 
 
 def test_demo_env_template_does_not_use_hash_embeddings_by_default():
@@ -43,6 +52,32 @@ def test_demo_env_template_does_not_use_hash_embeddings_by_default():
 
     assert "RAG_EMBEDDING_BACKEND=local" in template
     assert "RAG_EMBEDDING_BACKEND=hash" not in template
+    assert "RAG_EMBEDDING_MODEL_PATH_BGE_LARGE_ZH=/models/bge-large-zh" in template
+    assert "RAG_EMBEDDING_MODEL_PATH_E5_LARGE=/models/e5-large" in template
+
+
+def test_source_checkout_embedding_setup_script_contract():
+    script = (ROOT / "scripts" / "Setup-Embeddings.ps1").read_text(encoding="utf-8")
+    downloader = (ROOT / "scripts" / "download_embeddings.py").read_text(encoding="utf-8")
+    env_template = (ROOT / ".env.template").read_text(encoding="utf-8")
+
+    assert ".[local-embeddings]" in script
+    assert "download_embeddings.py" in script
+    assert "rag_subsystem" in script
+    assert "models" in script
+    assert "BAAI/bge-large-zh-v1.5" in downloader
+    assert "intfloat/e5-large-v2" in downloader
+    assert "RAG_EMBEDDING_BACKEND=local" in env_template
+
+
+def test_docker_demo_embedding_setup_script_contract():
+    script = (ROOT / "packaging" / "demo" / "Setup-Embeddings.ps1").read_text(encoding="utf-8")
+
+    assert "python:3.12-slim" in script
+    assert "download_embeddings.py" in script
+    assert "BAAI/bge-large-zh-v1.5" in script
+    assert "intfloat/e5-large-v2" in script
+    assert "$LASTEXITCODE" in script
 
 
 def test_release_package_scripts_exist_and_reference_compose():
@@ -60,6 +95,7 @@ def test_build_demo_package_script_copies_seed_and_templates():
     assert "RAGenius-Demo-$Version-Windows" in script
     assert "demo-data" in script
     assert ".env.template" in script
+    assert "download_embeddings.py" in script
     assert "System.IO.Compression.ZipFile" in script
 
 
@@ -105,6 +141,8 @@ def test_build_demo_package_includes_seed_documents(scratch_dir):
 
     assert "RAGenius-Demo/.env.template" in names
     assert "RAGenius-Demo/compose.demo.yml" in names
+    assert "RAGenius-Demo/Setup-Embeddings.ps1" in names
+    assert "RAGenius-Demo/download_embeddings.py" in names
     assert (
         "RAGenius-Demo/demo-data/documents/053eb2ca-54e0-49bf-b7dd-604c9608489e/AI 工具套餐體系.pdf"
         in names

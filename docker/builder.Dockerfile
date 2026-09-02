@@ -12,7 +12,7 @@ COPY shared ./shared
 COPY ragenius_builder/requirements.txt ./ragenius_builder/requirements.txt
 
 RUN python -m pip install --upgrade pip \
-    && python -m pip install -e ".[pgvector,pdf-extract]" \
+    && python -m pip install -e ".[pgvector,pdf-extract,local-embeddings]" \
     && python -m pip install -r ragenius_builder/requirements.txt
 
 COPY ragenius_builder ./ragenius_builder

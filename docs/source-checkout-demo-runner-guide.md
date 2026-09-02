@@ -249,6 +249,19 @@ Install Python dependencies into the active `python` environment:
 .\scripts\Install-PythonDependencies.ps1
 ```
 
+Install local embedding dependencies and model files before ingesting documents:
+
+```powershell
+.\scripts\Setup-Embeddings.ps1
+```
+
+This downloads:
+
+- `BAAI/bge-large-zh-v1.5` to `rag_subsystem\models\bge-large-zh`
+- `intfloat/e5-large-v2` to `rag_subsystem\models\e5-large`
+
+The source-checkout runner defaults to `RAG_EMBEDDING_BACKEND=local`. Without these model files, document ingestion can fail with a model-not-found error and produce zero chunks.
+
 Force reinstall demo seed data into `runtime/demo/`:
 
 ```powershell

@@ -77,10 +77,13 @@ services:
       RAG_VECTOR_STORE_DSN: postgresql://${POSTGRES_USER:-ragenius}:${POSTGRES_PASSWORD:-ragenius}@postgres:5432/${POSTGRES_DB:-ragenius}
       RAG_PGVECTOR_BOOTSTRAP: "true"
       RAG_EMBEDDING_BACKEND: ${RAG_EMBEDDING_BACKEND:-local}
+      RAG_EMBEDDING_MODEL_PATH_BGE_LARGE_ZH: ${RAG_EMBEDDING_MODEL_PATH_BGE_LARGE_ZH:-/models/bge-large-zh}
+      RAG_EMBEDDING_MODEL_PATH_E5_LARGE: ${RAG_EMBEDDING_MODEL_PATH_E5_LARGE:-/models/e5-large}
     ports:
       - "${RAGENIUS_BUILDER_PORT:-8011}:8011"
     volumes:
       - ragenius_demo_runtime:/runtime
+      - ./models:/models:ro
 
   app-backend:
     image: ghcr.io/${RAGENIUS_GHCR_OWNER:-schao523}/ragenius-app-backend:${RAGENIUS_IMAGE_TAG:-latest}
@@ -102,10 +105,13 @@ services:
       RAG_VECTOR_STORE_DSN: postgresql://${POSTGRES_USER:-ragenius}:${POSTGRES_PASSWORD:-ragenius}@postgres:5432/${POSTGRES_DB:-ragenius}
       RAG_PGVECTOR_BOOTSTRAP: "true"
       RAG_EMBEDDING_BACKEND: ${RAG_EMBEDDING_BACKEND:-local}
+      RAG_EMBEDDING_MODEL_PATH_BGE_LARGE_ZH: ${RAG_EMBEDDING_MODEL_PATH_BGE_LARGE_ZH:-/models/bge-large-zh}
+      RAG_EMBEDDING_MODEL_PATH_E5_LARGE: ${RAG_EMBEDDING_MODEL_PATH_E5_LARGE:-/models/e5-large}
     ports:
       - "${RAGENIUS_APP_BACKEND_PORT:-8000}:8000"
     volumes:
       - ragenius_demo_runtime:/runtime
+      - ./models:/models:ro
 
   app-frontend:
     image: ghcr.io/${RAGENIUS_GHCR_OWNER:-schao523}/ragenius-app-frontend:${RAGENIUS_IMAGE_TAG:-latest}

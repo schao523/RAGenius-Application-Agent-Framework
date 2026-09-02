@@ -13,7 +13,7 @@ COPY ragenius_app_skeleton/backend/requirements.txt ./ragenius_app_skeleton/back
 COPY ragenius_builder/requirements.txt ./ragenius_builder/requirements.txt
 
 RUN python -m pip install --upgrade pip \
-    && python -m pip install -e ".[pgvector,pdf-extract]" \
+    && python -m pip install -e ".[pgvector,pdf-extract,local-embeddings]" \
     && python -m pip install -r ragenius_app_skeleton/backend/requirements.txt \
     && python -m pip install -r ragenius_builder/requirements.txt
 

@@ -23,6 +23,8 @@ $requiredPaths = @(
     "packaging/demo/Start.ps1",
     "packaging/demo/Stop.ps1",
     "packaging/demo/Reset.ps1",
+    "packaging/demo/Setup-Embeddings.ps1",
+    "scripts/download_embeddings.py",
     "demo-data",
     "docker/postgres/init/10-create-execution-database.sql",
     "rag_subsystem/sql/init_pgvector.sql"
@@ -48,6 +50,7 @@ if (Test-Path $zipPath) {
 New-Item -ItemType Directory -Path $payloadDir -Force | Out-Null
 
 Copy-Item -Path (Join-Path $repoRoot "packaging/demo/*") -Destination $payloadDir -Recurse -Force
+Copy-Item -Path (Join-Path $repoRoot "scripts/download_embeddings.py") -Destination (Join-Path $payloadDir "download_embeddings.py") -Force
 Copy-Item -Path (Join-Path $repoRoot "demo-data") -Destination (Join-Path $payloadDir "demo-data") -Recurse -Force
 
 $packageDockerInit = Join-Path $payloadDir "docker/postgres/init"

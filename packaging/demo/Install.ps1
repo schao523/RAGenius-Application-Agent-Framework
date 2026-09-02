@@ -19,6 +19,7 @@ Invoke-DemoCompose pull
 
 Write-Host ""
 Write-Host "Images downloaded. Start the demo with:"
+Write-Host "  .\Setup-Embeddings.ps1"
 Write-Host "  .\Start.ps1"
 Write-Host ""
 Write-Host "URLs after startup:"
