@@ -122,6 +122,7 @@ def test_stop_demo_cleans_known_demo_ports():
     script = (REPO_ROOT / "scripts" / "Stop-Demo.ps1").read_text(encoding="utf-8")
 
     assert "Stop-ProcessTree" in script
+    assert "Stop-ProcessSafely" in script
     assert "Win32_Process" in script
     assert "ParentProcessId" in script
     assert "Stop-KnownDemoPortListeners" in script
@@ -130,3 +131,12 @@ def test_stop_demo_cleans_known_demo_ports():
     assert "8011" in script
     assert "3001" in script
     assert "Get-NetTCPConnection" in script
+
+
+def test_stop_demo_does_not_abort_on_access_denied_processes():
+    script = (REPO_ROOT / "scripts" / "Stop-Demo.ps1").read_text(encoding="utf-8")
+
+    assert "try {" in script
+    assert "catch {" in script
+    assert "Unable to stop" in script
+    assert "return 0" in script

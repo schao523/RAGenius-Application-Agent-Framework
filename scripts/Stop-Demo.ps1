@@ -8,6 +8,17 @@ $ErrorActionPreference = "Stop"
 $processFile = Join-Path $RuntimeRoot "demo-processes.json"
 $knownDemoPorts = @(3001, 8000, 8011, 5173)
 
+function Stop-ProcessSafely([int]$ProcessId, [string]$Description) {
+  try {
+    Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+    return 1
+  }
+  catch {
+    Write-Warning "Unable to stop $Description (PID $ProcessId): $($_.Exception.Message)"
+    return 0
+  }
+}
+
 function Stop-ProcessTree([int]$RootProcessId, [string]$Name) {
   if ($RootProcessId -le 0 -or $RootProcessId -eq $PID) {
     return 0
@@ -26,8 +37,8 @@ function Stop-ProcessTree([int]$RootProcessId, [string]$Name) {
   }
 
   Write-Host "Stopping $Name (PID $RootProcessId, $($process.ProcessName))..."
-  Stop-Process -Id $RootProcessId -Force
-  return ($stoppedInTree + 1)
+  $stoppedRoot = Stop-ProcessSafely -ProcessId $RootProcessId -Description "$Name, $($process.ProcessName)"
+  return ($stoppedInTree + $stoppedRoot)
 }
 
 function Stop-KnownDemoPortListeners([int[]]$Ports) {
@@ -52,8 +63,7 @@ function Stop-KnownDemoPortListeners([int[]]$Ports) {
         continue
       }
       Write-Host "Stopping listener on demo port $port (PID $pidValue, $($process.ProcessName))..."
-      Stop-Process -Id $pidValue -Force
-      $stoppedByPort += 1
+      $stoppedByPort += Stop-ProcessSafely -ProcessId $pidValue -Description "listener on demo port $port, $($process.ProcessName)"
     }
   }
   return $stoppedByPort
