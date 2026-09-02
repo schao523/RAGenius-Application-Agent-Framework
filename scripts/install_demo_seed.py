@@ -119,7 +119,7 @@ def install_demo_seed(demo_data_dir: Path, runtime_root: Path, force: bool = Fal
                         manifest_document.get("language"),
                         json.dumps(manifest_document.get("tags", []), ensure_ascii=False),
                         str(destination.resolve()),
-                        "ready",
+                        "pending",
                         None,
                         now,
                     ),

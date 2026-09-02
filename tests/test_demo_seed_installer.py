@@ -142,7 +142,7 @@ def test_install_demo_seed_creates_builder_db_runtime_files_and_snapshots(scratc
     settings = dict(con.execute("SELECT * FROM settings WHERE app_id = ?", (APP_ID,)).fetchone())
     assert json.loads(settings["config_settings"])["llm"]["provider"] == "deepseek"
     document = dict(con.execute("SELECT * FROM documents WHERE id = 'doc-1'").fetchone())
-    assert document["status"] == "ready"
+    assert document["status"] == "pending"
     assert Path(document["file_path"]).resolve() == installed_doc.resolve()
     assert str(runtime_root.resolve()) in document["file_path"]
     assert "demo-data" not in document["file_path"]
