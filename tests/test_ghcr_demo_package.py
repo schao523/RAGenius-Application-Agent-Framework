@@ -20,6 +20,12 @@ def test_python_demo_images_include_shared_package():
         assert "COPY shared ./shared" in dockerfile
 
 
+def test_app_backend_image_includes_runtime_schema_contracts():
+    dockerfile = (ROOT / "docker" / "app-backend.Dockerfile").read_text(encoding="utf-8")
+
+    assert "COPY ragenius_app_skeleton/schemas ./ragenius_app_skeleton/schemas" in dockerfile
+
+
 def test_demo_compose_uses_public_ghcr_images_and_volumes():
     compose = (ROOT / "packaging" / "demo" / "compose.demo.yml").read_text(encoding="utf-8")
 

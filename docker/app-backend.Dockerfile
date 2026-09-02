@@ -18,6 +18,7 @@ RUN python -m pip install --upgrade pip \
     && python -m pip install -r ragenius_builder/requirements.txt
 
 COPY ragenius_app_skeleton/backend ./ragenius_app_skeleton/backend
+COPY ragenius_app_skeleton/schemas ./ragenius_app_skeleton/schemas
 COPY ragenius_app_skeleton/workflows ./ragenius_app_skeleton/workflows
 COPY ragenius_builder ./ragenius_builder
 COPY workflows ./workflows
