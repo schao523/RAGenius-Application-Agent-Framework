@@ -64,6 +64,14 @@ def test_demo_package_defaults_ghcr_images_to_amd64_for_windows_arm_hosts():
     assert compose.count("platform: ${RAGENIUS_DOCKER_PLATFORM:-linux/amd64}") >= 5
 
 
+def test_demo_package_uses_non_conflicting_postgres_host_port_by_default():
+    compose = (ROOT / "packaging" / "demo" / "compose.demo.yml").read_text(encoding="utf-8")
+    template = (ROOT / "packaging" / "demo" / ".env.template").read_text(encoding="utf-8")
+
+    assert "RAGENIUS_POSTGRES_PORT=55433" in template
+    assert "${RAGENIUS_POSTGRES_PORT:-55433}:5432" in compose
+
+
 def test_source_checkout_embedding_setup_script_contract():
     script = (ROOT / "scripts" / "Setup-Embeddings.ps1").read_text(encoding="utf-8")
     downloader = (ROOT / "scripts" / "download_embeddings.py").read_text(encoding="utf-8")
@@ -146,11 +154,13 @@ def test_build_demo_package_includes_seed_documents(scratch_dir):
 
     with zipfile.ZipFile(zip_path) as archive:
         names = set(archive.namelist())
+        env_template = archive.read("RAGenius-Demo/.env.template").decode("utf-8")
 
     assert "RAGenius-Demo/.env.template" in names
     assert "RAGenius-Demo/compose.demo.yml" in names
     assert "RAGenius-Demo/Setup-Embeddings.ps1" in names
     assert "RAGenius-Demo/download_embeddings.py" in names
+    assert "RAGENIUS_IMAGE_TAG=zip-test" in env_template
     assert (
         "RAGenius-Demo/demo-data/documents/053eb2ca-54e0-49bf-b7dd-604c9608489e/AI 工具套餐體系.pdf"
         in names

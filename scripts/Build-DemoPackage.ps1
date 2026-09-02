@@ -50,6 +50,11 @@ if (Test-Path $zipPath) {
 New-Item -ItemType Directory -Path $payloadDir -Force | Out-Null
 
 Copy-Item -Path (Join-Path $repoRoot "packaging/demo/*") -Destination $payloadDir -Recurse -Force
+$packageEnvTemplate = Join-Path $payloadDir ".env.template"
+$packageEnvContent = Get-Content -LiteralPath $packageEnvTemplate -Raw
+$packageEnvContent = $packageEnvContent -replace "(?m)^RAGENIUS_IMAGE_TAG=.*$", "RAGENIUS_IMAGE_TAG=$Version"
+Set-Content -LiteralPath $packageEnvTemplate -Value $packageEnvContent -NoNewline
+
 Copy-Item -Path (Join-Path $repoRoot "scripts/download_embeddings.py") -Destination (Join-Path $payloadDir "download_embeddings.py") -Force
 Copy-Item -Path (Join-Path $repoRoot "demo-data") -Destination (Join-Path $payloadDir "demo-data") -Recurse -Force
 
