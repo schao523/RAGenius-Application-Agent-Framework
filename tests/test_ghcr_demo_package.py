@@ -30,6 +30,7 @@ def test_app_backend_image_includes_runtime_schema_contracts():
     dockerfile = (ROOT / "docker" / "app-backend.Dockerfile").read_text(encoding="utf-8")
 
     assert "COPY ragenius_app_skeleton/schemas ./ragenius_app_skeleton/schemas" in dockerfile
+    assert "COPY ragenius_app_skeleton/prompts ./ragenius_app_skeleton/prompts" in dockerfile
 
 
 def test_demo_compose_uses_public_ghcr_images_and_volumes():
@@ -43,17 +44,30 @@ def test_demo_compose_uses_public_ghcr_images_and_volumes():
     assert "./demo-data:/seed/demo-data:ro" in compose
     assert "./models:/models:ro" in compose
     assert "RAG_EMBEDDING_BACKEND: ${RAG_EMBEDDING_BACKEND:-local}" in compose
-    assert "RAG_EMBEDDING_MODEL_PATH_BGE_LARGE_ZH: ${RAG_EMBEDDING_MODEL_PATH_BGE_LARGE_ZH:-/models/bge-large-zh}" in compose
-    assert "RAG_EMBEDDING_MODEL_PATH_E5_LARGE: ${RAG_EMBEDDING_MODEL_PATH_E5_LARGE:-/models/e5-large}" in compose
+    assert "RAG_EMBEDDING_LOCAL_ONLY: \"true\"" in compose
+    assert "RAG_EMBEDDING_MODEL_PATH_BGE_LARGE_ZH: /models/bge-large-zh" in compose
+    assert "RAG_EMBEDDING_MODEL_PATH_E5_LARGE: /models/e5-large" in compose
+    assert "RAGENIUS_LLM_CONTEXT_OPTIMIZATION: \"true\"" in compose
+    assert "RAGENIUS_LLM_CONTEXT_OPTIMIZATION_MODE: compact" in compose
 
 
 def test_demo_env_template_does_not_use_hash_embeddings_by_default():
     template = (ROOT / "packaging" / "demo" / ".env.template").read_text(encoding="utf-8")
 
     assert "RAG_EMBEDDING_BACKEND=local" in template
+    assert "RAG_EMBEDDING_LOCAL_ONLY=true" in template
     assert "RAG_EMBEDDING_BACKEND=hash" not in template
     assert "RAG_EMBEDDING_MODEL_PATH_BGE_LARGE_ZH=/models/bge-large-zh" in template
     assert "RAG_EMBEDDING_MODEL_PATH_E5_LARGE=/models/e5-large" in template
+
+
+def test_demo_env_template_enables_context_optimization_by_default():
+    template = (ROOT / "packaging" / "demo" / ".env.template").read_text(encoding="utf-8")
+    source_template = (ROOT / ".env.template").read_text(encoding="utf-8")
+
+    for content in [template, source_template]:
+        assert "RAGENIUS_LLM_CONTEXT_OPTIMIZATION=true" in content
+        assert "RAGENIUS_LLM_CONTEXT_OPTIMIZATION_MODE=compact" in content
 
 
 def test_demo_package_defaults_ghcr_images_to_amd64_for_windows_arm_hosts():
