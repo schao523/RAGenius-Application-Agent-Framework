@@ -19,6 +19,7 @@ class GraphState(TypedDict, total=False):
     collection_id: str
     domain: str
     user_id: str
+    planner_mode: str
 
     # frozen versions (session-level)
     config_version: int
@@ -69,6 +70,9 @@ class GraphState(TypedDict, total=False):
 
     # planner / retrieval artifacts
     planner_output: Dict[str, Any]
+    hybrid_planner_decision_packet: Dict[str, Any]
+    hybrid_planner_shadow_output: Dict[str, Any]
+    semantic_scope_decision: Dict[str, Any]
     retrieval_plan: Dict[str, Any]
     retrieval_debug_trace: Dict[str, Any]
     raw_evidence: List[Dict[str, Any]]
@@ -106,6 +110,7 @@ class GraphState(TypedDict, total=False):
     _llm_config_extractor: Any
     _llm_generate_adapter: Any
     _llm_planner: Any
+    _llm_planner_hybrid: Any
     _retrieve_fn: Any
     _llm_evidence_analysis: Any
     _llm_answer: Any
@@ -118,6 +123,7 @@ class GraphStateModel(BaseModel):
     collection_id: Optional[str] = None
     domain: Optional[str] = None
     user_id: Optional[str] = None
+    planner_mode: Optional[str] = None
 
     config_version: Optional[int] = None
     adapter_version: Optional[int] = None
@@ -164,6 +170,9 @@ class GraphStateModel(BaseModel):
     template_resource_filters: Optional[Dict[str, Any]] = None
 
     planner_output: Optional[Dict[str, Any]] = None
+    hybrid_planner_decision_packet: Optional[Dict[str, Any]] = None
+    hybrid_planner_shadow_output: Optional[Dict[str, Any]] = None
+    semantic_scope_decision: Optional[Dict[str, Any]] = None
     retrieval_plan: Optional[Dict[str, Any]] = None
     retrieval_debug_trace: Optional[Dict[str, Any]] = None
     raw_evidence: Optional[List[Dict[str, Any]]] = None
@@ -189,5 +198,6 @@ class GraphStateModel(BaseModel):
     turn_token_accounting: Optional[Dict[str, Any]] = Field(default=None, alias="_turn_token_accounting")
     task_model_diagnostics: Optional[Dict[str, Any]] = Field(default=None, alias="_task_model_diagnostics")
     evidence_analysis_policy: Optional[Dict[str, Any]] = Field(default=None, alias="_evidence_analysis_policy")
+    llm_planner_hybrid: Optional[Any] = Field(default=None, alias="_llm_planner_hybrid")
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)

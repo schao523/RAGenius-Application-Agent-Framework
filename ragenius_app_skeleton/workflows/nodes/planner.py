@@ -20,6 +20,7 @@ from ..runtime_models import (
     ProcedureStepActivation,
     RetrievalDomainPlan,
     ResourceRequest,
+    reconcile_session_step_activation,
     SessionExecutionState,
     TurnAction,
     TurnActionPlan,
@@ -35,8 +36,11 @@ PROMPT_FALLBACK = PROMPT_DIR / "planner_fallback_prompt.txt"
 HYBRID_PLANNER_SYSTEM_PROMPT = (
     "You are the planner-routing model for a compiled application contract. "
     "You are not interpreting raw instructions. Choose only among the supplied candidates and ids. "
+    "Classify semantic scope: whether the latest user message is in scope, out of scope, or ambiguous for this application. "
+    "Treat replies that continue an active workflow, answer a pending question, refine prior output, or use an app capability as in scope. "
     "Return JSON only. Do not invent workflows, roles, modules, steps, resources, or ids."
 )
+SEMANTIC_SCOPE_OUT_OF_SCOPE_THRESHOLD = 0.85
 HYBRID_PLANNER_TOOL = {
     "name": "create_hybrid_planner_decision",
     "parameters": {
@@ -45,6 +49,7 @@ HYBRID_PLANNER_TOOL = {
             "intent_label": {"type": "string"},
             "confidence": {"type": "number"},
             "continue_current_scope": {"type": "boolean"},
+            "selected_routing_rule_id": {"type": ["string", "null"]},
             "selected_role_id": {"type": ["string", "null"]},
             "selected_workflow_id": {"type": ["string", "null"]},
             "selected_support_module_ids": {"type": "array", "items": {"type": "string"}},
@@ -53,6 +58,19 @@ HYBRID_PLANNER_TOOL = {
             "module_sequence": {"type": "array", "items": {"type": "string"}},
             "clarification_status": {"type": "object"},
             "next_action": {"type": "object"},
+            "semantic_scope": {
+                "type": "object",
+                "properties": {
+                    "classification": {
+                        "type": "string",
+                        "enum": ["in_scope", "out_of_scope", "ambiguous"],
+                    },
+                    "confidence": {"type": "number"},
+                    "reason": {"type": "string"},
+                    "matched_app_signals": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["classification", "confidence", "reason", "matched_app_signals"],
+            },
             "reasoning_summary": {"type": "array", "items": {"type": "string"}},
         },
         "required": [
@@ -295,6 +313,7 @@ def _build_hybrid_turn_decision_packet(state: GraphState) -> dict[str, Any]:
         "clarification_gate": (hybrid.get("clarification_gate_rules", []) or [None])[0] or {},
         "required_output": {
             "classify_intent": True,
+            "classify_semantic_scope": True,
             "select_role": True,
             "select_target_scope": True,
             "decide_continue_or_switch": True,
@@ -857,6 +876,89 @@ def _classify_pre_routing_turn(state: GraphState, planner_output: Dict[str, Any]
     }
 
 
+def _validated_semantic_scope_decision(state: GraphState) -> Dict[str, Any] | None:
+    shadow_output = state.get("hybrid_planner_shadow_output", {}) or {}
+    if not isinstance(shadow_output, dict):
+        return None
+    raw_scope = shadow_output.get("semantic_scope")
+    if not isinstance(raw_scope, dict):
+        return None
+
+    classification = str(raw_scope.get("classification") or "").strip().lower()
+    try:
+        confidence = float(raw_scope.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = max(0.0, min(confidence, 1.0))
+    reason = str(raw_scope.get("reason") or "").strip()[:500]
+    matched_app_signals = [
+        str(item or "").strip()[:200]
+        for item in raw_scope.get("matched_app_signals", []) or []
+        if str(item or "").strip()
+    ][:12]
+    decision = {
+        "classification": classification or "invalid",
+        "confidence": confidence,
+        "reason": reason,
+        "matched_app_signals": matched_app_signals,
+        "activated": False,
+        "validation_reason": "classification_does_not_activate_general_route",
+        "source": "hybrid_planner",
+    }
+    if classification not in {"in_scope", "out_of_scope", "ambiguous"}:
+        decision["validation_reason"] = "invalid_classification"
+        return decision
+    if classification != "out_of_scope":
+        return decision
+    if confidence < SEMANTIC_SCOPE_OUT_OF_SCOPE_THRESHOLD:
+        decision["validation_reason"] = "confidence_below_threshold"
+        return decision
+
+    query = str(state.get("user_query") or "").strip()
+    if (
+        str(state.get("turn_input_type") or "text_query").strip() == "session_upload"
+        or bool(state.get("pending_upload_analysis"))
+        or bool(state.get("attached_artifact_refs"))
+        or _looks_context_dependent(query)
+        or _looks_like_step_advance(query)
+        or _looks_like_refinement_followup(state, query)
+        or _looks_like_option_selection_followup(state, query)
+    ):
+        decision["validation_reason"] = "continuation_turn_protected"
+        return decision
+
+    next_action = shadow_output.get("next_action", {}) or {}
+    selected_scalar_targets = (
+        shadow_output.get("selected_role_id"),
+        shadow_output.get("selected_workflow_id"),
+        shadow_output.get("selected_supplementary_workflow_id"),
+        next_action.get("target_service_block_id") if isinstance(next_action, dict) else None,
+        next_action.get("target_workflow_id") if isinstance(next_action, dict) else None,
+        next_action.get("target_step_id") if isinstance(next_action, dict) else None,
+    )
+    selected_list_targets = (
+        shadow_output.get("selected_support_module_ids", []),
+        shadow_output.get("selected_followup_module_ids", []),
+        shadow_output.get("module_sequence", []),
+        next_action.get("module_queue", []) if isinstance(next_action, dict) else [],
+    )
+    if (
+        bool(shadow_output.get("continue_current_scope"))
+        or any(str(item or "").strip() for item in selected_scalar_targets)
+        or any(
+            any(str(item or "").strip() for item in values or [])
+            for values in selected_list_targets
+            if isinstance(values, list)
+        )
+    ):
+        decision["validation_reason"] = "app_target_selection_conflict"
+        return decision
+
+    decision["activated"] = True
+    decision["validation_reason"] = "high_confidence_coherent_out_of_scope"
+    return decision
+
+
 def _find_step_by_order(steps: list[Dict[str, Any]], order: int | None) -> Dict[str, Any] | None:
     if order is None:
         return None
@@ -1381,7 +1483,38 @@ def _module_owned_active_step_selection(state: GraphState) -> Dict[str, Any] | N
         )
     if isinstance(selected_step, dict):
         query_text = str(state.get("user_query") or "").strip()
-        if _looks_like_step_advance(query_text):
+        workflow = _workflow_for_step_scope_id(state, active_step_scope_id)
+        workflow_step = None
+        if isinstance(workflow, dict):
+            workflow_step = next(
+                (
+                    item
+                    for item in _workflow_steps(workflow)
+                    if str(item.get("step_scope_id") or "").strip() == active_step_scope_id
+                ),
+                None,
+            )
+        gated_next_step = (
+            _should_enter_bundled_followup_step(
+                state,
+                workflow,
+                workflow_step,
+                query_text,
+            )
+            if isinstance(workflow, dict)
+            else None
+        )
+        if isinstance(gated_next_step, dict):
+            gated_step_scope_id = str(gated_next_step.get("step_scope_id") or "").strip()
+            selected_step = next(
+                (
+                    item
+                    for item in steps
+                    if str(item.get("step_id") or "").strip() == gated_step_scope_id
+                ),
+                selected_step,
+            )
+        elif _looks_like_step_advance(query_text):
             current_order = _normalize_int_like(selected_step.get("order"))
             if current_order is not None:
                 next_step = next(
@@ -2022,11 +2155,20 @@ def _hybrid_active_target_service_block_ids(state: GraphState) -> list[str]:
         if target_service_block_id:
             candidate_ids.append(target_service_block_id)
 
-    for key in ("selected_followup_module_ids", "selected_support_module_ids", "module_sequence"):
+    for key in ("selected_followup_module_ids", "selected_support_module_ids"):
         values = shadow_output.get(key, []) or []
         if not isinstance(values, list):
             continue
         candidate_ids.extend(str(item).strip() for item in values if str(item).strip())
+
+    selected_routing_rule_id = _hybrid_active_selected_routing_rule_id(state) or ""
+    routed_service_block_id = _routing_rule_target_service_block_id(state, selected_routing_rule_id)
+    if routed_service_block_id:
+        candidate_ids.append(routed_service_block_id)
+
+    module_sequence = shadow_output.get("module_sequence", []) or []
+    if isinstance(module_sequence, list):
+        candidate_ids.extend(str(item).strip() for item in module_sequence if str(item).strip())
 
     if isinstance(next_action, dict):
         candidate_ids.extend(
@@ -2271,6 +2413,34 @@ def _routing_rule_by_id(state: GraphState, rule_id: str) -> Dict[str, Any] | Non
     return None
 
 
+def _routing_rule_target_service_block_id(state: GraphState, rule_id: str) -> str | None:
+    rule = _routing_rule_by_id(state, rule_id)
+    if not isinstance(rule, dict):
+        return None
+    target = str(
+        rule.get("target_service_block_id")
+        or rule.get("target_module_id")
+        or rule.get("target_workflow_id")
+        or rule.get("target_id")
+        or rule.get("target")
+        or ""
+    ).strip()
+    if not target:
+        return None
+    block = _service_block_by_id(state, target)
+    if not isinstance(block, dict):
+        return None
+    block_type = str(block.get("block_type") or "").strip()
+    if block_type not in {
+        "primary_workflow",
+        "supplementary_workflow",
+        "support_module",
+        "followup_module",
+    }:
+        return None
+    return str(block.get("block_id") or "").strip() or target
+
+
 def _routing_rule_match_score(state: GraphState, rule: Dict[str, Any] | None) -> int:
     if not isinstance(rule, dict):
         return 0
@@ -2510,9 +2680,22 @@ def _hybrid_active_selected_routing_rule_id(state: GraphState) -> str | None:
 
 
 def _hybrid_active_primary_support_module(state: GraphState, module_queue: list[str]) -> tuple[str | None, str | None]:
-    if not module_queue:
+    shadow_target_step = _shadow_target_step_selection(state)
+    target_activation = (
+        shadow_target_step.get("activation", {})
+        if isinstance(shadow_target_step, dict)
+        and isinstance(shadow_target_step.get("activation"), dict)
+        else {}
+    )
+    target_support_module_id = str(target_activation.get("primary_support_module_id") or "").strip()
+    candidates = list(module_queue)
+    if target_support_module_id:
+        candidates = [target_support_module_id] + [
+            item for item in candidates if not _identifier_equivalent(item, target_support_module_id)
+        ]
+    if not candidates:
         return None, None
-    for candidate in module_queue:
+    for candidate in candidates:
         primary_module_id = str(candidate or "").strip()
         if not primary_module_id:
             continue
@@ -2540,17 +2723,18 @@ def _hybrid_active_primary_support_module(state: GraphState, module_queue: list[
                 if _followup_module_should_activate_for_turn(state, primary_module_id):
                     return primary_module_id, str(item.get("title") or "").strip() or None
                 break
-            return primary_module_id, str(item.get("title") or "").strip() or None
+            if str(item.get("block_type") or "").strip() == "support_module":
+                return primary_module_id, str(item.get("title") or "").strip() or None
     return None, None
 
 
 def _hybrid_active_selected_instruction_module(state: GraphState) -> Dict[str, Any] | None:
-    module_owned_step = _module_owned_active_step_selection(state)
-    if isinstance(module_owned_step, dict):
-        return module_owned_step
     shadow_target_step = _shadow_target_step_selection(state)
     if isinstance(shadow_target_step, dict):
         return shadow_target_step
+    module_owned_step = _module_owned_active_step_selection(state)
+    if isinstance(module_owned_step, dict):
+        return module_owned_step
     registry = state.get("template_registry", {}) or {}
     modules = registry.get("instruction_modules", [])
     if not isinstance(modules, list) or not modules:
@@ -2567,6 +2751,24 @@ def _hybrid_active_selected_instruction_module(state: GraphState) -> Dict[str, A
         if str(module.get("id") or "").strip() in target_ids:
             return module
     return None
+
+
+def _hybrid_active_current_module_index(
+    state: GraphState,
+    module_queue: list[str],
+    primary_support_module_id: str | None,
+) -> int:
+    target_id = str(primary_support_module_id or "").strip()
+    if target_id:
+        for index, candidate in enumerate(module_queue):
+            if _identifier_equivalent(candidate, target_id):
+                return index
+    session_state = state.get("session_execution_state", {}) or {}
+    if isinstance(session_state, dict):
+        current_index = _normalize_int_like(session_state.get("current_module_index"))
+        if current_index is not None and 0 <= current_index < len(module_queue):
+            return current_index
+    return 0
 
 
 def _hybrid_active_selected_service_block(state: GraphState) -> Dict[str, Any] | None:
@@ -2819,6 +3021,23 @@ def _procedure_for_service_block_id(state: GraphState, block_id: str) -> Dict[st
     return None
 
 
+def _service_block_has_step_resource_mapping(state: GraphState, block_id: str) -> bool:
+    procedure = _procedure_for_service_block_id(state, block_id)
+    if not isinstance(procedure, dict):
+        return False
+    procedure_id = str(procedure.get("procedure_id") or "").strip()
+    for step in _ordered_procedure_steps(state, procedure_id):
+        if any(
+            str(item or "").strip()
+            for item in (
+                list(step.get("resource_refs", []) or [])
+                + list(step.get("bundled_resource_refs", []) or [])
+            )
+        ):
+            return True
+    return False
+
+
 def _ordered_procedure_steps(state: GraphState, procedure_id: str) -> list[Dict[str, Any]]:
     target = str(procedure_id or "").strip()
     if not target:
@@ -3010,6 +3229,8 @@ def _binding_scope_matches(
     state: GraphState,
     selected_workflow: Dict[str, Any] | None,
     selected_module: Dict[str, Any] | None,
+    *,
+    include_planned_scopes: bool = True,
 ) -> bool:
     scope_id = str(binding.get("scope_id") or "").strip().lower()
     if not scope_id:
@@ -3034,13 +3255,14 @@ def _binding_scope_matches(
         selected_module.get("block_id") if isinstance(selected_module, dict) else "",
     ):
         candidates.update(_scope_candidate_variants(value))
-    for value in _hybrid_active_target_service_block_ids(state):
-        candidates.update(_scope_candidate_variants(value))
-    for value in _queued_followup_service_block_ids(state):
-        candidates.update(_scope_candidate_variants(value))
-    if isinstance(session_state, dict):
-        for value in session_state.get("active_module_queue", []) or []:
+    if include_planned_scopes:
+        for value in _hybrid_active_target_service_block_ids(state):
             candidates.update(_scope_candidate_variants(value))
+        for value in _queued_followup_service_block_ids(state):
+            candidates.update(_scope_candidate_variants(value))
+        if isinstance(session_state, dict):
+            for value in session_state.get("active_module_queue", []) or []:
+                candidates.update(_scope_candidate_variants(value))
 
     has_selected_scope = bool(candidates)
     trigger_type = str(binding.get("trigger_type") or "").strip().lower()
@@ -3171,12 +3393,34 @@ def _match_phase_resource_bindings(
     query = _combined_query_text(state, planner_output)
     explicit_commands = _explicit_command_markers(query)
     continuation_ids = _continuation_binding_ids(state)
+    hybrid_step_scope_id = ""
+    hybrid_active_service_block_id = ""
+    if str(state.get("planner_mode") or "").strip().lower() == "hybrid_active":
+        session_state = state.get("session_execution_state", {}) or {}
+        if isinstance(session_state, dict):
+            hybrid_step_scope_id = str(session_state.get("active_step_scope_id") or "").strip()
+            hybrid_active_service_block_id = str(session_state.get("active_service_block_id") or "").strip()
     matched: list[Dict[str, Any]] = []
     for binding in _phase_resource_bindings(state):
         trigger_type = str(binding.get("trigger_type") or "").strip()
         if trigger_type in {"command_trigger", "artifact_gate"}:
             continue
-        if not _binding_scope_matches(binding, state, selected_workflow, selected_module):
+        if not _binding_scope_matches(
+            binding,
+            state,
+            selected_workflow,
+            selected_module,
+            include_planned_scopes=not bool(hybrid_step_scope_id),
+        ):
+            continue
+        binding_scope_id = str(binding.get("scope_id") or "").strip()
+        if (
+            hybrid_step_scope_id
+            and hybrid_active_service_block_id
+            and _identifier_equivalent(binding_scope_id, hybrid_active_service_block_id)
+            and _service_block_has_step_resource_mapping(state, hybrid_active_service_block_id)
+            and binding.get("step_order") is None
+        ):
             continue
         selected_step_scope_id = (
             str(selected_module.get("step_scope_id") or "").strip()
@@ -3197,7 +3441,7 @@ def _match_phase_resource_bindings(
                 ]
             )
         ) if isinstance(selected_module, dict) else False
-        binding_scope_id = str(binding.get("scope_id") or "").strip().lower()
+        binding_scope_id = binding_scope_id.lower()
         if (
             selected_step_scope_id
             and selected_step_resources
@@ -4981,6 +5225,68 @@ def _sync_resource_load_plans_from_turn_requests(state: GraphState) -> None:
         ]
 
 
+def _deduplicate_turn_resource_requests(state: GraphState) -> None:
+    turn_execution_plan = state.get("turn_execution_plan", {}) or {}
+    if not isinstance(turn_execution_plan, dict):
+        return
+    requests = turn_execution_plan.get("resource_requests", [])
+    if not isinstance(requests, list):
+        return
+
+    resource_map = _runtime_resource_map(state)
+    deduplicated: list[dict] = []
+    requests_by_key: dict[tuple[str, str], dict] = {}
+    for item in requests:
+        if not isinstance(item, dict):
+            continue
+        normalized = dict(item)
+        role = str(normalized.get("resource_role") or "").strip()
+        resource_id = str(normalized.get("resource_id") or "").strip()
+        filename = str(normalized.get("filename") or "").strip()
+        runtime_resource = resource_map.get(resource_id) if resource_id else None
+        if not isinstance(runtime_resource, dict) and filename:
+            runtime_resource = _runtime_resource_by_filename(state, filename)
+        canonical_resource_id = (
+            str(runtime_resource.get("resource_id") or "").strip()
+            if isinstance(runtime_resource, dict)
+            else resource_id
+        )
+        canonical_filename = (
+            str(runtime_resource.get("filename") or "").strip()
+            if isinstance(runtime_resource, dict)
+            else filename
+        )
+        identity = canonical_resource_id.lower() or canonical_filename.lower()
+        if not identity:
+            deduplicated.append(normalized)
+            continue
+        key = (role, identity)
+        existing = requests_by_key.get(key)
+        if existing is None:
+            requests_by_key[key] = normalized
+            deduplicated.append(normalized)
+            continue
+        for field in (
+            "resource_id",
+            "filename",
+            "binding_id",
+            "resource_kind",
+            "dependency_group_id",
+            "artifact_role",
+            "source_layer",
+            "step_scope_id",
+            "support_module_id",
+        ):
+            if not existing.get(field) and normalized.get(field):
+                existing[field] = normalized[field]
+        if normalized.get("required_for_progression"):
+            existing["required_for_progression"] = True
+        if normalized.get("required"):
+            existing["required"] = True
+
+    turn_execution_plan["resource_requests"] = deduplicated
+
+
 def _build_actions(
     state: GraphState,
     execution_context: Dict[str, Any],
@@ -5438,12 +5744,8 @@ def _build_execution_context(
         planner_mode == "hybrid_active"
         and layered_context
         and str(layered_context.get("active_step_scope_id") or "").strip()
-        and [
-            str(item or "").strip()
-            for item in layered_context.get("direct_resource_files", []) or []
-            if str(item or "").strip()
-        ]
         and primary_support_module_id
+        and _service_block_has_step_resource_mapping(state, primary_support_module_id)
     )
     if not followup_block_active and not step_scoped_module_owned_resources:
         for resource in support_resources:
@@ -5789,20 +6091,20 @@ def run(
 
     try:
         planner_output = _call_planner(llm_planner, _build_main_prompt(state), state)
+        planner_output = _normalize_planner_output(planner_output)
+        planner_output = _enforce_app_scoped_retrieval(state, planner_output)
+        validate_planner_output(planner_output)
     except Exception:
         planner_output = _default_planner_output(state)
-    planner_output = _normalize_planner_output(planner_output)
-    planner_output = _enforce_app_scoped_retrieval(state, planner_output)
-    validate_planner_output(planner_output)
 
     if float(planner_output.get("confidence", 0.0)) < 0.6:
         try:
             planner_output = _call_planner(llm_planner, _build_fallback_prompt(state), state)
+            planner_output = _normalize_planner_output(planner_output)
+            planner_output = _enforce_app_scoped_retrieval(state, planner_output)
+            validate_planner_output(planner_output)
         except Exception:
             planner_output = _default_planner_output(state)
-        planner_output = _normalize_planner_output(planner_output)
-        planner_output = _enforce_app_scoped_retrieval(state, planner_output)
-        validate_planner_output(planner_output)
 
     state["planner_output"] = planner_output
     state["retrieval_plan"] = planner_output["retrievalPlan"]
@@ -5815,7 +6117,19 @@ def run(
                 state["hybrid_planner_shadow_output"] = _call_hybrid_planner_shadow(llm_planner_hybrid, hybrid_packet, state)
             except Exception:
                 state["hybrid_planner_shadow_output"] = {}
+    semantic_scope_decision = _validated_semantic_scope_decision(state)
+    if isinstance(semantic_scope_decision, dict):
+        state["semantic_scope_decision"] = semantic_scope_decision
     pre_routing = _classify_pre_routing_turn(state, planner_output)
+    if isinstance(semantic_scope_decision, dict) and bool(semantic_scope_decision.get("activated")):
+        pre_routing = {
+            "turn_intent": "general_out_of_scope_question",
+            "skip_workflow_selection": True,
+            "is_generation_request": False,
+            "generation_subtype": None,
+            "is_app_scoped": False,
+            "scope_source": "hybrid_planner",
+        }
     state["turn_routing_classification"] = pre_routing
 
     selected_workflow = None
@@ -5903,6 +6217,11 @@ def run(
         state,
         hybrid_module_queue,
     )
+    hybrid_current_module_index = _hybrid_active_current_module_index(
+        state,
+        hybrid_module_queue,
+        hybrid_primary_support_module_id,
+    )
     hybrid_logic_only_scope = _hybrid_active_should_stay_logic_only(state, hybrid_module_queue)
     if hybrid_selected_role_id and isinstance(state.get("turn_execution_plan"), dict):
         state["turn_execution_plan"]["selected_role_id"] = hybrid_selected_role_id
@@ -5910,7 +6229,7 @@ def run(
         state["turn_execution_plan"]["selected_routing_rule_id"] = hybrid_selected_routing_rule_id
     if hybrid_module_queue and isinstance(state.get("turn_execution_plan"), dict):
         state["turn_execution_plan"]["active_module_queue"] = list(hybrid_module_queue)
-        state["turn_execution_plan"]["current_module_index"] = 0
+        state["turn_execution_plan"]["current_module_index"] = hybrid_current_module_index
     if hybrid_primary_support_module_id and isinstance(state.get("turn_execution_plan"), dict):
         state["turn_execution_plan"]["primary_support_module_scope"] = {
             "scope_id": hybrid_primary_support_module_id,
@@ -5960,7 +6279,7 @@ def run(
         state["session_execution_state"]["selected_routing_rule_id"] = hybrid_selected_routing_rule_id
     if hybrid_module_queue and isinstance(state.get("session_execution_state"), dict):
         state["session_execution_state"]["active_module_queue"] = list(hybrid_module_queue)
-        state["session_execution_state"]["current_module_index"] = 0
+        state["session_execution_state"]["current_module_index"] = hybrid_current_module_index
     if hybrid_primary_support_module_id and isinstance(state.get("session_execution_state"), dict):
         state["session_execution_state"]["primary_support_module_id"] = hybrid_primary_support_module_id
         state["session_execution_state"]["primary_support_module_title"] = hybrid_primary_support_module_title
@@ -6004,13 +6323,19 @@ def run(
         block_type = str(hybrid_primary_support_block.get("block_type") or "").strip()
         is_followup_module = block_type == "followup_module"
         support_block_activation = _activation_for_service_block(state, hybrid_primary_support_block)
+        support_step_scope_id = str(support_block_activation.get("active_step_scope_id") or "").strip()
+        use_step_resource_authority = bool(
+            not is_followup_module
+            and support_step_scope_id
+            and _service_block_has_step_resource_mapping(state, block_id)
+        )
         support_block_binding_activation = _derive_binding_activation_for_scope_id(
             state,
-            block_id,
+            support_step_scope_id if use_step_resource_authority else block_id,
             stage_label=block_title or None,
             query_text=str(state.get("user_query") or "").strip() or None,
-            include_descendant_scope_bindings=not bool(support_block_activation.get("active_step_scope_id")),
-            strict_scope_id_match=bool(support_block_activation.get("active_step_scope_id")),
+            include_descendant_scope_bindings=not bool(support_step_scope_id),
+            strict_scope_id_match=bool(support_step_scope_id),
         )
         if isinstance(state.get("turn_execution_plan"), dict):
             existing_active_step_scope = (
@@ -6019,7 +6344,6 @@ def run(
                 else {}
             )
             existing_step_scope_id = str(existing_active_step_scope.get("scope_id") or "").strip()
-            support_step_scope_id = str(support_block_activation.get("active_step_scope_id") or "").strip()
             preserve_existing_step_scope = bool(
                 not is_followup_module
                 and existing_step_scope_id
@@ -6240,6 +6564,15 @@ def run(
     template_load_plan = execution_plan_state_updates.get("template_resource_load_plan", [])
     if isinstance(template_load_plan, list):
         state["template_resource_load_plan"] = template_load_plan
+    if isinstance(state.get("session_execution_state"), dict):
+        state["session_execution_state"] = reconcile_session_step_activation(
+            state["session_execution_state"]
+        )
+        if isinstance(execution_plan_state_updates, dict):
+            execution_plan_state_updates["session_execution_state"] = state[
+                "session_execution_state"
+            ]
+    _deduplicate_turn_resource_requests(state)
     _sync_resource_load_plans_from_turn_requests(state)
 
     if persist_fn is not None:

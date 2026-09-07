@@ -8,6 +8,7 @@ import zipfile
 import importlib
 import json
 import io
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -1672,6 +1673,33 @@ class SkillManagementTests(unittest.TestCase):
             payload["tools_discovered"][0]["id"],
             "mcp.gdrive.download_file_content",
         )
+
+    def test_run_retrieve_honors_configured_builder_timeout(self) -> None:
+        class FakeRetrievalResult:
+            results = []
+            debug = {}
+
+        app_module = importlib.import_module("app")
+        original_retrieve_data = app_module.retrieve_data
+        original_timeout = os.environ.get("RAGENIUS_BUILDER_RETRIEVAL_TIMEOUT_SECONDS")
+        os.environ["RAGENIUS_BUILDER_RETRIEVAL_TIMEOUT_SECONDS"] = "5"
+
+        def slow_retrieve_data(**kwargs):
+            time.sleep(3.2)
+            return FakeRetrievalResult()
+
+        app_module.retrieve_data = slow_retrieve_data
+
+        try:
+            result = app_module.run_retrieve("slow cold-start query", 5, {}, "app_001")
+        finally:
+            app_module.retrieve_data = original_retrieve_data
+            if original_timeout is None:
+                os.environ.pop("RAGENIUS_BUILDER_RETRIEVAL_TIMEOUT_SECONDS", None)
+            else:
+                os.environ["RAGENIUS_BUILDER_RETRIEVAL_TIMEOUT_SECONDS"] = original_timeout
+
+        self.assertIsInstance(result, FakeRetrievalResult)
 
     def test_subsystem_tools_info_export_writes_markdown_from_runtime_inventory(self) -> None:
         class FakeExecutionClient:

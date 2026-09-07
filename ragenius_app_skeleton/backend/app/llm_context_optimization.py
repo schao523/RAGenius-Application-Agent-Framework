@@ -404,6 +404,8 @@ PLANNER_TEMPLATE_KEYS = (
 IDENTITY_KEYS = (
     "id", "role_id", "workflow_id", "module_id", "step_id", "block_id", "logic_id", "rule_id",
     "scope_id", "scope_type", "target_scope_id", "target_block_id", "binding_id", "dependency_group_id",
+    "target_id", "target_type", "target_service_block_id", "target_module_id", "target_workflow_id",
+    "target_logic_block_id", "target_interaction_logic_id", "condition", "trigger_keywords",
     "artifact_role", "resource_id", "filename", "title", "name", "type", "block_type", "kind", "domain",
     "intent", "intent_type", "alias_intent", "maps_to_base_intent", "trigger", "triggers", "expression",
     "conditions", "priority", "order", "required", "enabled", "steps", "children", "resource_requests",
@@ -488,7 +490,7 @@ ANSWER_KEYS = (
     "instruction_resource_context", "template_resource_load_plan", "template_resource_context", "global_instruction_context",
     "knowledge_evidence", "template_evidence", "session_upload_evidence", "adapter_json", "config_json", "template_registry",
     "turn_execution_plan", "turn_action_plan", "session_execution_state", "presentation_policy", "visible_outputs", "hidden_outputs",
-    "execution_artifacts",
+    "execution_artifacts", "knowledge_use_decision",
 )
 
 EXECUTION_CONTEXT_KEYS = (

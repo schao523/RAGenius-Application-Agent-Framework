@@ -1459,6 +1459,119 @@ describe("App artifact fetch propagation", () => {
   });
 });
 
+describe("application switch session isolation", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("does not request new-app session resources with the previous app session id", async () => {
+    const requests = [];
+    const staleAppOneSessions = createDeferred();
+    vi.stubGlobal("crypto", {
+      ...globalThis.crypto,
+      randomUUID: vi
+        .fn()
+        .mockReturnValueOnce("11111111-1111-4111-8111-111111111111")
+        .mockReturnValue("22222222-2222-4222-8222-222222222222"),
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const normalizedUrl = String(url || "");
+      requests.push(normalizedUrl);
+      if (normalizedUrl === "http://127.0.0.1:5000") {
+        return { ok: true, text: async () => "" };
+      }
+      if (normalizedUrl.endsWith("/apps")) {
+        return mockJsonResponse({
+          applications: [
+            { id: "app-1", name: "App One", starter_questions: [] },
+            { id: "app-2", name: "App Two", starter_questions: [] },
+          ],
+        });
+      }
+      if (normalizedUrl.includes("/apps/app-1/sessions?")) {
+        if (normalizedUrl.includes("include_archived=true")) {
+          return staleAppOneSessions.promise;
+        }
+        return mockJsonResponse({
+          sessions: [{
+            id: "11111111-1111-4111-8111-111111111111",
+            collection_id: "app-1",
+            user_id: "user1",
+            title: "App One Session",
+          }],
+        });
+      }
+      if (normalizedUrl.includes("/apps/app-2/sessions?")) {
+        return mockJsonResponse({ sessions: [] });
+      }
+      if (normalizedUrl.includes("/instructions")) {
+        return mockJsonResponse({ instructions: null });
+      }
+      if (normalizedUrl.includes("/documents")) {
+        return mockJsonResponse({ documents: [] });
+      }
+      if (normalizedUrl.includes("/sessions/") && normalizedUrl.includes("/messages?")) {
+        return mockJsonResponse({ messages: [], session_uploads: [], approved_content: [] });
+      }
+      if (normalizedUrl.includes("/sessions/") && normalizedUrl.includes("/artifacts?")) {
+        return mockJsonResponse({ items: [] });
+      }
+      if (normalizedUrl.includes("/exec/agent-skills?")) {
+        return mockJsonResponse({ items: [], projection_status: "unavailable" });
+      }
+      if (normalizedUrl.includes("/exec/")) {
+        return mockJsonResponse({ items: [] });
+      }
+      if (normalizedUrl.includes("/apps/app-")) {
+        const appId = normalizedUrl.includes("/apps/app-2") ? "app-2" : "app-1";
+        return mockJsonResponse({ id: appId, name: appId === "app-2" ? "App Two" : "App One" });
+      }
+      return mockJsonResponse({});
+    }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /App One Session/i }));
+    await waitFor(() => {
+      expect(requests.some((url) => (
+        url.includes("/sessions/11111111-1111-4111-8111-111111111111/messages?")
+        && url.includes("app_id=app-1")
+      ))).toBe(true);
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: /show archived/i }));
+    await waitFor(() => {
+      expect(requests.some((url) => (
+        url.includes("/apps/app-1/sessions?")
+        && url.includes("include_archived=true")
+      ))).toBe(true);
+    });
+    requests.length = 0;
+
+    fireEvent.click(screen.getByRole("button", { name: /App Two/i }));
+    await waitFor(() => {
+      expect(requests.some((url) => url.includes("/apps/app-2/sessions?"))).toBe(true);
+    });
+    staleAppOneSessions.resolve({
+      ok: true,
+      text: async () => JSON.stringify({
+        sessions: [{
+          id: "stale-app-one-session",
+          collection_id: "app-1",
+          user_id: "user1",
+          title: "Stale App One Session",
+        }],
+      }),
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /Stale App One Session/i })).not.toBeInTheDocument();
+    });
+
+    expect(requests.filter((url) => (
+      url.includes("/sessions/11111111-1111-4111-8111-111111111111/")
+      && url.includes("app_id=app-2")
+    ))).toEqual([]);
+  });
+});
+
 describe("chat workspace UX", () => {
   beforeEach(() => {
     vi.stubGlobal("crypto", {

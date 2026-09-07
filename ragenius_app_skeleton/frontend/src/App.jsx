@@ -2805,6 +2805,7 @@ export default function App() {
   const [execAgentSkillInventoryErrorByScope, setExecAgentSkillInventoryErrorByScope] = useState({});
   const [execAgentSkillInventoryLoadingByScope, setExecAgentSkillInventoryLoadingByScope] = useState({});
   const agentSkillInventoryRequestSequence = useRef({});
+  const sessionListRequestSequence = useRef(0);
   const preparedExecutionSessionKeys = useRef(new Set());
   const executionSessionPreparationPromises = useRef(new Map());
   const [execArtifactInventory, setExecArtifactInventory] = useState([]);
@@ -3148,6 +3149,8 @@ export default function App() {
     userIdOverride = userId,
     includeArchivedOverride = includeArchivedSessions,
   ) => {
+    const sequence = sessionListRequestSequence.current + 1;
+    sessionListRequestSequence.current = sequence;
     if (!appIdOverride || !userIdOverride) {
       setSessions([]);
       return;
@@ -3156,10 +3159,27 @@ export default function App() {
       const data = await fetchJson(
         `${baseUrl}/apps/${appIdOverride}/sessions?user_id=${encodeURIComponent(userIdOverride)}&include_archived=${includeArchivedOverride ? "true" : "false"}`
       );
+      if (sessionListRequestSequence.current !== sequence) {
+        return;
+      }
       setSessions(data.sessions || []);
     } catch (_e) {
+      if (sessionListRequestSequence.current !== sequence) {
+        return;
+      }
       setSessions([]);
     }
+  };
+
+  const selectApplication = (nextAppId) => {
+    if (!nextAppId || nextAppId === selectedAppId) {
+      return;
+    }
+    sessionListRequestSequence.current += 1;
+    setSessions([]);
+    setSessionId(createSessionId());
+    setSessionSearch("");
+    setSelectedAppId(nextAppId);
   };
 
   const refreshApp = async () => {
@@ -3962,8 +3982,6 @@ export default function App() {
     if (selectedAppId) {
       refreshApp();
       loadSessions(selectedAppId, userId, includeArchivedSessions);
-      setSessionId(createSessionId());
-      setSessionSearch("");
     }
   }, [selectedAppId]);
 
@@ -4147,7 +4165,7 @@ export default function App() {
           <AppSidebar
             applications={applications}
             selectedAppId={selectedAppId}
-            setSelectedAppId={setSelectedAppId}
+            setSelectedAppId={selectApplication}
             appInfo={appInfo}
             appError={appError}
             refreshApp={refreshApp}

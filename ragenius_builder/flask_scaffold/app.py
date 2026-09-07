@@ -61,6 +61,7 @@ _ingest_running_apps: set[str] = set()
 _ingest_cancel_lock = threading.Lock()
 _ingest_cancel_doc_ids: set[str] = set()
 _INGEST_STALE_SECONDS = 15 * 60
+_DEFAULT_RETRIEVAL_TIMEOUT_SECONDS = 15.0
 _SKILL_IMPORT_UPLOAD_ROOT = Path(__file__).resolve().parent / "storage" / "_skill_import_uploads"
 _TOOLS_INFO_EXPORT_PATH = Path(__file__).resolve().parents[2] / "docs" / "tools_info.md"
 _DEFAULT_EXECUTION_BASE_URL = "http://127.0.0.1:3001"
@@ -83,6 +84,17 @@ def _current_process_config():
 
 def _current_retrieval_config():
     return get_global_retrieval_config()
+
+
+def _builder_retrieval_timeout_seconds() -> float:
+    raw = str(os.environ.get("RAGENIUS_BUILDER_RETRIEVAL_TIMEOUT_SECONDS", "")).strip()
+    if not raw:
+        return _DEFAULT_RETRIEVAL_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return _DEFAULT_RETRIEVAL_TIMEOUT_SECONDS
+    return value if value > 0 else _DEFAULT_RETRIEVAL_TIMEOUT_SECONDS
 
 
 def _global_subsystem_settings_view():
@@ -1456,9 +1468,12 @@ def run_retrieve(query_text, top_k, filters, app_id):
         router=None,
     )
     try:
-        return future.result(timeout=3)
+        timeout_seconds = _builder_retrieval_timeout_seconds()
+        return future.result(timeout=timeout_seconds)
     except TimeoutError as exc:
-        raise TimeoutError("Retrieval timed out after 3 seconds") from exc
+        raise TimeoutError(
+            f"Retrieval timed out after {timeout_seconds:g} seconds"
+        ) from exc
 
 
 def _serialize_retrieval_result(retrieval_result):

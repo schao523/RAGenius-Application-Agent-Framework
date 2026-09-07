@@ -12,7 +12,9 @@ from backend.app.instruction_understanding_service import (
     INSTRUCTION_UNDERSTANDING_COMPILE_PROMPT,
     INSTRUCTION_UNDERSTANDING_REVIEW_PROMPT,
     _build_hybrid_runtime_model,
+    _canonicalize_provider_semantic_model,
     _compile_contract,
+    _ground_semantic_model_from_deterministic_contract,
     _project_compatibility_instruction_runtime_model,
     _snapshot_fallback_root,
     _hydrate_compiled_from_snapshot,
@@ -34,6 +36,7 @@ from backend.app.instruction_understanding_service import (
     review_instruction_understanding,
     _validate_semantic_compile_candidate,
 )
+from workflows.nodes import load_template_registry
 
 
 class _StubBuilderStore:
@@ -58,6 +61,275 @@ class _StubBuilderStore:
 
 
 class InstructionUnderstandingServiceTests(unittest.TestCase):
+    def test_grounding_preserves_explicit_module_section_title_over_method_alias(self):
+        deterministic = load_template_registry._build_instruction_runtime_model(
+            """
+## 模組調度規則（Module Orchestration）
+任務對應模組:
+- 模糊想法 → Use Case Writing Support Module
+
+## 應用場景撰寫支持模組 (Use Case Writing Support Module)
+目的: 將模糊想法轉化為清晰的應用場景。
+互動流程:
+1. 確認方向
+2. 收集要素（逐步引導）
+3. 按步就班法
+""".strip()
+        )
+        module_id = "support_module:應用場景撰寫支持模組_use_case_writing_support_module"
+        grounded = _ground_semantic_model_from_deterministic_contract(
+            {
+                "primary_service_mode": "intent_routed_interaction_logic",
+                "interaction_logic_blocks": [
+                    {"block_id": "logic:module_orchestration", "title": "Module Orchestration"}
+                ],
+                "service_blocks": [
+                    {
+                        "block_id": module_id,
+                        "block_type": "support_module",
+                        "title": "按步就班法",
+                        "body_text": "以逐步方式協助撰寫應用場景。",
+                    }
+                ],
+                "procedures": [],
+                "procedure_steps": [],
+                "role_profiles": [],
+                "routing_rules": [],
+                "clarification_gate_rules": [],
+            },
+            deterministic,
+        )
+
+        block = next(item for item in grounded["service_blocks"] if item["block_id"] == module_id)
+        procedure = next(
+            item for item in grounded["procedures"] if item["service_block_id"] == module_id
+        )
+        steps = [
+            item
+            for item in grounded["procedure_steps"]
+            if item["procedure_id"] == procedure["procedure_id"]
+        ]
+
+        self.assertEqual(block["title"], "應用場景撰寫支持模組 (Use Case Writing Support Module)")
+        self.assertEqual(procedure["title"], block["title"])
+        self.assertIn("按步就班法", [item["title"] for item in steps])
+
+    def test_grounding_restores_authored_module_procedure_for_single_default_workflow(self):
+        deterministic = load_template_registry._build_instruction_runtime_model(
+            """
+## 方法流程
+1. 需求分析與設計
+2. 功能配置實現
+
+## 應用場景撰寫支持模組 (Use Case Writing Support Module)
+互動流程:
+1. 確認方向
+2. Brainstorm（必要時）
+   參考：use_case_brainstorm_guide.md
+""".strip()
+        )
+        module_id = "support_module:應用場景撰寫支持模組_use_case_writing_support_module"
+        grounded = _ground_semantic_model_from_deterministic_contract(
+            {
+                "primary_service_mode": "single_default_workflow",
+                "default_workflow_id": "primary_workflow:方法流程",
+                "service_blocks": [
+                    {
+                        "block_id": "primary_workflow:方法流程",
+                        "block_type": "primary_workflow",
+                        "title": "方法流程",
+                        "is_default": True,
+                    },
+                    {
+                        "block_id": module_id,
+                        "block_type": "support_module",
+                        "title": "應用場景撰寫支持模組 (Use Case Writing Support Module)",
+                    },
+                ],
+                "procedures": [
+                    {
+                        "procedure_id": "primary_workflow:方法流程",
+                        "service_block_id": "primary_workflow:方法流程",
+                        "title": "方法流程",
+                    }
+                ],
+                "procedure_steps": [
+                    {
+                        "procedure_id": "primary_workflow:方法流程",
+                        "step_id": "step:方法流程:1",
+                        "title": "需求分析與設計",
+                        "order": 1,
+                    }
+                ],
+                "role_profiles": [],
+                "routing_rules": [],
+                "clarification_gate_rules": [],
+            },
+            deterministic,
+        )
+
+        procedure = next(
+            item for item in grounded["procedures"] if item["service_block_id"] == module_id
+        )
+        module_steps = [
+            item
+            for item in grounded["procedure_steps"]
+            if item["procedure_id"] == procedure["procedure_id"]
+        ]
+
+        self.assertEqual(procedure["title"], "應用場景撰寫支持模組 (Use Case Writing Support Module)")
+        self.assertEqual([item["title"] for item in module_steps], ["確認方向", "Brainstorm（必要時）"])
+        self.assertEqual(module_steps[1]["resource_refs"], ["use_case_brainstorm_guide.md"])
+
+    def test_grounding_restores_exact_declared_default_workflow_when_provider_omits_it(self):
+        deterministic = load_template_registry._build_instruction_runtime_model(
+            """
+## 方法流程
+1. 需求分析與設計
+2. 功能配置實現
+""".strip()
+        )
+        workflow_id = "primary_workflow:方法流程"
+        grounded = _ground_semantic_model_from_deterministic_contract(
+            {
+                "primary_service_mode": "single_default_workflow",
+                "default_workflow_id": workflow_id,
+                "service_blocks": [],
+                "procedures": [],
+                "procedure_steps": [],
+                "role_profiles": [],
+                "routing_rules": [],
+                "clarification_gate_rules": [],
+            },
+            deterministic,
+        )
+
+        default_blocks = [
+            item
+            for item in grounded["service_blocks"]
+            if item.get("block_type") == "primary_workflow" and item.get("is_default")
+        ]
+        procedure = next(
+            item for item in grounded["procedures"] if item["service_block_id"] == workflow_id
+        )
+        workflow_steps = [
+            item
+            for item in grounded["procedure_steps"]
+            if item["procedure_id"] == procedure["procedure_id"]
+        ]
+
+        self.assertEqual([item["block_id"] for item in default_blocks], [workflow_id])
+        self.assertEqual([item["title"] for item in workflow_steps], ["需求分析與設計", "功能配置實現"])
+
+    def test_canonicalize_provider_semantic_model_prefers_explicit_module_block_id(self):
+        normalized = _canonicalize_provider_semantic_model(
+            {
+                "support_modules": [
+                    {
+                        "module_id": "use_case_support",
+                        "block_id": "support_module:use_case_support",
+                        "title": "Use Case Support",
+                    }
+                ]
+            }
+        )
+
+        self.assertEqual(
+            normalized["service_blocks"][0]["block_id"],
+            "support_module:use_case_support",
+        )
+
+    def test_canonicalize_provider_semantic_model_projects_typed_generic_modules(self):
+        normalized = _canonicalize_provider_semantic_model(
+            {
+                "modules": [
+                    {
+                        "module_id": "support_module:use_case_support",
+                        "title": "Use Case Support",
+                    },
+                    {
+                        "module_id": "followup_module:optimization",
+                        "title": "Optimization",
+                    },
+                ]
+            }
+        )
+
+        blocks = {item["block_id"]: item for item in normalized["service_blocks"]}
+        self.assertEqual(blocks["support_module:use_case_support"]["block_type"], "support_module")
+        self.assertEqual(blocks["followup_module:optimization"]["block_type"], "followup_module")
+
+    def test_grounding_promotes_declared_legacy_orchestration_followup(self):
+        deterministic = load_template_registry._build_instruction_runtime_model(
+            """
+## 模組調度規則（Module Orchestration）
+Assistant 必須：
+1. 根據語意自動選擇模組
+2. 不依賴 Starter 才能啟動
+3. 必要時主動建議模組
+4. 可組合多模組
+
+任務對應模組:
+- 設定問題 → Configuration Support Module
+
+## 配置實現支持模組 (Configuration Support Module)
+Configure the application.
+""".strip()
+        )
+        orchestration_block = next(
+            item
+            for item in deterministic["instruction_service_blocks"]
+            if "module orchestration" in item["title"].lower()
+        )
+        semantic = {
+            "service_blocks": [
+                {**orchestration_block, "block_type": "followup_module"},
+            ],
+            "followup_modules": [
+                {
+                    "module_id": orchestration_block["block_id"],
+                    "title": orchestration_block["title"],
+                    "block_type": "followup_module",
+                    "semantic_routing_map": {
+                        "設定問題": "Configuration Support Module",
+                    },
+                    "rules": ["根據語意自動選擇模組"],
+                }
+            ],
+            "module_orchestration": None,
+        }
+
+        grounded = _ground_semantic_model_from_deterministic_contract(
+            semantic,
+            deterministic,
+        )
+
+        self.assertIsNotNone(grounded["module_orchestration"])
+        self.assertFalse(
+            any(
+                "module orchestration" in str(item.get("title") or "").lower()
+                for item in grounded["followup_modules"]
+            )
+        )
+        self.assertFalse(
+            any(
+                "module orchestration" in str(item.get("title") or "").lower()
+                and item.get("block_type") == "followup_module"
+                for item in grounded["service_blocks"]
+            )
+        )
+
+    def test_other_application_fixtures_do_not_gain_module_orchestration(self):
+        for markdown in (
+            self._markdown(),
+            self._church_ministry_markdown(),
+            self._grow_with_child_markdown(),
+            self._bible_tutor_markdown(),
+        ):
+            with self.subTest(markdown=markdown[:40]):
+                runtime_model = load_template_registry._build_instruction_runtime_model(markdown)
+                self.assertIsNone(runtime_model["module_orchestration"])
+
     def _tmp_root(self, name: str) -> Path:
         root = Path(__file__).resolve().parent / "_tmp" / name / str(uuid.uuid4())
         root.mkdir(parents=True, exist_ok=True)
@@ -1207,6 +1479,44 @@ Use 合法處境補充材料.pdf.
         self.assertEqual(validation["normalized"]["primary_service_mode"], "intent_routed_multi_workflow")
         self.assertIsNone(validation["normalized"]["default_workflow_id"])
 
+    def test_validate_semantic_compile_candidate_rejects_duplicate_step_ids(self):
+        validation = _validate_semantic_compile_candidate(
+            semantic_model={
+                "primary_service_mode": "single_default_workflow",
+                "default_workflow_id": "workflow:design",
+                "service_blocks": [
+                    {
+                        "block_id": "workflow:design",
+                        "block_type": "primary_workflow",
+                        "title": "Design",
+                        "is_default": True,
+                    }
+                ],
+                "procedures": [
+                    {
+                        "procedure_id": "procedure:design",
+                        "service_block_id": "workflow:design",
+                        "step_sequence": ["step:design:1", "step:design:1"],
+                    }
+                ],
+                "procedure_steps": [
+                    {"step_id": "step:design:1", "procedure_id": "procedure:design", "title": "First", "order": 1},
+                    {"step_id": "step:design:1", "procedure_id": "procedure:design", "title": "Duplicate", "order": 1},
+                ],
+                "role_profiles": [],
+                "routing_rules": [],
+                "clarification_gate_rules": [],
+            },
+            deterministic_contract={"resource_reference_catalog": []},
+        )
+
+        self.assertFalse(validation["valid"])
+        self.assertIn("duplicate procedure step id: step:design:1", validation["errors"])
+        self.assertIn(
+            "procedure step_sequence contains duplicate step id: procedure:design -> step:design:1",
+            validation["errors"],
+        )
+
     def test_validate_semantic_compile_candidate_rejects_missing_routing_rules_for_intent_routed_app(self):
         validation = _validate_semantic_compile_candidate(
             semantic_model={
@@ -1475,10 +1785,118 @@ Use 合法處境補充材料.pdf.
         )
 
         self.assertTrue(validation["valid"])
+
+    def test_validate_semantic_compile_candidate_prefers_explicit_typed_provider_module_block_id(self):
+        validation = _validate_semantic_compile_candidate(
+            semantic_model={
+                "primary_service_mode": "intent_routed_interaction_logic",
+                "service_blocks": [],
+                "support_modules": [
+                    {
+                        "module_id": "use_case_support",
+                        "block_id": "support_module:use_case_support",
+                        "title": "Use Case Support",
+                    }
+                ],
+                "procedures": [],
+                "procedure_steps": [],
+                "role_profiles": [],
+                "routing_rules": [],
+                "interaction_logic_blocks": [
+                    {"block_id": "logic:orchestration", "title": "Module Orchestration"}
+                ],
+                "module_orchestration": {
+                    "composition_mode": "ordered_sequential",
+                    "task_module_mappings": [
+                        {
+                            "mapping_id": "mapping:use_case",
+                            "target_module_id": "support_module:use_case_support",
+                        }
+                    ],
+                },
+                "clarification_gate_rules": [],
+            },
+            deterministic_contract={
+                "resource_reference_catalog": [],
+                "instruction_service_blocks": [
+                    {
+                        "block_id": "support_module:use_case_support",
+                        "block_type": "support_module",
+                        "title": "Use Case Support",
+                    }
+                ],
+                "instruction_procedures": [],
+                "procedure_steps": [],
+            },
+        )
+
+        self.assertTrue(validation["valid"], validation["errors"])
+        mapping = validation["normalized"]["module_orchestration"]["task_module_mappings"][0]
+        self.assertEqual(mapping["target_module_id"], "support_module:use_case_support")
         self.assertEqual(
             validation["normalized"]["module_orchestration"]["composition_mode"],
             "ordered_sequential",
         )
+
+    def test_validate_semantic_compile_candidate_reconciles_orchestration_to_unprefixed_module_ids(self):
+        validation = _validate_semantic_compile_candidate(
+            semantic_model={
+                "primary_service_mode": "single_default_workflow",
+                "default_workflow_id": "primary_workflow:design",
+                "service_blocks": [
+                    {
+                        "block_id": "primary_workflow:design",
+                        "block_type": "primary_workflow",
+                        "title": "Design",
+                        "is_default": True,
+                    },
+                    {
+                        "block_id": "module_generator_module",
+                        "block_type": "support_module",
+                        "title": "MODULE_GENERATOR Module",
+                    },
+                ],
+                "procedures": [
+                    {
+                        "procedure_id": "procedure:design",
+                        "service_block_id": "primary_workflow:design",
+                        "title": "Design",
+                    }
+                ],
+                "procedure_steps": [
+                    {
+                        "procedure_id": "procedure:design",
+                        "step_id": "step:design:1",
+                        "title": "Clarify requirements",
+                        "execution_mode": "interactive",
+                    }
+                ],
+                "role_profiles": [],
+                "routing_rules": [],
+                "interaction_logic_blocks": [],
+                "module_orchestration": {
+                    "composition_mode": "ordered_sequential",
+                    "task_module_mappings": [
+                        {
+                            "mapping_id": "mapping:architecture",
+                            "task_pattern": "architecture",
+                            "target_module_id": "support_module:module_generator_module",
+                        }
+                    ],
+                },
+                "clarification_gate_rules": [],
+            },
+            deterministic_contract={
+                "resource_reference_catalog": [],
+                "instruction_service_blocks": [],
+                "instruction_procedures": [],
+                "procedure_steps": [],
+            },
+        )
+
+        self.assertTrue(validation["valid"], validation["errors"])
+        mapping = validation["normalized"]["module_orchestration"]["task_module_mappings"][0]
+        self.assertEqual(mapping["target_module_id"], "module_generator_module")
 
     def test_validate_semantic_compile_candidate_rejects_non_sequential_module_orchestration(self):
         validation = _validate_semantic_compile_candidate(
@@ -1618,6 +2036,97 @@ Use 合法處境補充材料.pdf.
         self.assertIn(
             "step has empty execution semantics: step:default:1",
             validation["warnings"],
+        )
+
+    def test_validate_semantic_compile_candidate_accepts_bundle_entry_with_member_steps(self):
+        validation = _validate_semantic_compile_candidate(
+            semantic_model={
+                "primary_service_mode": "single_default_workflow",
+                "default_workflow_id": "workflow:default",
+                "service_blocks": [
+                    {
+                        "block_id": "workflow:default",
+                        "block_type": "primary_workflow",
+                        "title": "Default Workflow",
+                        "is_default": True,
+                    }
+                ],
+                "procedures": [
+                    {
+                        "procedure_id": "procedure:default",
+                        "service_block_id": "workflow:default",
+                        "title": "Default Workflow",
+                    }
+                ],
+                "procedure_steps": [
+                    {
+                        "step_id": "step:default:1",
+                        "procedure_id": "procedure:default",
+                        "title": "Bundle Entry",
+                        "execution_mode": "bundled",
+                        "bundled_step_ids": ["step:default:1", "step:default:2"],
+                    },
+                    {
+                        "step_id": "step:default:2",
+                        "procedure_id": "procedure:default",
+                        "title": "Bundle Member",
+                        "execution_mode": "bundled",
+                        "bundled_step_ids": [],
+                    },
+                ],
+                "role_profiles": [],
+                "routing_rules": [],
+                "clarification_gate_rules": [],
+            },
+            deterministic_contract={"resource_reference_catalog": []},
+        )
+
+        self.assertTrue(validation["valid"])
+        self.assertNotIn(
+            "bundled step must include itself in bundled_step_ids: step:default:2",
+            validation["errors"],
+        )
+
+    def test_validate_semantic_compile_candidate_rejects_orphaned_bundle_member(self):
+        validation = _validate_semantic_compile_candidate(
+            semantic_model={
+                "primary_service_mode": "single_default_workflow",
+                "default_workflow_id": "workflow:default",
+                "service_blocks": [
+                    {
+                        "block_id": "workflow:default",
+                        "block_type": "primary_workflow",
+                        "title": "Default Workflow",
+                        "is_default": True,
+                    }
+                ],
+                "procedures": [
+                    {
+                        "procedure_id": "procedure:default",
+                        "service_block_id": "workflow:default",
+                        "title": "Default Workflow",
+                    }
+                ],
+                "procedure_steps": [
+                    {
+                        "step_id": "step:default:2",
+                        "procedure_id": "procedure:default",
+                        "title": "Orphaned Bundle Member",
+                        "execution_mode": "bundled",
+                        "bundled_step_ids": [],
+                    }
+                ],
+                "role_profiles": [],
+                "routing_rules": [],
+                "clarification_gate_rules": [],
+            },
+            deterministic_contract={"resource_reference_catalog": []},
+        )
+
+        self.assertFalse(validation["valid"])
+        self.assertIn(
+            "bundled member step is not owned by a bundle entry: step:default:2",
+            validation["errors"],
         )
 
     def test_compile_instruction_understanding_church_ministry_shape_builds_hybrid_runtime(self):
@@ -4861,6 +5370,234 @@ Use 合法處境補充材料.pdf.
                 isinstance(item, dict) and str(item.get("rule_id") or "").strip() == "route:orchestrator"
                 for item in validation["normalized"]["routing_rules"]
             )
+        )
+
+
+    def test_canonicalize_provider_semantic_model_accepts_workflows_alias(self):
+        normalized = _canonicalize_provider_semantic_model(
+            {
+                "primary_service_mode": "intent_routed_interaction_logic",
+                "workflows": [
+                    {
+                        "workflow_id": "primary_workflow:step_by_step",
+                        "title": "按步就班法流程",
+                        "steps": [
+                            {
+                                "step_id": "step:step_by_step:1",
+                                "order": 1,
+                                "title": "現況",
+                                "execution_mode": "interactive",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(
+            [item.get("block_id") for item in normalized.get("service_blocks", [])],
+            ["primary_workflow:step_by_step"],
+        )
+        self.assertEqual(
+            [item.get("service_block_id") for item in normalized.get("procedures", [])],
+            ["primary_workflow:step_by_step"],
+        )
+        self.assertEqual(
+            [item.get("procedure_id") for item in normalized.get("procedure_steps", [])],
+            ["primary_workflow:step_by_step"],
+        )
+
+    def test_validate_semantic_compile_candidate_keeps_declared_parenting_workflows_separate_from_bible_module(self):
+        instruction_text = """
+## 模式切換邏輯
+- 具體教養問題 -> 3x1 建議清單流程
+- 建立習慣或計畫 -> 按步就班法流程
+- 情緒或信仰掙扎 -> 深度解析法流程
+- 經文或查經 -> 查經支援模組
+
+## 3x1 建議清單流程（快速回應模式）
+1. 教養技巧
+2. 親子活動
+3. 屬靈應用
+
+## 按步就班法流程（循序反思模式）
+1. 現況
+2. 原則：一起看看聖經怎麼說
+3. 行動
+
+## 深度解析法流程（輔導反思模式）
+1. 敘述經驗
+2. 信仰對照：經文提醒
+3. 行動更新
+
+## 多重需求分層規則
+1. Mentor 層：採深度解析法流程
+2. Coach 層：採按步就班法流程
+3. Tutor 層：採查經支援模組
+
+## 查經支援模組 (Bible Study Support Module)
+根據聖經與歸納釋經法引導學員查經，每一步都要等待使用者回應。
+- 現況
+- 原則
+- 聖經
+- 行動
+使用步驟：
+1. 細察事實
+2. 認清關係
+""".strip()
+        deterministic_contract = _compile_contract(instruction_text, [])
+        bible_module_id = "support_module:查經支援模組_bible_study_support_module"
+        semantic_model = {
+            "primary_service_mode": "intent_routed_interaction_logic",
+            "interaction_logic_blocks": [
+                {
+                    "block_id": "logic:mode_switch",
+                    "title": "模式切換邏輯",
+                    "body_text": "依照使用者意圖選擇流程或查經模組。",
+                },
+                {
+                    "block_id": "logic:layered_needs",
+                    "title": "多重需求分層規則",
+                    "body_text": "依序組合情緒、教養與查經支援。",
+                },
+            ],
+            "workflows": [
+                {
+                    "workflow_id": "primary_workflow:3x1_advice",
+                    "title": "3x1 建議清單流程（快速回應模式）",
+                    "steps": [
+                        {"step_id": "step:3x1:1", "order": 1, "title": "教養技巧"},
+                        {"step_id": "step:3x1:2", "order": 2, "title": "親子活動"},
+                        {"step_id": "step:3x1:3", "order": 3, "title": "屬靈應用"},
+                    ],
+                },
+                {
+                    "workflow_id": "primary_workflow:step_by_step",
+                    "title": "按步就班法流程（循序反思模式）",
+                    "steps": [
+                        {"step_id": "step:step_by_step:1", "order": 1, "title": "現況"},
+                        {"step_id": "step:step_by_step:2", "order": 2, "title": "原則：一起看看聖經怎麼說"},
+                        {"step_id": "step:step_by_step:3", "order": 3, "title": "行動"},
+                    ],
+                },
+                {
+                    "workflow_id": "primary_workflow:deep_analysis",
+                    "title": "深度解析法流程（輔導反思模式）",
+                    "steps": [
+                        {"step_id": "step:deep_analysis:1", "order": 1, "title": "敘述經驗"},
+                        {"step_id": "step:deep_analysis:2", "order": 2, "title": "信仰對照：經文提醒"},
+                        {"step_id": "step:deep_analysis:3", "order": 3, "title": "行動更新"},
+                    ],
+                },
+                {
+                    "workflow_id": "primary_workflow:layered_needs",
+                    "title": "多重需求分層規則",
+                    "steps": [
+                        {"step_id": "step:layered:1", "order": 1, "title": "Mentor 層"},
+                        {"step_id": "step:layered:2", "order": 2, "title": "Coach 層"},
+                        {"step_id": "step:layered:3", "order": 3, "title": "Tutor 層"},
+                    ],
+                },
+            ],
+            "support_modules": [
+                {
+                    "module_id": bible_module_id,
+                    "title": "查經支援模組 (Bible Study Support Module)",
+                    "steps": [
+                        {"step_id": "step:bible:1", "order": 1, "title": "細察事實"},
+                        {"step_id": "step:bible:2", "order": 2, "title": "認清關係"},
+                    ],
+                }
+            ],
+            "routing_rules": [
+                {
+                    "rule_id": "routing:multi_need_layered_response",
+                    "condition": "同一問題同時包含情緒、行為與靈修等層面",
+                    "orchestration": "sequential",
+                    "layers": [
+                        {
+                            "order": 1,
+                            "target_workflow_ref": "workflow:深度解析法流程_輔導反思模式",
+                        },
+                        {
+                            "order": 2,
+                            "target_workflow_refs": [
+                                "workflow:按步就班法流程_循序反思模式",
+                                "workflow:3x1_advice",
+                            ],
+                        },
+                        {
+                            "order": 3,
+                            "target_module_refs": [
+                                "module:查經支援模組_bible_study_support_module",
+                            ],
+                        },
+                    ],
+                }
+            ],
+            "role_profiles": [],
+        }
+
+        validation = _validate_semantic_compile_candidate(
+            semantic_model=semantic_model,
+            deterministic_contract=deterministic_contract,
+        )
+
+        self.assertTrue(validation["valid"], validation["errors"])
+        normalized = validation["normalized"]
+        blocks = {
+            str(item.get("block_id") or ""): item
+            for item in normalized.get("service_blocks", [])
+            if isinstance(item, dict)
+        }
+        self.assertIn("workflow:3x1建議清單法", blocks)
+        self.assertIn("workflow:按步就班法", blocks)
+        self.assertIn("workflow:深度解析法", blocks)
+        self.assertIn(bible_module_id, blocks)
+        self.assertFalse(any("多重需求分層規則" in block_id for block_id in blocks))
+
+        procedure_owners = {
+            str(item.get("service_block_id") or "")
+            for item in normalized.get("procedures", [])
+            if isinstance(item, dict)
+        }
+        self.assertIn("workflow:3x1建議清單法", procedure_owners)
+        self.assertIn("workflow:按步就班法", procedure_owners)
+        self.assertIn("workflow:深度解析法", procedure_owners)
+        self.assertIn(bible_module_id, procedure_owners)
+        self.assertFalse(any("多重需求分層規則" in owner for owner in procedure_owners))
+        layered_step_ids = {
+            "step:layered:1",
+            "step:layered:2",
+            "step:layered:3",
+        }
+        self.assertTrue(
+            layered_step_ids.isdisjoint(
+                {
+                    str(item.get("step_id") or "")
+                    for item in normalized.get("procedure_steps", [])
+                    if isinstance(item, dict)
+                }
+            )
+        )
+        layered_rule = next(
+            item
+            for item in normalized.get("routing_rules", [])
+            if str(item.get("rule_id") or "") == "routing:multi_need_layered_response"
+        )
+        self.assertNotIn("target_workflow_ref", json.dumps(layered_rule, ensure_ascii=False))
+        self.assertNotIn("target_module_ref", json.dumps(layered_rule, ensure_ascii=False))
+        self.assertEqual(
+            layered_rule["layers"][0]["target_workflow_id"],
+            "workflow:深度解析法",
+        )
+        self.assertEqual(
+            layered_rule["layers"][1]["target_workflow_ids"],
+            ["workflow:按步就班法", "workflow:3x1建議清單法"],
+        )
+        self.assertEqual(
+            layered_rule["layers"][2]["target_module_ids"],
+            [bible_module_id],
         )
 
 

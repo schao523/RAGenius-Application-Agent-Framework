@@ -22,6 +22,21 @@ PROMPT_SAFE = PROMPT_DIR / "safe_answer_prompt.txt"
 DEFAULT_EMPTY_ANSWER = "No answer text was generated. Please retry with a more specific question."
 logger = logging.getLogger(__name__)
 
+EVIDENCE_ONLY_POLICY_MARKERS = (
+    "retrieved evidence only",
+    "only use retrieved evidence",
+    "knowledge base only",
+    "only use the knowledge base",
+    "do not use model knowledge",
+    "must not use model knowledge",
+    "僅使用檢索",
+    "只使用檢索",
+    "僅根據知識庫",
+    "只根據知識庫",
+    "不得使用模型知識",
+    "不可使用模型知識",
+)
+
 
 def _read_prompt(path: Path) -> str:
     if not path.exists():
@@ -39,6 +54,28 @@ def _build_effective_system_prompt(base_prompt: str, global_instruction_context:
         "Treat this as stable application-level behavior that applies every turn.\n"
         f"{serialized}\n"
     )
+
+
+def _build_knowledge_use_decision(context: Dict[str, Any]) -> Dict[str, Any]:
+    policy_context = {
+        "global_instruction_context": context.get("global_instruction_context", {}),
+        "config_safety_rules": (context.get("config_json", {}) or {}).get("safety_rules", []),
+        "adapter_guardrails": (context.get("adapter_json", {}) or {}).get("llm_guardrails_append", []),
+        "selected_instruction_block": context.get("selected_instruction_block", {}),
+    }
+    serialized_policy = json.dumps(policy_context, ensure_ascii=False).lower()
+    evidence_only = any(marker in serialized_policy for marker in EVIDENCE_ONLY_POLICY_MARKERS)
+    if evidence_only:
+        return {
+            "mode": "application_evidence_only",
+            "model_knowledge_allowed": False,
+            "reason": "application_policy_requires_retrieved_evidence_only",
+        }
+    return {
+        "mode": "evidence_first_with_model_supplementation",
+        "model_knowledge_allowed": True,
+        "reason": "answer_model_may_fill_relevant_evidence_gaps_in_the_same_call",
+    }
 
 
 def _call_answer_llm(
@@ -219,6 +256,7 @@ def run(
         "hidden_outputs": state.get("hidden_outputs", []),
         "execution_artifacts": state.get("execution_artifacts", []),
     }
+    context["knowledge_use_decision"] = _build_knowledge_use_decision(context)
     turn_execution_plan = context.get("turn_execution_plan", {}) if isinstance(context.get("turn_execution_plan"), dict) else {}
     turn_intent = str(turn_execution_plan.get("turn_intent") or "").strip()
 

@@ -1,5 +1,12 @@
 # Snapshot-First Compiler and Planner Hardening Design
 
+> **Status update (2026-09-05):** This remains the architectural foundation,
+> but current normative behavior is defined in
+> `docs/compiled-instruction-understanding-query-planner-runtime-contract.md`.
+> In particular, an empty active-step resource mapping is authoritative when
+> another step in the same procedure has explicit mappings; module fallback is
+> retained only when the procedure has no step-level resource mappings.
+
 ## Scope
 
 This design is scoped to fixing the recurring runtime-contract failures in:

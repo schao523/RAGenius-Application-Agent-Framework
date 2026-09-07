@@ -618,6 +618,37 @@ class InstructionRuntimeModel(BaseModel):
     global_instruction_context: GlobalInstructionContext = Field(default_factory=GlobalInstructionContext)
 
 
+def reconcile_session_step_activation(
+    session_state: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    """Align duplicated step labels when both records identify the same step."""
+    reconciled = dict(session_state or {})
+    activation = reconciled.get("procedure_step_activation")
+    if not isinstance(activation, dict):
+        return reconciled
+
+    active_scope_id = str(reconciled.get("active_step_scope_id") or "").strip()
+    activation_scope_id = str(activation.get("step_scope_id") or "").strip()
+    if not active_scope_id or active_scope_id != activation_scope_id:
+        return reconciled
+
+    active_order = reconciled.get("active_step_order")
+    activation_order = activation.get("step_order")
+    if active_order is not None and activation_order is not None and active_order != activation_order:
+        return reconciled
+
+    active_title = str(reconciled.get("active_step_title") or "").strip()
+    if not active_title:
+        return reconciled
+
+    reconciled_activation = dict(activation)
+    reconciled_activation["step_title"] = active_title
+    if active_order is not None:
+        reconciled_activation["step_order"] = active_order
+    reconciled["procedure_step_activation"] = reconciled_activation
+    return reconciled
+
+
 class SessionExecutionState(BaseModel):
     active_role_id: Optional[str] = None
     active_mode: Optional[str] = None

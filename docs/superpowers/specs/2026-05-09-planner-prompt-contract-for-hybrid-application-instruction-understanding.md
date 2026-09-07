@@ -1,8 +1,13 @@
 # Planner Prompt Contract For Hybrid Application-Instruction Understanding
 
 **Date:** 2026-05-09  
-**Status:** Draft for review  
+**Status:** Historical prompt contract; runtime invariants superseded 2026-09-05
 **Scope:** `ragenius_app_skeleton` planner LLM prompt contract for turn-level intent inference and next-action selection using compiled application-instruction understanding.
+
+> The prompt/output schema remains a useful reference. Current runtime
+> precedence, queue, resource-authority, persistence, and compatibility rules
+> are normative in
+> `docs/compiled-instruction-understanding-query-planner-runtime-contract.md`.
 
 ## Goal
 

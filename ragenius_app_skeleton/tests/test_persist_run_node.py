@@ -104,6 +104,38 @@ class PersistRunNodeTests(unittest.TestCase):
             state["attached_artifact_refs"],
         )
 
+    def test_normal_turn_persists_semantic_scope_decision_diagnostics(self):
+        state = {
+            "session_id": "s-upload",
+            "turn_input_type": "text_query",
+            "user_query": "How far is Earth from the Sun?",
+            "semantic_scope_decision": {
+                "classification": "out_of_scope",
+                "confidence": 0.97,
+                "reason": "Astronomy is outside the application contract.",
+                "matched_app_signals": [],
+                "activated": True,
+                "validation_reason": "high_confidence_coherent_out_of_scope",
+                "source": "hybrid_planner",
+            },
+            "turn_execution_plan": {"turn_intent": "general_out_of_scope_question"},
+            "final_answer": {
+                "content": "About 149.6 million kilometres on average.",
+                "citations": [],
+                "missing_infoTypes": [],
+            },
+            "_chat_repo": self.chat_repo,
+            "_session_repo": self.session_repo,
+        }
+
+        persist_run.run(state)
+
+        assistant_message = self.chat_repo.history("s-upload")[-1]
+        self.assertEqual(
+            assistant_message["retrievalSummary"]["semantic_scope_decision"],
+            state["semantic_scope_decision"],
+        )
+
     def test_persist_run_writes_hidden_execution_state_into_session_runtime_state(self):
         state = {
             "session_id": "s-upload",

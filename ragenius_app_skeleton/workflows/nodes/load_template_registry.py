@@ -30,6 +30,7 @@ from ..runtime_models import (
     PhaseResourceBinding,
     ProgressionRules,
     ProcedureStepDefinition,
+    reconcile_session_step_activation,
     SessionExecutionState,
     SupportModuleRule,
     TriggerCondition,
@@ -86,7 +87,7 @@ def _sanitize_session_execution_state_for_rehydration(
     if support_activation_step_id and support_activation_step_id != active_step_scope_id:
         sanitized.pop("primary_support_module_activation", None)
 
-    return sanitized
+    return reconcile_session_step_activation(sanitized)
 
 RESOURCE_PATTERN = re.compile(
     r"([A-Za-z0-9_\-\[\]\u4e00-\u9fff][A-Za-z0-9_\-\[\]\u4e00-\u9fff ]*\.(?:md|pdf|txt|docx|zip))"
@@ -531,6 +532,23 @@ def _resolve_builder_document(filename: str, document_registry: dict[str, Any] |
         return stem_matches[0]
 
     target_ext = Path(filename_key).suffix.lower()
+    if len(stem_key) >= 5:
+        containment_matches: list[dict[str, Any]] = []
+        for document in document_registry.get("documents", []):
+            if not isinstance(document, dict):
+                continue
+            candidate_filename = str(document.get("filename") or "").strip()
+            if not candidate_filename:
+                continue
+            candidate_key = _normalize_filename_key(candidate_filename)
+            if Path(candidate_key).suffix.lower() != target_ext:
+                continue
+            candidate_stem = _normalize_stem_key(candidate_filename)
+            if stem_key in candidate_stem or candidate_stem in stem_key:
+                containment_matches.append(document)
+        if len(containment_matches) == 1:
+            return containment_matches[0]
+
     target_key = stem_key or filename_key
     best_doc = None
     best_score = 0.0
@@ -1054,6 +1072,15 @@ def _build_generic_phase_bindings(
             objective=_extract_labeled_value(body.splitlines(), ("Ã§â€ºÂ®Ã§Å¡â€ž", "objective", "goal")),
             activation_reason=body.strip() or None,
         )
+        has_operational_feature = bool(
+            binding.resource_ids
+            or binding.filenames
+            or binding.dependency_groups
+            or binding.trigger_signals
+            or binding.artifact_contract.mode != "none"
+        )
+        if not has_operational_feature:
+            continue
         bindings.append(to_plain_dict(binding))
         block_updates[block_id] = {
             "declared_binding_id": block_id,
@@ -1782,6 +1809,28 @@ def _extract_numbered_steps(section_body: str, document_registry: dict[str, Any]
     return steps
 
 
+def _extract_support_module_steps(
+    section_body: str,
+    *,
+    document_registry: dict[str, Any] | None = None,
+) -> list[Dict[str, Any]]:
+    """Prefer an explicitly labelled execution flow over numbered activation rules."""
+    lines = str(section_body or "").splitlines()
+    execution_label = re.compile(
+        r"^\s*(?:互動流程|互动流程|執行流程|执行流程|工作流程|使用原則|使用原则|使用步驟|使用步骤|操作規則|操作规则|核心任務|核心任务|core\s+tasks?|assistant\s+tasks?|assistant\s+任務)\s*[:：]?\s*$",
+        re.IGNORECASE,
+    )
+    for index, raw_line in enumerate(lines):
+        if execution_label.match(_repair_mojibake_text(str(raw_line or "")).strip()):
+            labelled_steps = _extract_numbered_steps(
+                "\n".join(lines[index + 1 :]),
+                document_registry=document_registry,
+            )
+            if labelled_steps:
+                return labelled_steps
+    return _extract_numbered_steps(section_body, document_registry=document_registry)
+
+
 def _extract_heading_style_steps(
     heading_node: dict[str, Any],
     *,
@@ -1804,6 +1853,65 @@ def _extract_heading_style_steps(
             "body_lines": str(child.get("body_text") or "").splitlines(),
         }
         steps.append(_finalize_step_payload(step_payload, document_registry=document_registry))
+    return steps
+
+
+def _extract_nested_module_heading_steps(
+    heading_node: dict[str, Any],
+    *,
+    document_registry: dict[str, Any] | None = None,
+) -> list[Dict[str, Any]]:
+    if not isinstance(heading_node, dict):
+        return []
+
+    children = [item for item in heading_node.get("children", []) or [] if isinstance(item, dict)]
+    execution_flow_tokens = {
+        "executionflow",
+        "interactionflow",
+        "workflow",
+        "互動流程",
+        "互动流程",
+        "執行流程",
+        "执行流程",
+        "工作流程",
+        "核心任務",
+        "核心任务",
+    }
+    execution_roots = [
+        item
+        for item in _flatten_heading_node_dicts(children)
+        if _normalize_text_key(_repair_mojibake_text(str(item.get("title") or "")))
+        in execution_flow_tokens
+    ]
+    search_roots = execution_roots or [heading_node]
+    steps: list[Dict[str, Any]] = []
+
+    def _visit(nodes: list[dict[str, Any]]) -> None:
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            title = _repair_mojibake_text(str(node.get("title") or "").strip())
+            if _is_support_module_heading(title) or _is_followup_module_section(title, ""):
+                continue
+            match = HEADING_STYLE_STEP_PATTERN.match(title)
+            if match:
+                step_payload = {
+                    "order": int(match.group(1)),
+                    "title": str(match.group(2) or "").strip() or title,
+                    "resource_file": None,
+                    "body_lines": str(node.get("body_text") or "").splitlines(),
+                }
+                steps.append(
+                    _finalize_step_payload(
+                        step_payload,
+                        document_registry=document_registry,
+                    )
+                )
+                continue
+            _visit(node.get("children", []) or [])
+
+    for root in search_roots:
+        _visit(root.get("children", []) or [])
     return steps
 
 
@@ -1835,10 +1943,18 @@ def _extract_support_module_sections(
     document_registry: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     support_modules: list[dict[str, Any]] = []
-    for heading, body in _iter_heading_sections(markdown):
-        if not _is_support_module_heading(heading):
+    heading_nodes = _flatten_heading_node_dicts(_build_instruction_heading_tree(markdown))
+    for heading_node in heading_nodes:
+        heading = str(heading_node.get("title") or "").strip()
+        body = str(heading_node.get("body_text") or "").strip()
+        if not (_is_support_module_heading(heading) or _is_followup_module_section(heading, "")):
             continue
-        raw_steps = _extract_numbered_steps(body, document_registry=document_registry)
+        raw_steps = _extract_support_module_steps(body, document_registry=document_registry)
+        if not raw_steps:
+            raw_steps = _extract_nested_module_heading_steps(
+                heading_node,
+                document_registry=document_registry,
+            )
         step_resource_files = {
             str(filename).strip()
             for step in raw_steps
@@ -2110,6 +2226,15 @@ def _is_support_module_section(title: str, body: str) -> bool:
     )
 
 
+def _is_module_orchestration_section(title: str) -> bool:
+    repaired = _repair_mojibake_text(str(title or ""))
+    normalized = _normalize_text_key(repaired)
+    return "moduleorchestration" in normalized or any(
+        token in normalized
+        for token in ("模組調度規則", "模块调度规则", "模組編排規則", "模块编排规则")
+    )
+
+
 def _is_followup_module_section(title: str, body: str) -> bool:
     lowered = f"{title}\n{body}".lower()
     return any(token in lowered for token in ("optimization module", "tool selection module", "配置實現支持模組", "互動邏輯支持模組", "測試與優化支持模組", "testing & optimization", "config support"))
@@ -2161,8 +2286,10 @@ def _is_global_policy_section(title: str, body: str) -> bool:
 def _classify_service_block_type(title: str, body: str, *, workflow_titles: set[str]) -> str:
     normalized_title = _normalize_section_name(title)
     declared_type = _title_declared_structure_type(title)
+    if _is_module_orchestration_section(title):
+        return "global_policy"
     if declared_type == "module":
-        if _is_followup_module_section(title, body):
+        if _is_followup_module_section(title, ""):
             return "followup_module"
         return "support_module"
     if declared_type == "workflow":
@@ -2184,6 +2311,137 @@ def _classify_service_block_type(title: str, body: str, *, workflow_titles: set[
     if _is_global_policy_section(title, body):
         return "global_policy"
     return "resource_catalog" if _contains_any(title, ("resource", "catalog", "資源")) else "global_policy"
+
+
+def _resolve_orchestration_module_id(
+    target_name: str,
+    service_blocks: list[dict[str, Any]],
+) -> str | None:
+    target_key = _normalize_text_key(_repair_mojibake_text(target_name))
+    if not target_key:
+        return None
+    candidates: list[tuple[int, str]] = []
+    for block in service_blocks:
+        if not isinstance(block, dict):
+            continue
+        if str(block.get("block_type") or "").strip() not in {"support_module", "followup_module"}:
+            continue
+        block_id = str(block.get("block_id") or "").strip()
+        title_key = _normalize_text_key(_repair_mojibake_text(str(block.get("title") or "")))
+        block_id_key = _normalize_text_key(_repair_mojibake_text(block_id))
+        if not block_id or not title_key:
+            continue
+        if target_key == title_key or target_key == block_id_key:
+            return block_id
+        if target_key in title_key or title_key in target_key:
+            candidates.append((min(len(target_key), len(title_key)), block_id))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1]
+
+
+def _module_orchestration_from_section(
+    title: str,
+    body: str,
+    service_blocks: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not _is_module_orchestration_section(title):
+        return None
+    repaired_body = _repair_mojibake_text(body)
+    mapping_section = re.split(r"任務對應模組\s*[:：]", repaired_body, maxsplit=1)
+    mapping_text = mapping_section[1] if len(mapping_section) == 2 else repaired_body
+    mapping_matches: list[tuple[str, str]] = []
+    for entry in re.split(r"[•\n]+", mapping_text):
+        match = re.match(r"^\s*-?\s*(.+?)\s*(?:→|->)\s*(.+?)\s*$", entry)
+        if match:
+            mapping_matches.append((match.group(1), match.group(2)))
+    mappings: list[dict[str, Any]] = []
+    for sequence_order, (task_pattern, target_name) in enumerate(mapping_matches):
+        normalized_task = str(task_pattern or "").strip(" \t:-：")
+        normalized_target = str(target_name or "").strip(" \t.;。")
+        target_module_id = _resolve_orchestration_module_id(normalized_target, service_blocks)
+        if not normalized_task or not target_module_id:
+            continue
+        mappings.append(
+            {
+                "mapping_id": f"mapping:{_slugify_module_title(normalized_task)}",
+                "task_pattern": normalized_task,
+                "target_module_id": target_module_id,
+                "priority": 0,
+                "sequence_order": sequence_order,
+                "stop_condition": "continue",
+            }
+        )
+    if not mappings:
+        return None
+    lowered = repaired_body.lower()
+    return {
+        "orchestration_id": f"orchestration:{_slugify_module_title(title)}",
+        "selection_mode": "semantic" if ("語意" in repaired_body or "语义" in repaired_body or "semantic" in lowered) else "mixed",
+        "starter_required": not any(
+            marker in lowered
+            for marker in ("不依賴 starter", "不依赖 starter", "without starter")
+        ),
+        "assistant_suggestion_allowed": any(
+            marker in lowered
+            for marker in ("主動建議", "主动建议", "assistant suggestion", "proactively suggest")
+        ),
+        "allow_multi_module": any(
+            marker in lowered
+            for marker in ("組合多模組", "组合多模块", "multi-module", "multiple modules")
+        ),
+        "composition_mode": "ordered_sequential",
+        "task_module_mappings": mappings,
+        "confidence": 1.0,
+    }
+
+
+def promote_declared_module_orchestration(runtime_model: dict[str, Any]) -> dict[str, Any]:
+    """Promote only explicitly titled legacy orchestration blocks."""
+    promoted = dict(runtime_model or {})
+    service_key = "instruction_service_blocks" if "instruction_service_blocks" in promoted else "service_blocks"
+    service_blocks = [dict(item) for item in promoted.get(service_key, []) or [] if isinstance(item, dict)]
+    followup_modules = [dict(item) for item in promoted.get("followup_modules", []) or [] if isinstance(item, dict)]
+
+    declared_block = next(
+        (item for item in service_blocks if _is_module_orchestration_section(str(item.get("title") or ""))),
+        None,
+    )
+    legacy_module = next(
+        (item for item in followup_modules if _is_module_orchestration_section(str(item.get("title") or ""))),
+        None,
+    )
+    if not isinstance(promoted.get("module_orchestration"), dict):
+        source = legacy_module or declared_block
+        if isinstance(source, dict):
+            semantic_map = source.get("semantic_routing_map")
+            if isinstance(semantic_map, dict):
+                body = "任務對應模組:\n" + "\n".join(
+                    f"- {task} -> {target}" for task, target in semantic_map.items()
+                )
+                rules = source.get("rules", []) or []
+                body = "\n".join(str(item) for item in rules if str(item).strip()) + "\n" + body
+            else:
+                body = str(source.get("body_text") or "")
+            orchestration = _module_orchestration_from_section(
+                str(source.get("title") or ""),
+                body,
+                service_blocks,
+            )
+            if orchestration:
+                promoted["module_orchestration"] = orchestration
+
+    if isinstance(promoted.get("module_orchestration"), dict):
+        for block in service_blocks:
+            if _is_module_orchestration_section(str(block.get("title") or "")):
+                block["block_type"] = "global_policy"
+        promoted[service_key] = service_blocks
+        promoted["followup_modules"] = [
+            item
+            for item in followup_modules
+            if not _is_module_orchestration_section(str(item.get("title") or ""))
+        ]
+    return promoted
 
 
 def _build_instruction_service_blocks(
@@ -2435,7 +2693,7 @@ def _build_instruction_procedures(
             ):
                 return candidate_module
         block_body = str(block.get("body_text") or "").strip()
-        raw_steps = _extract_numbered_steps(block_body, document_registry=document_registry)
+        raw_steps = _extract_support_module_steps(block_body, document_registry=document_registry)
         if raw_steps:
             return {
                 "module_id": _slugify_module_title(block_title),
@@ -3068,7 +3326,17 @@ def _apply_compiled_instruction_understanding(
     full_instruction_text = str(
         compiled_contract.get("full_instruction_text") or _load_full_instruction_text(fallback_instruction_text)
     )
-    instruction_runtime_model = dict(compiled_contract.get("instruction_runtime_model") or {})
+    normalized_compiled_contract = dict(compiled_contract)
+    instruction_runtime_model = promote_declared_module_orchestration(
+        dict(compiled_contract.get("instruction_runtime_model") or {})
+    )
+    normalized_compiled_contract["instruction_runtime_model"] = instruction_runtime_model
+    hybrid_runtime_model = promote_declared_module_orchestration(
+        dict(compiled_contract.get("hybrid_instruction_runtime_model") or {})
+    )
+    if hybrid_runtime_model:
+        normalized_compiled_contract["hybrid_instruction_runtime_model"] = hybrid_runtime_model
+    registry["compiled_instruction_understanding"] = normalized_compiled_contract
     global_instruction_context = dict(compiled_contract.get("global_instruction_context") or {})
     presentation_policy_hints = dict(compiled_contract.get("presentation_policy_hints") or {})
     registry["full_instruction_text"] = full_instruction_text
@@ -3406,6 +3674,14 @@ def _build_instruction_runtime_model(markdown: str, document_registry: dict[str,
         heading_tree=heading_tree,
         document_registry=document_registry,
     )
+    module_orchestration = next(
+        (
+            _module_orchestration_from_section(heading, body, instruction_service_blocks)
+            for heading, body in _iter_heading_sections(markdown)
+            if _is_module_orchestration_section(heading)
+        ),
+        None,
+    )
     instruction_procedures, procedure_steps = _build_instruction_procedures(
         workflows,
         instruction_service_blocks,
@@ -3485,6 +3761,7 @@ def _build_instruction_runtime_model(markdown: str, document_registry: dict[str,
     )
     runtime_model = InstructionRuntimeModel(
         role_summary=role_summary,
+        module_orchestration=module_orchestration,
         primary_objectives=primary_objectives,
         behavior_rules=behavior_rules,
         mode_rules=mode_rules,

@@ -4,11 +4,12 @@ import sys
 import unittest
 from pathlib import Path
 
-from jsonschema.exceptions import ValidationError
+from langgraph.graph import END, StateGraph
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backend.app.planner_repo import InMemoryPlannerRepo
+from workflows.graph_state import GraphState
 from workflows.nodes import load_template_registry, planner
 from workflows.runtime_models import SessionExecutionState
 
@@ -44,6 +45,17 @@ def make_state():
         "instruction_runtime_model": {},
         "session_execution_state": {},
     }
+
+
+def invoke_planner_graph(state, llm_planner):
+    graph = StateGraph(GraphState)
+    graph.add_node(
+        "planner",
+        lambda graph_state: planner.run(graph_state, llm_planner=llm_planner),
+    )
+    graph.set_entry_point("planner")
+    graph.add_edge("planner", END)
+    return graph.compile().invoke(state)
 
 
 
@@ -183,6 +195,49 @@ class PlannerNodeTests(unittest.TestCase):
         out = planner.run(state, llm_planner=lambda _p, _t, _c: self.valid)
         self.assertEqual(calls["n"], 1)
         self.assertEqual(out["hybrid_planner_shadow_output"]["intent_label"], "qa")
+
+    def test_hybrid_planner_contract_requests_optional_semantic_scope_decision(self):
+        state = self.state.copy()
+        state["template_registry"] = {
+            "compiled_instruction_understanding": {
+                "hybrid_instruction_runtime_model": {
+                    "global_app_contract": {"mission": "Support parenting questions"},
+                    "instruction_service_blocks": [],
+                    "instruction_procedures": [],
+                    "procedure_steps": [],
+                }
+            }
+        }
+        captured = {}
+
+        def hybrid_llm(prompt, tools, _context):
+            captured["prompt"] = prompt
+            captured["tool"] = tools[0]
+            return {
+                "intent_label": "qa",
+                "confidence": 0.9,
+                "continue_current_scope": True,
+                "selected_role_id": None,
+                "selected_workflow_id": None,
+                "selected_support_module_ids": [],
+                "selected_followup_module_ids": [],
+                "selected_supplementary_workflow_id": None,
+                "module_sequence": [],
+                "clarification_status": {"is_active": False, "is_complete": False, "missing_slots": [], "filled_slot_names": []},
+                "next_action": {"action_type": "stay_idle", "target_service_block_id": None, "target_workflow_id": None, "target_step_id": None, "bundled_step_ids": [], "module_queue": []},
+                "reasoning_summary": ["compatibility output without semantic scope"],
+            }
+
+        state["_llm_planner_hybrid"] = hybrid_llm
+        planner.run(state, llm_planner=lambda _p, _t, _c: self.valid)
+
+        semantic_scope_schema = captured["tool"]["parameters"]["properties"]["semantic_scope"]
+        self.assertIn("semantic scope", captured["prompt"].lower())
+        self.assertEqual(
+            semantic_scope_schema["properties"]["classification"]["enum"],
+            ["in_scope", "out_of_scope", "ambiguous"],
+        )
+        self.assertNotIn("semantic_scope", captured["tool"]["parameters"]["required"])
 
     def test_planner_prefers_semantic_default_workflow_id_over_legacy_trigger_matching(self):
         state = self.state.copy()
@@ -1597,7 +1652,7 @@ class PlannerNodeTests(unittest.TestCase):
             }
 
         state["_llm_planner_hybrid"] = hybrid_llm
-        out = planner.run(state, llm_planner=llm)
+        out = invoke_planner_graph(state, llm)
         instruction_filenames = [
             str(item.get("filename") or "").strip()
             for item in out["turn_execution_plan"].get("resource_requests", []) or []
@@ -1608,6 +1663,12 @@ class PlannerNodeTests(unittest.TestCase):
             out["session_execution_state"]["active_step_scope_id"],
             "step:support_module_查經互動模組:1",
         )
+        self.assertEqual(out["planner_mode"], "hybrid_active")
+        self.assertEqual(
+            out["hybrid_planner_decision_packet"]["task"],
+            "turn_intent_and_next_action_inference",
+        )
+        self.assertEqual(out["hybrid_planner_shadow_output"]["intent_label"], "bible_study")
 
     def test_planner_hybrid_active_followup_turn_advances_module_owned_step_to_second_step(self):
         state = self.state.copy()
@@ -1742,7 +1803,7 @@ class PlannerNodeTests(unittest.TestCase):
             }
 
         state["_llm_planner_hybrid"] = hybrid_llm
-        out = planner.run(state, llm_planner=llm)
+        out = invoke_planner_graph(state, llm)
         self.assertEqual(out["session_execution_state"]["active_step_scope_id"], "step:support_module_查經互動模組:2")
         self.assertEqual(out["session_execution_state"]["active_step_order"], 2)
         self.assertEqual(out["session_execution_state"]["active_step_title"], "認清關係")
@@ -3807,6 +3868,8 @@ class PlannerNodeTests(unittest.TestCase):
             "primary_scope_id": "workflow:interaction_logic_execution_flow",
             "primary_scope_type": "workflow",
             "primary_scope_title": "Interaction Logic & Execution Flow",
+            "active_service_block_id": "primary_workflow:interaction_logic_execution_flow",
+            "active_service_block_type": "primary_workflow",
             "active_mode": "interaction_logic_execution_flow",
             "active_workflow": "Interaction Logic & Execution Flow",
             "active_step_order": 1,
@@ -3905,6 +3968,14 @@ class PlannerNodeTests(unittest.TestCase):
         self.assertEqual(out["instruction_step"]["order"], 2)
         self.assertEqual(out["session_execution_state"]["active_step_scope_id"], "step:interaction_logic_execution_flow:2")
         self.assertEqual(out["session_execution_state"]["active_service_block_type"], "primary_workflow")
+        self.assertEqual(
+            {
+                str(item.get("filename") or "").strip()
+                for item in out["turn_execution_plan"].get("resource_requests", []) or []
+                if str(item.get("filename") or "").strip()
+            },
+            {"template_library.md", "dynamic_prompt_optimizer.md"},
+        )
 
     def test_planner_hybrid_active_sets_primary_support_module_from_semantic_module_queue(self):
         state = self.state.copy()
@@ -3918,8 +3989,23 @@ class PlannerNodeTests(unittest.TestCase):
                         {"block_id": "workflow:design", "block_type": "primary_workflow", "title": "Design Workflow", "is_default": True},
                         {"block_id": "module:use-case", "block_type": "support_module", "title": "Use Case Module"},
                     ],
-                    "instruction_procedures": [],
-                    "procedure_steps": [],
+                    "instruction_procedures": [
+                        {
+                            "procedure_id": "procedure:use-case",
+                            "service_block_id": "module:use-case",
+                            "title": "Use Case Procedure",
+                        }
+                    ],
+                    "procedure_steps": [
+                        {
+                            "step_id": "step:design:1",
+                            "procedure_id": "procedure:use-case",
+                            "order": 1,
+                            "title": "Step 1: Design Step",
+                            "execution_mode": "interactive",
+                            "resource_refs": ["resource:use-case"],
+                        }
+                    ],
                 }
             },
             "instruction_workflows": [
@@ -3933,6 +4019,15 @@ class PlannerNodeTests(unittest.TestCase):
             ],
         }
         state["instruction_runtime_model"] = {
+            "instruction_service_blocks": list(
+                state["template_registry"]["compiled_instruction_understanding"]["hybrid_instruction_runtime_model"]["instruction_service_blocks"]
+            ),
+            "instruction_procedures": list(
+                state["template_registry"]["compiled_instruction_understanding"]["hybrid_instruction_runtime_model"]["instruction_procedures"]
+            ),
+            "procedure_steps": list(
+                state["template_registry"]["compiled_instruction_understanding"]["hybrid_instruction_runtime_model"]["procedure_steps"]
+            ),
             "support_modules": [
                 {
                     "module_id": "module:use-case",
@@ -3984,6 +4079,525 @@ class PlannerNodeTests(unittest.TestCase):
         out = planner.run(state, llm_planner=llm)
         self.assertEqual(out["turn_execution_plan"]["primary_support_module_scope"]["scope_id"], "module:use-case")
         self.assertEqual(out["session_execution_state"]["primary_support_module_id"], "module:use-case")
+        validated = SessionExecutionState(**out["session_execution_state"])
+        self.assertEqual(validated.active_step_title, "Design Step")
+        self.assertEqual(validated.procedure_step_activation.step_title, "Design Step")
+
+    def test_planner_hybrid_active_explicit_target_step_advances_to_second_support_module(self):
+        state = self.state.copy()
+        state["planner_mode"] = "hybrid_active"
+        state["user_query"] = "The use case is confirmed; compare the tone options now."
+        service_blocks = [
+            {"block_id": "module:use-case", "block_type": "support_module", "title": "Use Case Module"},
+            {"block_id": "module:style", "block_type": "support_module", "title": "Style Module"},
+        ]
+        procedures = [
+            {"procedure_id": "procedure:use-case", "service_block_id": "module:use-case", "title": "Use Case"},
+            {"procedure_id": "procedure:style", "service_block_id": "module:style", "title": "Style"},
+        ]
+        procedure_steps = [
+            {
+                "step_id": "step:use-case:1",
+                "procedure_id": "procedure:use-case",
+                "order": 1,
+                "title": "Confirm Direction",
+                "execution_mode": "interactive",
+                "resource_refs": ["resource:use-case"],
+            },
+            {
+                "step_id": "step:style:1",
+                "procedure_id": "procedure:style",
+                "order": 1,
+                "title": "Compare Tone Options",
+                "execution_mode": "interactive",
+                "resource_refs": ["resource:style"],
+            },
+        ]
+        state["template_registry"] = {
+            "compiled_instruction_understanding": {
+                "hybrid_instruction_runtime_model": {
+                    "instruction_service_blocks": service_blocks,
+                    "instruction_procedures": procedures,
+                    "procedure_steps": procedure_steps,
+                }
+            },
+            "instruction_workflows": [],
+        }
+        state["instruction_runtime_model"] = {
+            "instruction_service_blocks": service_blocks,
+            "instruction_procedures": procedures,
+            "procedure_steps": procedure_steps,
+            "support_modules": [
+                {"module_id": "module:use-case", "title": "Use Case Module", "resource_ids": ["resource:use-case"]},
+                {"module_id": "module:style", "title": "Style Module", "resource_ids": ["resource:style"]},
+            ],
+            "instruction_resources": [
+                {
+                    "resource_id": "resource:use-case",
+                    "filename": "use_case.md",
+                    "domain": "instruction_source",
+                    "title": "Use Case Guide",
+                },
+                {
+                    "resource_id": "resource:style",
+                    "filename": "style.md",
+                    "domain": "instruction_source",
+                    "title": "Style Guide",
+                },
+            ],
+        }
+        state["session_execution_state"] = {
+            "active_service_block_id": "module:use-case",
+            "active_service_block_type": "support_module",
+            "active_service_block_title": "Use Case Module",
+            "primary_support_module_id": "module:use-case",
+            "primary_support_module_title": "Use Case Module",
+            "active_step_scope_id": "step:use-case:1",
+            "active_step_order": 1,
+            "active_step_title": "Confirm Direction",
+            "active_module_queue": ["module:use-case", "module:style"],
+            "current_module_index": 0,
+        }
+
+        def llm(_prompt, _tools, _context):
+            output = json.loads(json.dumps(self.valid))
+            output["normalizedQuery"] = state["user_query"]
+            output["contextualQuery"] = state["user_query"]
+            output["retrievalPlan"]["query_text"] = state["user_query"]
+            return output
+
+        def hybrid_llm(_prompt, _tools, _context):
+            return {
+                "intent_label": "continue_design",
+                "confidence": 0.96,
+                "continue_current_scope": False,
+                "selected_role_id": None,
+                "selected_workflow_id": None,
+                "selected_support_module_ids": ["module:style"],
+                "selected_followup_module_ids": [],
+                "selected_supplementary_workflow_id": None,
+                "module_sequence": ["module:use-case", "module:style"],
+                "clarification_status": {
+                    "is_active": False,
+                    "is_complete": True,
+                    "missing_slots": [],
+                    "filled_slot_names": ["audience", "use_case", "role", "goal"],
+                },
+                "next_action": {
+                    "action_type": "advance_step",
+                    "target_service_block_id": "module:style",
+                    "target_workflow_id": None,
+                    "target_step_id": "step:style:1",
+                    "bundled_step_ids": [],
+                    "module_queue": ["module:use-case", "module:style"],
+                },
+                "reasoning_summary": ["The prior module is complete; enter style exploration."],
+            }
+
+        state["_llm_planner_hybrid"] = hybrid_llm
+        out = invoke_planner_graph(state, llm)
+
+        self.assertEqual(out["instruction_step"]["step_scope_id"], "step:style:1")
+        self.assertEqual(out["session_execution_state"]["active_step_scope_id"], "step:style:1")
+        self.assertEqual(out["session_execution_state"]["active_service_block_id"], "module:style")
+        self.assertEqual(out["session_execution_state"]["primary_support_module_id"], "module:style")
+        self.assertEqual(out["session_execution_state"]["current_module_index"], 1)
+        filenames = {
+            str(item.get("filename") or "").strip()
+            for item in out["turn_execution_plan"].get("resource_requests", []) or []
+            if str(item.get("filename") or "").strip()
+        }
+        self.assertIn("style.md", filenames)
+        self.assertNotIn("use_case.md", filenames)
+
+    def test_hybrid_primary_support_module_skips_primary_workflow_queue_entry(self):
+        state = self.state.copy()
+        state["planner_mode"] = "hybrid_active"
+        service_blocks = [
+            {"block_id": "primary_workflow:design", "block_type": "primary_workflow", "title": "Design"},
+            {"block_id": "module:use-case", "block_type": "support_module", "title": "Use Case"},
+        ]
+        state["template_registry"] = {
+            "compiled_instruction_understanding": {
+                "hybrid_instruction_runtime_model": {
+                    "instruction_service_blocks": service_blocks,
+                }
+            }
+        }
+        state["instruction_runtime_model"] = {
+            "instruction_service_blocks": service_blocks,
+            "support_modules": [
+                {"module_id": "support_module:use-case", "title": "Use Case"},
+            ],
+        }
+
+        selected = planner._hybrid_active_primary_support_module(
+            state,
+            ["primary_workflow:design", "module:use-case"],
+        )
+
+        self.assertEqual(selected, ("module:use-case", "Use Case"))
+
+    def test_selected_direct_module_route_is_a_hybrid_service_block_target(self):
+        state = self.state.copy()
+        state["planner_mode"] = "hybrid_active"
+        service_blocks = [
+            {"block_id": "primary_workflow:design", "block_type": "primary_workflow", "title": "Design"},
+            {"block_id": "module:use-case", "block_type": "support_module", "title": "Use Case"},
+        ]
+        state["template_registry"] = {
+            "compiled_instruction_understanding": {
+                "hybrid_instruction_runtime_model": {
+                    "instruction_service_blocks": service_blocks,
+                    "routing_rules": [
+                        {
+                            "rule_id": "route:idea",
+                            "condition": "Use-case design request",
+                            "target_type": "support_module",
+                            "target_id": "module:use-case",
+                        }
+                    ],
+                }
+            }
+        }
+        state["instruction_runtime_model"] = {
+            "instruction_service_blocks": service_blocks,
+        }
+        state["hybrid_planner_shadow_output"] = {
+            "selected_routing_rule_id": "route:idea",
+            "selected_support_module_ids": [],
+            "selected_followup_module_ids": [],
+            "module_sequence": [],
+            "next_action": {},
+        }
+
+        self.assertEqual(
+            planner._hybrid_active_target_service_block_ids(state),
+            ["module:use-case"],
+        )
+
+    def test_hybrid_active_resource_free_step_does_not_load_module_or_queued_module_resources(self):
+        state = self.state.copy()
+        state["planner_mode"] = "hybrid_active"
+        state["user_query"] = "Continue the current interaction step."
+        service_blocks = [
+            {"block_id": "module:interaction", "block_type": "support_module", "title": "Interaction Module"},
+            {"block_id": "module:configuration", "block_type": "support_module", "title": "Configuration Module"},
+        ]
+        procedures = [
+            {"procedure_id": "procedure:interaction", "service_block_id": "module:interaction", "title": "Interaction"},
+            {"procedure_id": "procedure:configuration", "service_block_id": "module:configuration", "title": "Configuration"},
+        ]
+        procedure_steps = [
+            {
+                "step_id": "step:interaction:1",
+                "procedure_id": "procedure:interaction",
+                "order": 1,
+                "title": "Identify Mode",
+                "resource_refs": [],
+            },
+            {
+                "step_id": "step:interaction:2",
+                "procedure_id": "procedure:interaction",
+                "order": 2,
+                "title": "Design Pattern",
+                "resource_refs": ["interaction_patterns.md"],
+            },
+            {
+                "step_id": "step:configuration:1",
+                "procedure_id": "procedure:configuration",
+                "order": 1,
+                "title": "Configure",
+                "resource_refs": ["configuration.md"],
+            },
+        ]
+        state["template_registry"] = {
+            "compiled_instruction_understanding": {
+                "hybrid_instruction_runtime_model": {
+                    "instruction_service_blocks": service_blocks,
+                    "instruction_procedures": procedures,
+                    "procedure_steps": procedure_steps,
+                }
+            }
+        }
+        state["instruction_runtime_model"] = {
+            "instruction_service_blocks": service_blocks,
+            "instruction_procedures": procedures,
+            "procedure_steps": procedure_steps,
+            "support_modules": [
+                {"module_id": "module:interaction", "title": "Interaction Module", "resource_ids": ["interaction-patterns"]},
+                {"module_id": "module:configuration", "title": "Configuration Module", "resource_ids": ["configuration"]},
+            ],
+            "instruction_resources": [
+                {"resource_id": "interaction-patterns", "filename": "interaction_patterns.md", "domain": "instruction_source"},
+                {"resource_id": "configuration", "filename": "configuration.md", "domain": "instruction_source"},
+            ],
+            "phase_resource_bindings": [
+                {
+                    "binding_id": "binding:interaction",
+                    "trigger_type": "module",
+                    "scope_id": "module:interaction",
+                    "resource_ids": ["interaction-patterns"],
+                    "resource_kinds": ["instruction_resource"],
+                },
+                {
+                    "binding_id": "binding:configuration",
+                    "trigger_type": "module",
+                    "scope_id": "module:configuration",
+                    "resource_ids": ["configuration"],
+                    "resource_kinds": ["instruction_resource"],
+                },
+            ],
+        }
+        state["session_execution_state"] = {
+            "active_service_block_id": "module:interaction",
+            "active_service_block_type": "support_module",
+            "active_service_block_title": "Interaction Module",
+            "primary_support_module_id": "module:interaction",
+            "primary_support_module_title": "Interaction Module",
+            "active_step_scope_id": "step:interaction:1",
+            "active_step_order": 1,
+            "active_step_title": "Identify Mode",
+            "active_module_queue": ["module:interaction", "module:configuration"],
+            "current_module_index": 0,
+        }
+
+        def llm(_prompt, _tools, _context):
+            output = json.loads(json.dumps(self.valid))
+            output["normalizedQuery"] = state["user_query"]
+            output["contextualQuery"] = state["user_query"]
+            output["retrievalPlan"]["query_text"] = state["user_query"]
+            return output
+
+        def hybrid_llm(_prompt, _tools, _context):
+            return {
+                "intent_label": "continue_design",
+                "confidence": 0.96,
+                "continue_current_scope": True,
+                "selected_role_id": None,
+                "selected_workflow_id": None,
+                "selected_support_module_ids": ["module:interaction"],
+                "selected_followup_module_ids": ["module:configuration"],
+                "selected_supplementary_workflow_id": None,
+                "module_sequence": ["module:interaction", "module:configuration"],
+                "clarification_status": {"is_active": False, "is_complete": True, "missing_slots": [], "filled_slot_names": []},
+                "next_action": {
+                    "action_type": "continue_step",
+                    "target_service_block_id": "module:interaction",
+                    "target_workflow_id": None,
+                    "target_step_id": "step:interaction:1",
+                    "bundled_step_ids": [],
+                    "module_queue": ["module:interaction", "module:configuration"],
+                },
+                "reasoning_summary": ["Continue the current step."],
+            }
+
+        state["_llm_planner_hybrid"] = hybrid_llm
+        out = invoke_planner_graph(state, llm)
+
+        filenames = [
+            str(item.get("filename") or "").strip()
+            for item in out["turn_execution_plan"].get("resource_requests", []) or []
+            if str(item.get("filename") or "").strip()
+        ]
+        self.assertEqual(filenames, [])
+        self.assertNotIn("binding:configuration", out["session_execution_state"].get("active_binding_ids", []))
+
+    def test_hybrid_active_step_resource_is_loaded_once_when_binding_also_declares_it(self):
+        state = self.state.copy()
+        state["planner_mode"] = "hybrid_active"
+        state["user_query"] = "Use the interaction pattern guide."
+        service_blocks = [
+            {"block_id": "module:interaction", "block_type": "support_module", "title": "Interaction Module"},
+        ]
+        procedures = [
+            {"procedure_id": "procedure:interaction", "service_block_id": "module:interaction", "title": "Interaction"},
+        ]
+        procedure_steps = [
+            {
+                "step_id": "step:interaction:1",
+                "procedure_id": "procedure:interaction",
+                "order": 1,
+                "title": "Design Pattern",
+                "resource_refs": ["interaction_patterns.md"],
+            },
+        ]
+        state["template_registry"] = {
+            "compiled_instruction_understanding": {
+                "hybrid_instruction_runtime_model": {
+                    "instruction_service_blocks": service_blocks,
+                    "instruction_procedures": procedures,
+                    "procedure_steps": procedure_steps,
+                }
+            }
+        }
+        state["instruction_runtime_model"] = {
+            "instruction_service_blocks": service_blocks,
+            "instruction_procedures": procedures,
+            "procedure_steps": procedure_steps,
+            "support_modules": [
+                {"module_id": "module:interaction", "title": "Interaction Module", "resource_ids": ["interaction-patterns"]},
+            ],
+            "instruction_resources": [
+                {"resource_id": "interaction-patterns", "filename": "interaction_patterns.md", "domain": "instruction_source"},
+            ],
+            "dependency_groups": [
+                {"group_id": "group:interaction", "resource_ids": ["interaction-patterns"]},
+            ],
+            "phase_resource_bindings": [
+                {
+                    "binding_id": "binding:interaction",
+                    "trigger_type": "module",
+                    "scope_id": "module:interaction",
+                    "dependency_groups": ["group:interaction"],
+                    "resource_ids": ["interaction-patterns"],
+                    "resource_kinds": ["instruction_resource"],
+                },
+            ],
+        }
+        state["session_execution_state"] = {
+            "active_service_block_id": "module:interaction",
+            "active_service_block_type": "support_module",
+            "primary_support_module_id": "module:interaction",
+            "active_step_scope_id": "step:interaction:1",
+            "active_step_order": 1,
+            "active_step_title": "Design Pattern",
+            "active_module_queue": ["module:interaction"],
+            "current_module_index": 0,
+        }
+
+        def llm(_prompt, _tools, _context):
+            output = json.loads(json.dumps(self.valid))
+            output["normalizedQuery"] = state["user_query"]
+            output["contextualQuery"] = state["user_query"]
+            output["retrievalPlan"]["query_text"] = state["user_query"]
+            return output
+
+        def hybrid_llm(_prompt, _tools, _context):
+            return {
+                "intent_label": "continue_design",
+                "confidence": 0.96,
+                "continue_current_scope": True,
+                "selected_role_id": None,
+                "selected_workflow_id": None,
+                "selected_support_module_ids": ["module:interaction"],
+                "selected_followup_module_ids": [],
+                "selected_supplementary_workflow_id": None,
+                "module_sequence": ["module:interaction"],
+                "clarification_status": {"is_active": False, "is_complete": True, "missing_slots": [], "filled_slot_names": []},
+                "next_action": {
+                    "action_type": "continue_step",
+                    "target_service_block_id": "module:interaction",
+                    "target_workflow_id": None,
+                    "target_step_id": "step:interaction:1",
+                    "bundled_step_ids": [],
+                    "module_queue": ["module:interaction"],
+                },
+                "reasoning_summary": ["Use the active step resource."],
+            }
+
+        state["_llm_planner_hybrid"] = hybrid_llm
+        out = invoke_planner_graph(state, llm)
+
+        filenames = [
+            str(item.get("filename") or "").strip()
+            for item in out["turn_execution_plan"].get("resource_requests", []) or []
+            if str(item.get("filename") or "").strip()
+        ]
+        self.assertEqual(filenames, ["interaction_patterns.md"])
+
+    def test_hybrid_active_module_binding_remains_fallback_without_step_resource_mappings(self):
+        state = self.state.copy()
+        state["planner_mode"] = "hybrid_active"
+        state["user_query"] = "Continue the legacy module."
+        service_blocks = [
+            {"block_id": "module:legacy", "block_type": "support_module", "title": "Legacy Module"},
+        ]
+        procedures = [
+            {"procedure_id": "procedure:legacy", "service_block_id": "module:legacy", "title": "Legacy"},
+        ]
+        procedure_steps = [
+            {"step_id": "step:legacy:1", "procedure_id": "procedure:legacy", "order": 1, "title": "Legacy Step", "resource_refs": []},
+        ]
+        state["template_registry"] = {
+            "compiled_instruction_understanding": {
+                "hybrid_instruction_runtime_model": {
+                    "instruction_service_blocks": service_blocks,
+                    "instruction_procedures": procedures,
+                    "procedure_steps": procedure_steps,
+                }
+            }
+        }
+        state["instruction_runtime_model"] = {
+            "instruction_service_blocks": service_blocks,
+            "instruction_procedures": procedures,
+            "procedure_steps": procedure_steps,
+            "support_modules": [
+                {"module_id": "module:legacy", "title": "Legacy Module", "resource_ids": ["legacy-guide"]},
+            ],
+            "instruction_resources": [
+                {"resource_id": "legacy-guide", "filename": "legacy_guide.md", "domain": "instruction_source"},
+            ],
+            "phase_resource_bindings": [
+                {
+                    "binding_id": "binding:legacy",
+                    "trigger_type": "module",
+                    "scope_id": "module:legacy",
+                    "resource_ids": ["legacy-guide"],
+                    "resource_kinds": ["instruction_resource"],
+                },
+            ],
+        }
+        state["session_execution_state"] = {
+            "active_service_block_id": "module:legacy",
+            "active_service_block_type": "support_module",
+            "primary_support_module_id": "module:legacy",
+            "active_step_scope_id": "step:legacy:1",
+            "active_step_order": 1,
+            "active_step_title": "Legacy Step",
+            "active_module_queue": ["module:legacy"],
+            "current_module_index": 0,
+        }
+
+        def llm(_prompt, _tools, _context):
+            output = json.loads(json.dumps(self.valid))
+            output["normalizedQuery"] = state["user_query"]
+            output["contextualQuery"] = state["user_query"]
+            output["retrievalPlan"]["query_text"] = state["user_query"]
+            return output
+
+        def hybrid_llm(_prompt, _tools, _context):
+            return {
+                "intent_label": "continue_design",
+                "confidence": 0.96,
+                "continue_current_scope": True,
+                "selected_role_id": None,
+                "selected_workflow_id": None,
+                "selected_support_module_ids": ["module:legacy"],
+                "selected_followup_module_ids": [],
+                "selected_supplementary_workflow_id": None,
+                "module_sequence": ["module:legacy"],
+                "clarification_status": {"is_active": False, "is_complete": True, "missing_slots": [], "filled_slot_names": []},
+                "next_action": {
+                    "action_type": "continue_step",
+                    "target_service_block_id": "module:legacy",
+                    "target_workflow_id": None,
+                    "target_step_id": "step:legacy:1",
+                    "bundled_step_ids": [],
+                    "module_queue": ["module:legacy"],
+                },
+                "reasoning_summary": ["Use legacy module fallback."],
+            }
+
+        state["_llm_planner_hybrid"] = hybrid_llm
+        out = invoke_planner_graph(state, llm)
+
+        filenames = [
+            str(item.get("filename") or "").strip()
+            for item in out["turn_execution_plan"].get("resource_requests", []) or []
+            if str(item.get("filename") or "").strip()
+        ]
+        self.assertEqual(filenames, ["legacy_guide.md"])
 
     def test_planner_hybrid_active_prefers_semantic_instruction_module_over_legacy_keyword_match(self):
         state = self.state.copy()
@@ -5301,14 +5915,19 @@ class PlannerNodeTests(unittest.TestCase):
         self.assertIn("fallback", calls["prompts"][1].lower())
         self.assertEqual(out["planner_output"]["confidence"], 0.85)
 
-    def test_planner_raises_on_invalid_schema(self):
+    def test_planner_falls_back_when_llm_returns_invalid_schema(self):
         invalid = {"intentType": "qa"}  # missing required fields
+        calls = {"n": 0}
 
         def llm(_prompt, _tools, _context):
+            calls["n"] += 1
             return invalid
 
-        with self.assertRaises(ValidationError):
-            planner.run(self.state.copy(), llm_planner=llm)
+        out = planner.run(self.state.copy(), llm_planner=llm)
+
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(out["planner_output"]["normalizedQuery"], self.state["user_query"])
+        self.assertEqual(out["planner_output"]["retrievalPlan"]["top_k"], 3)
 
     def test_planner_falls_back_to_local_default_when_llm_call_errors(self):
         state = self.state.copy()
@@ -5651,6 +6270,184 @@ class PlannerNodeTests(unittest.TestCase):
         self.assertEqual(out["turn_execution_plan"]["turn_intent"], "general_out_of_scope_question")
         self.assertEqual(out["instruction_workflow"], {})
         self.assertTrue(out["turn_action_plan"]["response_style"]["is_out_of_scope"])
+
+    def test_high_confidence_coherent_hybrid_scope_decision_routes_general_question_out_of_scope(self):
+        state = self.state.copy()
+        state["planner_mode"] = "hybrid_active"
+        state["user_query"] = "地球與太陽的距離有多遠?"
+        state["template_registry"] = {
+            "builder_instructions": "這個應用幫助父母陪伴孩子成長。",
+            "compiled_instruction_understanding": {
+                "hybrid_instruction_runtime_model": {
+                    "global_app_contract": {
+                        "mission": "幫助父母陪伴孩子成長",
+                        "boundaries": ["親子教養與信仰成長"],
+                    },
+                    "instruction_service_blocks": [],
+                    "instruction_procedures": [],
+                    "procedure_steps": [],
+                }
+            },
+        }
+
+        def llm(_prompt, _tools, _context):
+            output = json.loads(json.dumps(self.valid))
+            output["normalizedQuery"] = state["user_query"]
+            output["contextualQuery"] = state["user_query"]
+            return output
+
+        def hybrid_llm(_prompt, _tools, _context):
+            return {
+                "intent_label": "general_knowledge_question",
+                "confidence": 0.97,
+                "continue_current_scope": False,
+                "selected_role_id": None,
+                "selected_workflow_id": None,
+                "selected_support_module_ids": [],
+                "selected_followup_module_ids": [],
+                "selected_supplementary_workflow_id": None,
+                "module_sequence": [],
+                "clarification_status": {"is_active": False, "is_complete": True, "missing_slots": [], "filled_slot_names": []},
+                "next_action": {"action_type": "stay_idle", "target_service_block_id": None, "target_workflow_id": None, "target_step_id": None, "bundled_step_ids": [], "module_queue": []},
+                "semantic_scope": {
+                    "classification": "out_of_scope",
+                    "confidence": 0.97,
+                    "reason": "Astronomy is outside the parenting application contract.",
+                    "matched_app_signals": [],
+                },
+                "reasoning_summary": ["Route to general answer without app retrieval."],
+            }
+
+        state["_llm_planner_hybrid"] = hybrid_llm
+        out = planner.run(state, llm_planner=llm)
+
+        self.assertEqual(out["turn_execution_plan"]["turn_intent"], "general_out_of_scope_question")
+        self.assertTrue(out["turn_action_plan"]["response_style"]["is_out_of_scope"])
+        self.assertEqual(out["semantic_scope_decision"]["classification"], "out_of_scope")
+        self.assertTrue(out["semantic_scope_decision"]["activated"])
+
+    def test_low_confidence_hybrid_out_of_scope_decision_preserves_existing_app_scoped_behavior(self):
+        state = self.state.copy()
+        state["planner_mode"] = "hybrid_active"
+        state["user_query"] = "地球與太陽的距離有多遠?"
+        state["template_registry"] = {
+            "compiled_instruction_understanding": {
+                "hybrid_instruction_runtime_model": {
+                    "global_app_contract": {"mission": "Support parenting questions"},
+                    "instruction_service_blocks": [],
+                    "instruction_procedures": [],
+                    "procedure_steps": [],
+                }
+            }
+        }
+
+        def llm(_prompt, _tools, _context):
+            output = json.loads(json.dumps(self.valid))
+            output["normalizedQuery"] = state["user_query"]
+            output["contextualQuery"] = state["user_query"]
+            return output
+
+        def hybrid_llm(_prompt, _tools, _context):
+            return {
+                "intent_label": "general_knowledge_question",
+                "confidence": 0.7,
+                "continue_current_scope": False,
+                "selected_role_id": None,
+                "selected_workflow_id": None,
+                "selected_support_module_ids": [],
+                "selected_followup_module_ids": [],
+                "selected_supplementary_workflow_id": None,
+                "module_sequence": [],
+                "clarification_status": {"is_active": False, "is_complete": True, "missing_slots": [], "filled_slot_names": []},
+                "next_action": {"action_type": "stay_idle", "target_service_block_id": None, "target_workflow_id": None, "target_step_id": None, "bundled_step_ids": [], "module_queue": []},
+                "semantic_scope": {"classification": "out_of_scope", "confidence": 0.7, "reason": "Uncertain", "matched_app_signals": []},
+                "reasoning_summary": ["Uncertain scope."],
+            }
+
+        state["_llm_planner_hybrid"] = hybrid_llm
+        out = planner.run(state, llm_planner=llm)
+
+        self.assertNotEqual(out["turn_execution_plan"]["turn_intent"], "general_out_of_scope_question")
+        self.assertFalse(out["semantic_scope_decision"]["activated"])
+        self.assertEqual(out["semantic_scope_decision"]["validation_reason"], "confidence_below_threshold")
+
+    def test_hybrid_out_of_scope_decision_cannot_bypass_active_step_continuation(self):
+        state = self.state.copy()
+        state["planner_mode"] = "hybrid_active"
+        state["user_query"] = "continue to the next step"
+        state["session_execution_state"] = {
+            "active_service_block_id": "workflow:parenting",
+            "active_service_block_type": "primary_workflow",
+            "active_step_scope_id": "step:parenting:1",
+            "active_step_title": "Clarify",
+            "execution_status": "waiting_user",
+        }
+        state["template_registry"] = {
+            "compiled_instruction_understanding": {
+                "hybrid_instruction_runtime_model": {
+                    "global_app_contract": {"mission": "Support parenting questions"},
+                    "instruction_service_blocks": [
+                        {"block_id": "workflow:parenting", "block_type": "primary_workflow", "title": "Parenting"},
+                    ],
+                    "instruction_procedures": [],
+                    "procedure_steps": [],
+                }
+            }
+        }
+
+        def hybrid_llm(_prompt, _tools, _context):
+            return {
+                "intent_label": "continue",
+                "confidence": 0.98,
+                "continue_current_scope": True,
+                "selected_role_id": None,
+                "selected_workflow_id": None,
+                "selected_support_module_ids": [],
+                "selected_followup_module_ids": [],
+                "selected_supplementary_workflow_id": None,
+                "module_sequence": [],
+                "clarification_status": {"is_active": True, "is_complete": True, "missing_slots": [], "filled_slot_names": []},
+                "next_action": {"action_type": "continue_ordered_module_sequence", "target_service_block_id": None, "target_workflow_id": None, "target_step_id": None, "bundled_step_ids": [], "module_queue": []},
+                "semantic_scope": {"classification": "out_of_scope", "confidence": 0.98, "reason": "Invalid classifier output", "matched_app_signals": []},
+                "reasoning_summary": ["Continue current scope."],
+            }
+
+        state["_llm_planner_hybrid"] = hybrid_llm
+        out = planner.run(state, llm_planner=lambda _p, _t, _c: self.valid)
+
+        self.assertNotEqual(out["turn_execution_plan"]["turn_intent"], "general_out_of_scope_question")
+        self.assertFalse(out["semantic_scope_decision"]["activated"])
+        self.assertEqual(out["semantic_scope_decision"]["validation_reason"], "continuation_turn_protected")
+
+    def test_hybrid_out_of_scope_decision_with_selected_app_target_is_rejected(self):
+        state = self.state.copy()
+        state["user_query"] = "How far is Earth from the Sun?"
+        state["hybrid_planner_shadow_output"] = {
+            "continue_current_scope": False,
+            "selected_role_id": None,
+            "selected_workflow_id": None,
+            "selected_support_module_ids": ["module:parenting"],
+            "selected_followup_module_ids": [],
+            "selected_supplementary_workflow_id": None,
+            "module_sequence": ["module:parenting"],
+            "next_action": {
+                "target_service_block_id": "module:parenting",
+                "target_workflow_id": None,
+                "target_step_id": None,
+                "module_queue": ["module:parenting"],
+            },
+            "semantic_scope": {
+                "classification": "out_of_scope",
+                "confidence": 0.99,
+                "reason": "Contradictory output",
+                "matched_app_signals": [],
+            },
+        }
+
+        decision = planner._validated_semantic_scope_decision(state)
+
+        self.assertFalse(decision["activated"])
+        self.assertEqual(decision["validation_reason"], "app_target_selection_conflict")
 
     def test_advances_to_next_workflow_step_from_session_progress(self):
         state = self.state.copy()

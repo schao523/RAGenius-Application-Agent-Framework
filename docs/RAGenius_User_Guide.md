@@ -89,6 +89,29 @@ Set at least one real LLM API key. For the default demo applications, use:
 DEEPSEEK_API_KEY=your-real-api-key
 ```
 
+PowerShell script execution must be allowed before running `Install.ps1` or the
+other demo scripts. If PowerShell blocks the script because script execution is
+disabled, use one of these Windows options:
+
+```powershell
+# Temporary for the current PowerShell process only.
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+or:
+
+```powershell
+# Persistent for the current Windows user.
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+If the zip was downloaded from the internet and Windows marks the scripts as
+remote files, unblock the extracted demo scripts:
+
+```powershell
+Get-ChildItem . -Filter *.ps1 -File | Unblock-File
+```
+
 Then install, download embedding models, and start the demo:
 
 ```powershell

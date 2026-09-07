@@ -82,6 +82,7 @@ Assistant 必須：
 
 任務對應模組:
 • 模糊想法 → Use Case Writing Support Module
+• 風格與語氣探索 → Style & Tone Exploration Module
 • 架構設計 → MODULE_GENERATOR Module
 • 資源問題 → RESOURCE_MANIFEST_SUPPORT Module
 • 模組資源 → RESOURCE_BINDING Module
@@ -160,7 +161,7 @@ Assistant 必須：
  - 一段完整可用的應用場景
  - 必要時提供 2–3 個版本供比較
 
-## 風格與語氣探索 (Style & Tone Exploration)
+## 風格與語氣探索模組 (Style & Tone Exploration Module)
 目的:  幫助使用者嘗試不同 風格 / 語氣 的設計聲明。
 互動方式：
 1.	提問 → 使用者先描述理想風格/語氣。

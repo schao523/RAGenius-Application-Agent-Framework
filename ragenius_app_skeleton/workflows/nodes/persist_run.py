@@ -449,6 +449,9 @@ def _build_retrieval_summary(state: GraphState, final: dict) -> dict:
         "presentation_mode": presentation_policy.get("mode"),
         "answer_source": answer_generation_meta.get("source"),
         "answer_llm_error": answer_generation_meta.get("llm_error"),
+        "semantic_scope_decision": state.get("semantic_scope_decision", {})
+        if isinstance(state.get("semantic_scope_decision"), dict)
+        else {},
         "task_model_diagnostics": finalize_task_model_diagnostics(state),
         "turn_execution_plan": turn_execution_plan,
         "workflow_progress": workflow_progress,

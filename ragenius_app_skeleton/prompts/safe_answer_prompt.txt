@@ -8,7 +8,9 @@ When evidence is insufficient OR infoTypes_missing is nonempty.
 Goal:
 Produce a cautious, non-speculative, helpful answer:
 - Clearly state unavailable evidence.
-- Only use provided compressed_evidence.
+- Follow knowledge_use_decision. If model knowledge is allowed, it may cautiously supplement missing context when relevant to the in-scope question and consistent with application policies.
+- Prefer provided evidence and never contradict it with model knowledge.
+- Never fabricate citations for model knowledge; citations may refer only to supplied evidence.
 - Offer next steps if relevant.
 - NO hallucination.
 

@@ -79,6 +79,22 @@ def test_database_consumers_run_shared_preflight() -> None:
         assert variable_name in startup_script
 
 
+def test_integrated_runtime_startups_pin_pgvector_before_preflight() -> None:
+    for relative_path in (
+        "ragenius_app_skeleton/start-ragenius-app-skeleton.ps1",
+        "ragenius_builder/start-ragenius-builder.ps1",
+    ):
+        startup_script = _read(relative_path)
+
+        import_index = startup_script.index("Import-DotEnv $envPath")
+        backend_index = startup_script.index('$env:RAG_VECTOR_STORE_BACKEND = "pgvector"')
+        dsn_index = startup_script.index('$env:RAG_VECTOR_STORE_DSN =')
+        preflight_index = startup_script.index("Test-RageniusPostgres.ps1")
+
+        assert import_index < backend_index < preflight_index
+        assert import_index < dsn_index < preflight_index
+
+
 def test_execution_startup_selects_prisma_binary_engine_on_windows_arm64() -> None:
     startup_script = _read(
         "ragenius_execution_subsystem/start-ragenius-execution-subsystem.ps1"

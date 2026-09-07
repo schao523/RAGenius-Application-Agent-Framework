@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import time
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -1004,6 +1005,9 @@ def _ground_semantic_model_from_deterministic_contract(
         return {}
 
     normalized = dict(semantic_model)
+    deterministic_contract = load_template_registry.promote_declared_module_orchestration(
+        deterministic_contract
+    )
     if not isinstance(normalized.get("service_blocks"), list):
         normalized["service_blocks"] = []
     if not isinstance(normalized.get("procedures"), list):
@@ -1029,6 +1033,8 @@ def _ground_semantic_model_from_deterministic_contract(
     module_orchestration = (
         dict(normalized.get("module_orchestration") or {})
         if isinstance(normalized.get("module_orchestration"), dict)
+        else dict(deterministic_contract.get("module_orchestration") or {})
+        if isinstance(deterministic_contract.get("module_orchestration"), dict)
         else None
     )
     primary_service_mode = str(normalized.get("primary_service_mode") or "").strip()
@@ -1173,6 +1179,45 @@ def _ground_semantic_model_from_deterministic_contract(
             continue
         deterministic_steps_by_procedure_id.setdefault(procedure_id, []).append(dict(step))
 
+    default_workflow_id = str(normalized.get("default_workflow_id") or "").strip()
+    has_primary_workflow = any(
+        isinstance(item, dict)
+        and str(item.get("block_type") or "").strip() == "primary_workflow"
+        for item in service_blocks
+    )
+    if primary_service_mode == "single_default_workflow" and default_workflow_id and not has_primary_workflow:
+        deterministic_default_block = next(
+            (
+                dict(item)
+                for item in deterministic_service_blocks
+                if str(item.get("block_id") or "").strip() == default_workflow_id
+                and str(item.get("block_type") or "").strip() == "primary_workflow"
+            ),
+            None,
+        )
+        if isinstance(deterministic_default_block, dict):
+            deterministic_default_block["is_default"] = True
+            service_blocks.append(deterministic_default_block)
+            existing_block_ids.add(default_workflow_id)
+            deterministic_default_procedure = next(
+                (
+                    dict(item)
+                    for item in deterministic_procedures
+                    if str(item.get("service_block_id") or "").strip() == default_workflow_id
+                ),
+                None,
+            )
+            if isinstance(deterministic_default_procedure, dict):
+                procedure_id = str(deterministic_default_procedure.get("procedure_id") or "").strip()
+                if procedure_id and procedure_id not in existing_procedure_ids:
+                    procedures.append(deterministic_default_procedure)
+                    existing_procedure_ids.add(procedure_id)
+                    for step in deterministic_steps_by_procedure_id.get(procedure_id, []):
+                        step_id = str(step.get("step_id") or "").strip()
+                        if step_id and step_id not in existing_step_ids:
+                            procedure_steps.append(dict(step))
+                            existing_step_ids.add(step_id)
+
     deterministic_module_specs: list[dict[str, Any]] = []
     deterministic_module_specs_by_block_id: dict[str, dict[str, Any]] = {}
     deterministic_module_alias_map: dict[str, str] = {}
@@ -1217,6 +1262,51 @@ def _ground_semantic_model_from_deterministic_contract(
             cleaned_alias = str(alias or "").strip()
             if cleaned_alias:
                 deterministic_module_alias_map.setdefault(cleaned_alias, block_id)
+
+    def _deterministic_module_title(block_id: str) -> str:
+        spec = deterministic_module_specs_by_block_id.get(str(block_id or "").strip())
+        if not isinstance(spec, dict):
+            return ""
+        block = spec.get("block", {})
+        return str(block.get("title") or "").strip() if isinstance(block, dict) else ""
+
+    # Provider output may retain an authored module block while omitting its
+    # executable procedure. Restore only exact deterministic module matches.
+    for spec in deterministic_module_specs:
+        block = spec.get("block", {}) if isinstance(spec, dict) else {}
+        procedure = spec.get("procedure", {}) if isinstance(spec, dict) else {}
+        block_id = str(block.get("block_id") or "").strip() if isinstance(block, dict) else ""
+        procedure_id = (
+            str(procedure.get("procedure_id") or "").strip()
+            if isinstance(procedure, dict)
+            else ""
+        )
+        block_type = str(block.get("block_type") or "").strip() if isinstance(block, dict) else ""
+        if (
+            block_type != "support_module"
+            or not block_id
+            or block_id not in existing_block_ids
+            or not procedure_id
+        ):
+            continue
+        has_exact_procedure = any(
+            isinstance(item, dict)
+            and str(item.get("service_block_id") or "").strip() == block_id
+            for item in procedures
+        )
+        if has_exact_procedure:
+            continue
+        procedures.append(dict(procedure))
+        existing_procedure_ids.add(procedure_id)
+        for step in spec.get("steps", []) or []:
+            if not isinstance(step, dict):
+                continue
+            step_id = str(step.get("step_id") or "").strip()
+            if not step_id or step_id in existing_step_ids:
+                continue
+            procedure_steps.append(dict(step))
+            existing_step_ids.add(step_id)
+
     if should_seed_deterministic_executables:
         for block in deterministic_service_blocks:
             block_id = str(block.get("block_id") or "").strip()
@@ -2045,11 +2135,14 @@ def _ground_semantic_model_from_deterministic_contract(
             block_type = str(block.get("block_type") or "").strip()
             block_id = str(block.get("block_id") or "").strip()
             if block_type == "primary_workflow" and block_id:
-                module_owned_spec = _module_owned_deterministic_spec_for_workflow_block(
-                    block_id,
-                    str(block.get("title") or "").strip(),
-                    str(block.get("body_text") or "").strip(),
-                )
+                block_title = str(block.get("title") or "").strip()
+                module_owned_spec = None
+                if load_template_registry._title_declared_structure_type(block_title) != "workflow":
+                    module_owned_spec = _module_owned_deterministic_spec_for_workflow_block(
+                        block_id,
+                        block_title,
+                        str(block.get("body_text") or "").strip(),
+                    )
                 if isinstance(module_owned_spec, dict):
                     spec_block = dict(module_owned_spec.get("block") or {})
                     canonical_module_id = str(spec_block.get("block_id") or "").strip()
@@ -2090,12 +2183,16 @@ def _ground_semantic_model_from_deterministic_contract(
                     if normalized_block_id:
                         module_id_alias_map[normalized_block_id] = canonical_module_id
                     block["block_id"] = canonical_module_id
-                    block["title"] = _preferred_executable_title(
-                        fallback_candidate,
-                        target_family=_semantic_family(canonical_module_id, block.get("title"), block.get("body_text")),
-                        current_title=str(block.get("title") or "").strip(),
-                        interaction_logic_titles=existing_logic_titles,
-                    ) or canonical_module_id
+                    block["title"] = (
+                        _deterministic_module_title(canonical_module_id)
+                        or _preferred_executable_title(
+                            fallback_candidate,
+                            target_family=_semantic_family(canonical_module_id, block.get("title"), block.get("body_text")),
+                            current_title=str(block.get("title") or "").strip(),
+                            interaction_logic_titles=existing_logic_titles,
+                        )
+                        or canonical_module_id
+                    )
                     canonical_id = str(block.get("block_id") or "").strip()
                     if not canonical_id:
                         continue
@@ -2176,16 +2273,21 @@ def _ground_semantic_model_from_deterministic_contract(
                 if normalized_block_id:
                     module_id_alias_map[normalized_block_id] = canonical_module_id
                 block["block_id"] = canonical_module_id
-                block["title"] = _preferred_executable_title(
-                    fallback_candidate,
-                    target_family=_semantic_family(canonical_module_id, block.get("title"), block.get("body_text")),
-                    current_title=str(block.get("title") or "").strip(),
-                    interaction_logic_titles=existing_logic_titles,
-                ) or canonical_module_id
+                block["title"] = (
+                    _deterministic_module_title(canonical_module_id)
+                    or _preferred_executable_title(
+                        fallback_candidate,
+                        target_family=_semantic_family(canonical_module_id, block.get("title"), block.get("body_text")),
+                        current_title=str(block.get("title") or "").strip(),
+                        interaction_logic_titles=existing_logic_titles,
+                    )
+                    or canonical_module_id
+                )
             canonical_id = str(block.get("block_id") or "").strip()
             if not canonical_id:
                 continue
-            canonical_title = str(block.get("title") or "").strip()
+            canonical_title = _deterministic_module_title(canonical_id) or str(block.get("title") or "").strip()
+            block["title"] = canonical_title
             canonical_family = _semantic_family(canonical_id, canonical_title, block.get("body_text"))
             if canonical_id in canonical_block_titles:
                 existing_index = canonical_block_index[canonical_id]
@@ -2391,6 +2493,31 @@ def _ground_semantic_model_from_deterministic_contract(
             if not isinstance(value, dict):
                 return value
             rewritten = dict(value)
+            for alias_key, canonical_key in (
+                ("target_workflow_ref", "target_workflow_id"),
+                ("target_module_ref", "target_module_id"),
+            ):
+                alias_value = rewritten.pop(alias_key, None)
+                if not str(rewritten.get(canonical_key) or "").strip() and str(alias_value or "").strip():
+                    rewritten[canonical_key] = alias_value
+            for alias_key, canonical_key in (
+                ("target_workflow_refs", "target_workflow_ids"),
+                ("target_module_refs", "target_module_ids"),
+            ):
+                alias_values = rewritten.pop(alias_key, None)
+                if not isinstance(alias_values, list):
+                    continue
+                canonical_values = rewritten.get(canonical_key)
+                if not isinstance(canonical_values, list):
+                    canonical_values = []
+                rewritten[canonical_key] = list(
+                    dict.fromkeys(
+                        [
+                            *[str(item).strip() for item in canonical_values if str(item).strip()],
+                            *[str(item).strip() for item in alias_values if str(item).strip()],
+                        ]
+                    )
+                )
             for workflow_key in ("target_workflow_id", "workflow_id", "primary_workflow_id", "default_workflow_id"):
                 workflow_id = str(rewritten.get(workflow_key) or "").strip()
                 if not workflow_id:
@@ -2454,6 +2581,68 @@ def _ground_semantic_model_from_deterministic_contract(
                 rewritten[nested_key] = _rewrite_logic_target_refs(nested_value)
             return rewritten
 
+        def _rewrite_routing_reference_aliases(value: Any) -> Any:
+            if isinstance(value, list):
+                return [_rewrite_routing_reference_aliases(item) for item in value]
+            if not isinstance(value, dict):
+                return value
+            rewritten = {
+                key: _rewrite_routing_reference_aliases(item)
+                for key, item in value.items()
+                if key not in {
+                    "target_workflow_ref",
+                    "target_workflow_refs",
+                    "target_module_ref",
+                    "target_module_refs",
+                }
+            }
+            workflow_ref = str(value.get("target_workflow_ref") or "").strip()
+            if workflow_ref and not str(rewritten.get("target_workflow_id") or "").strip():
+                rewritten["target_workflow_id"] = _canonicalize_workflow_reference(workflow_ref)
+            module_ref = str(value.get("target_module_ref") or "").strip()
+            if module_ref and not str(rewritten.get("target_module_id") or "").strip():
+                rewritten["target_module_id"] = _canonicalize_module_reference(module_ref)
+            workflow_refs = value.get("target_workflow_refs")
+            if isinstance(workflow_refs, list):
+                existing_workflow_ids = rewritten.get("target_workflow_ids")
+                if not isinstance(existing_workflow_ids, list):
+                    existing_workflow_ids = []
+                rewritten["target_workflow_ids"] = list(
+                    dict.fromkeys(
+                        [
+                            *[str(item).strip() for item in existing_workflow_ids if str(item).strip()],
+                            *[
+                                _canonicalize_workflow_reference(str(item).strip())
+                                for item in workflow_refs
+                                if str(item).strip()
+                            ],
+                        ]
+                    )
+                )
+            module_refs = value.get("target_module_refs")
+            if isinstance(module_refs, list):
+                existing_module_ids = rewritten.get("target_module_ids")
+                if not isinstance(existing_module_ids, list):
+                    existing_module_ids = []
+                rewritten["target_module_ids"] = list(
+                    dict.fromkeys(
+                        [
+                            *[str(item).strip() for item in existing_module_ids if str(item).strip()],
+                            *[
+                                _canonicalize_module_reference(str(item).strip())
+                                for item in module_refs
+                                if str(item).strip()
+                            ],
+                        ]
+                    )
+                )
+            return rewritten
+
+        normalized_routing_rules = [
+            _rewrite_routing_reference_aliases(item)
+            for item in normalized_routing_rules
+            if isinstance(item, dict)
+        ]
         interaction_logic_blocks = [
             _rewrite_logic_target_refs(item)
             for item in interaction_logic_blocks
@@ -2463,6 +2652,7 @@ def _ground_semantic_model_from_deterministic_contract(
             module_orchestration = _rewrite_logic_target_refs(module_orchestration)
 
         procedure_id_alias_map: dict[str, str] = {}
+        dropped_orchestration_procedure_ids: set[str] = set()
         rewritten_procedures: list[dict[str, Any]] = []
         existing_procedure_ids = set()
         for item in procedures:
@@ -2471,6 +2661,11 @@ def _ground_semantic_model_from_deterministic_contract(
             procedure = dict(item)
             old_procedure_id = str(procedure.get("procedure_id") or "").strip()
             service_block_id = str(procedure.get("service_block_id") or "").strip()
+            if _is_orchestration_block_id(service_block_id):
+                if old_procedure_id:
+                    procedure_id_alias_map[old_procedure_id] = ""
+                    dropped_orchestration_procedure_ids.add(old_procedure_id)
+                continue
             service_block_id = workflow_id_alias_map.get(service_block_id, module_id_alias_map.get(service_block_id, service_block_id))
             candidate = None
             target_family = None
@@ -2507,6 +2702,7 @@ def _ground_semantic_model_from_deterministic_contract(
             if _is_orchestration_block_id(service_block_id):
                 if old_procedure_id:
                     procedure_id_alias_map[old_procedure_id] = ""
+                    dropped_orchestration_procedure_ids.add(old_procedure_id)
                 continue
             canonical_procedure_id = _canonical_procedure_id_for_block_id(service_block_id) if service_block_id else old_procedure_id
             if old_procedure_id:
@@ -2554,6 +2750,8 @@ def _ground_semantic_model_from_deterministic_contract(
                 continue
             step = dict(item)
             old_procedure_id = str(step.get("procedure_id") or "").strip()
+            if old_procedure_id in dropped_orchestration_procedure_ids:
+                continue
             canonical_procedure_id = procedure_id_alias_map.get(old_procedure_id, "")
             if not canonical_procedure_id:
                 candidate, target_family = _match_candidate_for_values(
@@ -2671,6 +2869,66 @@ def _ground_semantic_model_from_deterministic_contract(
             rewritten_clarification_gate_rules.append(rule)
         clarification_gate_rules = rewritten_clarification_gate_rules
 
+    if isinstance(module_orchestration, dict):
+        module_ids = {
+            str(block.get("block_id") or "").strip()
+            for block in service_blocks
+            if isinstance(block, dict)
+            and str(block.get("block_type") or "").strip() in {"support_module", "followup_module"}
+            and str(block.get("block_id") or "").strip()
+        }
+        module_alias_targets: dict[str, set[str]] = {}
+        for block in service_blocks:
+            if not isinstance(block, dict):
+                continue
+            block_type = str(block.get("block_type") or "").strip()
+            block_id = str(block.get("block_id") or "").strip()
+            if block_type not in {"support_module", "followup_module"} or not block_id:
+                continue
+            for alias in {
+                block_id,
+                _normalized_module_block_id(block_id),
+                _canonical_support_module_block_id(block_id, block_type=block_type),
+                f"{block_type}:{block_id}" if ":" not in block_id else "",
+            }:
+                if alias:
+                    module_alias_targets.setdefault(alias, set()).add(block_id)
+
+        def _reconcile_orchestration_module_id(value: Any) -> str:
+            module_id = str(value or "").strip()
+            if not module_id or module_id in module_ids:
+                return module_id
+            matching_ids = module_alias_targets.get(module_id, set())
+            return next(iter(matching_ids)) if len(matching_ids) == 1 else module_id
+
+        reconciled_mappings: list[Any] = []
+        for item in module_orchestration.get("task_module_mappings", []) or []:
+            if not isinstance(item, dict):
+                reconciled_mappings.append(item)
+                continue
+            mapping = dict(item)
+            if str(mapping.get("target_module_id") or "").strip():
+                mapping["target_module_id"] = _reconcile_orchestration_module_id(mapping.get("target_module_id"))
+            if isinstance(mapping.get("target_module_ids"), list):
+                mapping["target_module_ids"] = [
+                    _reconcile_orchestration_module_id(module_id)
+                    for module_id in mapping.get("target_module_ids", [])
+                    if str(module_id or "").strip()
+                ]
+            reconciled_mappings.append(mapping)
+        module_orchestration = dict(module_orchestration)
+        module_orchestration["task_module_mappings"] = reconciled_mappings
+
+        for block in service_blocks:
+            if load_template_registry._is_module_orchestration_section(str(block.get("title") or "")):
+                block["block_type"] = "global_policy"
+        normalized["followup_modules"] = [
+            item
+            for item in normalized.get("followup_modules", []) or []
+            if isinstance(item, dict)
+            and not load_template_registry._is_module_orchestration_section(str(item.get("title") or ""))
+        ]
+
     normalized["service_blocks"] = service_blocks
     normalized["procedures"] = procedures
     normalized["procedure_steps"] = procedure_steps
@@ -2682,11 +2940,98 @@ def _ground_semantic_model_from_deterministic_contract(
     return normalized
 
 
+def _is_module_execution_policy(title: Any) -> bool:
+    value = _semantic_slug(load_template_registry._repair_mojibake_text(str(title or "")))
+    return value in {
+        "module_execution_rules", "模組執行規則", "模块执行规则",
+        "模組執行規則_module_execution_rules", "模块执行规则_module_execution_rules",
+    }
+
+
+def _provider_step_objects(block: dict[str, Any], flat_steps: list[Any], errors: list[str]) -> list[dict[str, Any]]:
+    embedded = block.get("steps")
+    embedded = embedded if isinstance(embedded, list) else []
+    sequence = block.get("step_sequence")
+    if not isinstance(sequence, list) or not sequence:
+        sequence = embedded
+    block_id = str(
+        block.get("block_id")
+        or block.get("module_id")
+        or block.get("workflow_id")
+        or ""
+    ).strip()
+    procedure_id = str(block.get("procedure_id") or block.get("workflow_id") or "").strip()
+    if not procedure_id and block_id:
+        procedure_id = _canonical_procedure_id_for_block_id(block_id)
+    procedure_namespace = (
+        procedure_id.split(":", 1)[1]
+        if procedure_id.startswith("procedure:")
+        else _semantic_slug(procedure_id)
+    )
+
+    def _with_deterministic_id(step: dict[str, Any], index: int) -> dict[str, Any]:
+        resolved = dict(step)
+        if str(resolved.get("step_id") or "").strip():
+            return resolved
+        title = str(resolved.get("title") or "").strip()
+        if not title or not procedure_namespace:
+            return resolved
+        try:
+            order = int(resolved.get("order") or resolved.get("step_order") or index)
+        except (TypeError, ValueError):
+            order = index
+        if order <= 0:
+            order = index
+        resolved["step_id"] = f"step:{procedure_namespace}:{order}"
+        return resolved
+
+    by_id = {
+        str(step.get("step_id") or ""): step
+        for step in [*flat_steps, *embedded]
+        if isinstance(step, dict) and step.get("step_id")
+    }
+    resolved: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(sequence, start=1):
+        step = _with_deterministic_id(entry, index) if isinstance(entry, dict) else by_id.get(str(entry))
+        if not isinstance(step, dict) or not str(step.get("step_id") or "").strip():
+            errors.append(f"provider step_sequence references missing step object: {entry}")
+            continue
+        step_id = str(step["step_id"]).strip()
+        if step_id in seen:
+            errors.append(f"provider step_sequence contains duplicate step id: {step_id}")
+            continue
+        seen.add(step_id)
+        resolved.append(dict(step))
+    for index, step in enumerate(embedded, start=1):
+        if not isinstance(step, dict):
+            continue
+        embedded_step = _with_deterministic_id(step, index)
+        embedded_step_id = str(embedded_step.get("step_id") or "").strip()
+        if embedded_step_id not in seen:
+            errors.append(f"provider step_sequence omits declared step: {embedded_step_id or step.get('title')}")
+    return resolved
+
+
+def _project_provider_step(step: dict[str, Any], procedure_id: str, index: int) -> dict[str, Any]:
+    projected = dict(step)
+    projected["procedure_id"] = procedure_id
+    projected.setdefault("order", step.get("step_order", index))
+    projected["execution_mode"] = str(step.get("execution_mode") or "interactive")
+    projected["resource_refs"] = list(step.get("resource_refs") or step.get("bundled_resource_refs") or [])
+    bundled = list(step.get("bundled_step_ids") or step.get("bundled_steps") or step.get("bundled_child_steps") or [])
+    if projected["execution_mode"] == "bundled":
+        bundled = [step["step_id"], *[sid for sid in bundled if sid != step["step_id"]]]
+    projected["bundled_step_ids"] = bundled
+    return projected
+
+
 def _canonicalize_provider_semantic_model(semantic_model: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(semantic_model, dict):
         return {}
 
-    normalized = dict(semantic_model)
+    normalized = deepcopy(semantic_model)
+    projection_errors: list[str] = []
 
     if not isinstance(normalized.get("role_profiles"), list):
         roles = normalized.get("roles")
@@ -2711,11 +3056,15 @@ def _canonicalize_provider_semantic_model(semantic_model: dict[str, Any]) -> dic
 
     primary_workflows = normalized.get("primary_workflows")
     if not isinstance(primary_workflows, list):
-        singular = normalized.get("primary_workflow")
-        if isinstance(singular, list):
-            primary_workflows = [item for item in singular if isinstance(item, dict)]
+        workflows = normalized.get("workflows")
+        if isinstance(workflows, list):
+            primary_workflows = [item for item in workflows if isinstance(item, dict)]
         else:
-            primary_workflows = [singular] if isinstance(singular, dict) else None
+            singular = normalized.get("primary_workflow")
+            if isinstance(singular, list):
+                primary_workflows = [item for item in singular if isinstance(item, dict)]
+            else:
+                primary_workflows = [singular] if isinstance(singular, dict) else None
     if isinstance(primary_workflows, list):
         if not isinstance(normalized.get("service_blocks"), list):
             normalized["service_blocks"] = []
@@ -2794,9 +3143,7 @@ def _canonicalize_provider_semantic_model(semantic_model: dict[str, Any]) -> dic
                 )
                 existing_procedure_ids.add(procedure_id)
 
-            sequence = workflow.get("step_sequence")
-            if not isinstance(sequence, list):
-                sequence = workflow.get("steps")
+            sequence = _provider_step_objects(workflow, procedure_steps, projection_errors)
             clarification_step_id = None
             completion_step_id = None
             if isinstance(sequence, list):
@@ -2807,26 +3154,15 @@ def _canonicalize_provider_semantic_model(semantic_model: dict[str, Any]) -> dic
                     if not step_id:
                         continue
                     if step_id in existing_step_ids:
+                        existing = next(item for item in procedure_steps if item.get("step_id") == step_id)
+                        if existing.get("procedure_id") != procedure_id:
+                            projection_errors.append(f"provider step has conflicting procedure ownership: {step_id}")
                         continue
-                    execution_mode = str(step.get("execution_mode") or "").strip() or "interactive"
-                    bundled_step_ids = [
-                        str(item).strip()
-                        for item in (step.get("bundled_steps", []) or step.get("bundled_child_steps", []) or [])
-                        if str(item).strip()
-                    ]
-                    if execution_mode == "bundled":
-                        bundled_step_ids = [step_id] + [
-                            item for item in bundled_step_ids if item != step_id
-                        ]
                     procedure_steps.append(
                         {
-                            "procedure_id": procedure_id,
+                            **_project_provider_step(step, procedure_id, index),
                             "step_id": step_id,
                             "title": str(step.get("title") or "").strip(),
-                            "order": step.get("order", step.get("step_order", index)),
-                            "execution_mode": execution_mode,
-                            "resource_refs": list(step.get("resource_refs", []) or step.get("bundled_resource_refs", []) or []),
-                            "bundled_step_ids": bundled_step_ids,
                             "wait_for_user": step.get("wait_for_user"),
                             "stop_after_completion": step.get("stop_after_completion"),
                         }
@@ -2863,12 +3199,30 @@ def _canonicalize_provider_semantic_model(semantic_model: dict[str, Any]) -> dic
         if isinstance(item, dict)
     }
 
+    generic_modules = normalized.get("modules")
+    if isinstance(generic_modules, list):
+        support_modules = list(normalized.get("support_modules") or []) if isinstance(normalized.get("support_modules"), list) else []
+        followup_modules = list(normalized.get("followup_modules") or []) if isinstance(normalized.get("followup_modules"), list) else []
+        for module in generic_modules:
+            if not isinstance(module, dict):
+                continue
+            module_id = str(module.get("block_id") or module.get("module_id") or "").strip()
+            block_type = str(module.get("block_type") or "").strip()
+            projected = dict(module)
+            projected["block_id"] = module_id
+            if module_id.startswith("support_module:") or block_type == "support_module":
+                support_modules.append(projected)
+            elif module_id.startswith("followup_module:") or block_type == "followup_module":
+                followup_modules.append(projected)
+        normalized["support_modules"] = support_modules
+        normalized["followup_modules"] = followup_modules
+
     support_modules = normalized.get("support_modules")
     if isinstance(support_modules, list):
         for module in support_modules:
             if not isinstance(module, dict):
                 continue
-            module_id = str(module.get("module_id") or "").strip()
+            module_id = str(module.get("block_id") or module.get("module_id") or "").strip()
             if not module_id or module_id in existing_block_ids:
                 continue
             service_blocks.append(
@@ -2885,7 +3239,7 @@ def _canonicalize_provider_semantic_model(semantic_model: dict[str, Any]) -> dic
         for module in followup_modules:
             if not isinstance(module, dict):
                 continue
-            module_id = str(module.get("module_id") or "").strip()
+            module_id = str(module.get("block_id") or module.get("module_id") or "").strip()
             if not module_id or module_id in existing_block_ids:
                 continue
             service_blocks.append(
@@ -2899,6 +3253,57 @@ def _canonicalize_provider_semantic_model(semantic_model: dict[str, Any]) -> dic
 
     normalized["service_blocks"] = service_blocks
 
+    # Embedded module steps are executable definitions, not just display metadata.
+    procedures = list(normalized.get("procedures") or [])
+    procedure_steps = list(normalized.get("procedure_steps") or [])
+    for key in ("support_modules", "followup_modules"):
+        executable_modules = []
+        for module in normalized.get(key, []) or []:
+            if not isinstance(module, dict):
+                continue
+            module_id = str(module.get("block_id") or module.get("module_id") or "").strip()
+            if _is_module_execution_policy(module.get("title") or module.get("module_title")):
+                policy = dict(module)
+                policy["block_id"] = module_id
+                policy["block_type"] = "global_policy"
+                policy["body_text"] = str(module.get("body_text") or "") or "\n".join(
+                    str(s.get("title") or "") + "\n" + str(s.get("body_text") or "")
+                    for s in module.get("steps", []) or [] if isinstance(s, dict)
+                )
+                service_blocks = [policy if b.get("block_id") == module_id else b for b in service_blocks]
+                normalized["global_policies"] = [*normalized.get("global_policies", []), policy]
+                continue
+            executable_modules.append(module)
+            steps = _provider_step_objects(module, procedure_steps, projection_errors)
+            if not module_id or not steps:
+                continue
+            owned = [p for p in procedures if p.get("service_block_id") == module_id]
+            procedure_id = str(owned[0].get("procedure_id") if owned else module.get("procedure_id") or _canonical_procedure_id_for_block_id(module_id))
+            if not owned:
+                procedures.append({
+                    "procedure_id": procedure_id, "service_block_id": module_id,
+                    "title": module.get("title") or module.get("module_title") or module_id,
+                    "required_inputs": list(module.get("required_inputs") or []),
+                })
+            for index, step in enumerate(steps, start=1):
+                existing = next((s for s in procedure_steps if s.get("step_id") == step["step_id"]), None)
+                if existing is not None:
+                    if existing.get("procedure_id") != procedure_id:
+                        projection_errors.append(f"provider step has conflicting procedure ownership: {step['step_id']}")
+                    continue
+                procedure_steps.append(_project_provider_step(step, procedure_id, index))
+            step_refs = {ref for step in steps for ref in (step.get("resource_refs") or step.get("bundled_resource_refs") or [])}
+            for block in service_blocks:
+                if block.get("block_id") == module_id:
+                    block["resource_refs"] = list(dict.fromkeys([
+                        *block.get("resource_refs", []),
+                        *[ref for ref in module.get("resource_refs", []) or [] if ref not in step_refs],
+                    ]))
+        normalized[key] = executable_modules
+    normalized["service_blocks"] = service_blocks
+    normalized["procedures"] = procedures
+    normalized["procedure_steps"] = procedure_steps
+    normalized["_provider_projection_errors"] = projection_errors
     return normalized
 
 
@@ -3551,6 +3956,7 @@ def _project_compatibility_instruction_runtime_model(
             hybrid_runtime_model.get("support_modules", []),
             default_prefix="support_module",
         )
+        if not _is_module_execution_policy(item.get("title") or item.get("module_title"))
     ]
     compatibility_model["followup_modules"] = [
         dict(item) for item in _merge_module_lists(
@@ -3579,7 +3985,24 @@ def _validate_semantic_compile_candidate(
     for warning in parser_warnings:
         if warning.startswith("ambiguous section title contains both module and workflow markers:"):
             errors.append(warning)
+    declared_step_ids: set[str] = set()
+    if semantic_model.get("primary_service_mode") == "single_default_workflow":
+        for key in ("primary_workflow", "primary_workflows", "workflows", "support_modules", "followup_modules", "modules"):
+            items = semantic_model.get(key)
+            items = [items] if isinstance(items, dict) else items if isinstance(items, list) else []
+            for item in items:
+                if not isinstance(item, dict) or _is_module_execution_policy(item.get("title") or item.get("module_title")):
+                    continue
+                for step in item.get("steps", []) or []:
+                    if isinstance(step, dict) and step.get("step_id"):
+                        declared_step_ids.add(str(step["step_id"]))
     semantic_model = _canonicalize_provider_semantic_model(semantic_model)
+    errors.extend(semantic_model.pop("_provider_projection_errors", []))
+    required_step_ids = {
+        str(step.get("step_id") or "")
+        for step in semantic_model.get("procedure_steps", []) or []
+        if isinstance(step, dict) and step.get("step_id")
+    } if semantic_model.get("primary_service_mode") == "single_default_workflow" else set()
     semantic_model = _ground_semantic_model_from_deterministic_contract(
         semantic_model,
         deterministic_contract,
@@ -3623,6 +4046,37 @@ def _validate_semantic_compile_candidate(
         errors.append("clarification_gate_rules must be a list")
         clarification_gate_rules = []
 
+    def _duplicate_ids(items: list[Any], key: str) -> list[str]:
+        seen: set[str] = set()
+        duplicates: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_id = str(item.get(key) or "").strip()
+            if not item_id:
+                continue
+            if item_id in seen:
+                duplicates.add(item_id)
+            seen.add(item_id)
+        return sorted(duplicates)
+
+    for procedure_id in _duplicate_ids(procedures, "procedure_id"):
+        errors.append(f"duplicate procedure id: {procedure_id}")
+    for step_id in _duplicate_ids(steps, "step_id"):
+        errors.append(f"duplicate procedure step id: {step_id}")
+    for procedure in procedures:
+        if not isinstance(procedure, dict):
+            continue
+        procedure_id = str(procedure.get("procedure_id") or "").strip()
+        sequence = [str(item or "").strip() for item in procedure.get("step_sequence", []) or []]
+        sequence_seen: set[str] = set()
+        for step_id in sequence:
+            if step_id and step_id in sequence_seen:
+                errors.append(
+                    f"procedure step_sequence contains duplicate step id: {procedure_id} -> {step_id}"
+                )
+            sequence_seen.add(step_id)
+
     block_ids = {str(item.get("block_id") or "").strip() for item in blocks if isinstance(item, dict)}
     block_ids.discard("")
     primary_workflow_block_ids = {
@@ -3635,6 +4089,8 @@ def _validate_semantic_compile_candidate(
     procedure_ids.discard("")
     step_ids = {str(item.get("step_id") or "").strip() for item in steps if isinstance(item, dict)}
     step_ids.discard("")
+    for missing_id in sorted((required_step_ids | declared_step_ids) - step_ids):
+        errors.append(f"missing executable provider step after grounding: {missing_id}")
     role_ids = {str(item.get("role_id") or "").strip() for item in role_profiles if isinstance(item, dict)}
     role_ids.discard("")
     module_ids = {
@@ -3726,6 +4182,27 @@ def _validate_semantic_compile_candidate(
             if primary_service_mode == "intent_routed_multi_workflow" and not service_block_id.startswith("module:"):
                 missing_intent_routed_procedure_steps = True
 
+    bundle_entry_owners: dict[tuple[str, str], set[str]] = {}
+    for item in steps:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("execution_mode") or "").strip() != "bundled":
+            continue
+        entry_step_id = str(item.get("step_id") or "").strip()
+        entry_procedure_id = str(item.get("procedure_id") or "").strip()
+        bundled_step_ids = {
+            str(value).strip()
+            for value in item.get("bundled_step_ids", []) or []
+            if str(value).strip()
+        }
+        if not entry_step_id or entry_step_id not in bundled_step_ids:
+            continue
+        for bundled_step_id in bundled_step_ids:
+            bundle_entry_owners.setdefault(
+                (entry_procedure_id, bundled_step_id),
+                set(),
+            ).add(entry_step_id)
+
     for item in steps:
         if not isinstance(item, dict):
             continue
@@ -3740,8 +4217,15 @@ def _validate_semantic_compile_candidate(
         bundled_refs = [
             str(ref or "").strip() for ref in item.get("bundled_resource_refs", []) or [] if str(ref or "").strip()
         ]
-        if execution_mode == "bundled" and step_id and step_id not in bundled_step_ids:
-            errors.append(f"bundled step must include itself in bundled_step_ids: {step_id}")
+        if execution_mode == "bundled" and step_id:
+            if bundled_step_ids and step_id not in bundled_step_ids:
+                errors.append(f"bundled step must include itself in bundled_step_ids: {step_id}")
+            elif not bundled_step_ids:
+                bundle_owners = bundle_entry_owners.get((procedure_id, step_id), set())
+                if not bundle_owners:
+                    errors.append(f"bundled member step is not owned by a bundle entry: {step_id}")
+                elif len(bundle_owners) > 1:
+                    errors.append(f"bundled member step has multiple bundle entries: {step_id}")
         if not step_title and not direct_refs and not bundled_refs:
             warnings.append(f"step has empty execution semantics: {step_id or '<unknown-step>'}")
         for filename in direct_refs:

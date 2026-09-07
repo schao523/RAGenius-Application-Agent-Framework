@@ -2,6 +2,27 @@
 
 Date: 2026-05-24
 
+## Current Status Addendum (2026-09-07)
+
+- The compiler/planner stabilization work described as pending in this handover
+  is implemented. Current normative behavior is defined by
+  `docs/compiled-instruction-understanding-query-planner-runtime-contract.md`
+  and `docs/knowledge-use-decision-contract.md`.
+- Manual acceptance testing passed for the four active applications, including
+  module orchestration, step progression, active-step resource scoping,
+  per-turn GUI inspection, Semantic Scope Decision, and Knowledge Use Decision.
+- The Style & Tone module's `Builder Guide.md` resource is intentionally scoped
+  to step 4 by the authored GPT Application Design Assistant instructions.
+- The four active runtime snapshots are accepted as the current source of truth.
+  Diagnostic recompilation is deferred to avoid replacing known-good snapshots.
+- Token context optimization is active in `compact` mode by default. Retrieved
+  evidence remains preferred, model-knowledge supplementation remains governed
+  by application policy, and model knowledge never receives retrieved-source
+  citations.
+- The historical statements below about Church Ministry progression being the
+  immediate unresolved priority are retained as investigation history and no
+  longer describe the current release state.
+
 ## 1. High-Level Overview
 
 ### Purpose of this subsystem/project

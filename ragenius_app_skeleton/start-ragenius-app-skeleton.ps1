@@ -25,6 +25,19 @@ if (-not (Test-Path -LiteralPath $envPath)) {
 
 Import-DotEnv $envPath
 $repoRoot = (Resolve-Path (Join-Path $Root "..")).Path
+$env:RAG_VECTOR_STORE_BACKEND = "pgvector"
+if (-not $env:RAG_VECTOR_STORE_DSN) {
+    $env:RAG_VECTOR_STORE_DSN = if ($env:DATABASE_URL) { $env:DATABASE_URL } else { "postgresql://ragenius:ragenius@localhost:5433/ragenius" }
+}
+if (-not $env:RAG_PGVECTOR_BOOTSTRAP) {
+    $env:RAG_PGVECTOR_BOOTSTRAP = "true"
+}
+if (-not $env:RAGENIUS_LLM_CONTEXT_OPTIMIZATION) {
+    $env:RAGENIUS_LLM_CONTEXT_OPTIMIZATION = "1"
+}
+if (-not $env:RAGENIUS_LLM_CONTEXT_OPTIMIZATION_MODE) {
+    $env:RAGENIUS_LLM_CONTEXT_OPTIMIZATION_MODE = "compact"
+}
 $ragBackend = if ($env:RAG_VECTOR_STORE_BACKEND) { $env:RAG_VECTOR_STORE_BACKEND.Trim().ToLowerInvariant() } else { "pgvector" }
 if ($ragBackend -in @("pgvector", "postgres", "postgresql")) {
     $ragDsn = if ($env:RAG_VECTOR_STORE_DSN) { $env:RAG_VECTOR_STORE_DSN } else { $env:DATABASE_URL }

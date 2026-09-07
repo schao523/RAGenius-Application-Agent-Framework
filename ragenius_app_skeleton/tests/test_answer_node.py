@@ -249,6 +249,44 @@ class AnswerNodeTests(unittest.TestCase):
         self.assertEqual(captured["context"]["user_query"], "Explain Python dataclass vs pydantic")
         self.assertIn("outside the scope", captured["prompt"])
 
+    def test_in_scope_answer_allows_cautious_model_knowledge_supplementation(self):
+        state = base_state()
+        state["user_query"] = "Explain a relevant concept not covered by the retrieved excerpts"
+        state["evidence_analysis"] = {"infoTypes_missing": ["background"]}
+        calls = []
+
+        def llm(prompt, _tools, context):
+            calls.append({"prompt": prompt, "context": context})
+            if len(calls) == 1:
+                return valid_final_answer(missing=["background"])
+            return {"content": "Cautious supplemented answer", "citations": [], "missing_infoTypes": []}
+
+        out = answer.run(state, llm_answer=llm)
+
+        self.assertEqual(out["final_answer"]["content"], "Cautious supplemented answer")
+        self.assertEqual(len(calls), 2)
+        for call in calls:
+            decision = call["context"]["knowledge_use_decision"]
+            self.assertEqual(decision["mode"], "evidence_first_with_model_supplementation")
+            self.assertTrue(decision["model_knowledge_allowed"])
+            self.assertIn("model knowledge", call["prompt"].lower())
+
+    def test_application_evidence_only_policy_disables_model_knowledge_supplementation(self):
+        state = base_state()
+        state["global_instruction_context"] = {
+            "behavior_rules": ["Use retrieved evidence only; do not use model knowledge."]
+        }
+        captured = {}
+
+        def llm(_prompt, _tools, context):
+            captured["decision"] = context["knowledge_use_decision"]
+            return valid_final_answer()
+
+        answer.run(state, llm_answer=llm)
+
+        self.assertEqual(captured["decision"]["mode"], "application_evidence_only")
+        self.assertFalse(captured["decision"]["model_knowledge_allowed"])
+
     def test_appends_global_instruction_context_to_effective_system_prompt(self):
         state = base_state()
         state["global_instruction_context"] = {

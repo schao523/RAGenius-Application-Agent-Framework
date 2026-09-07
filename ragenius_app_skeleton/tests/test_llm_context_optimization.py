@@ -1,6 +1,7 @@
 import copy
 import math
 import os
+from pathlib import Path
 import unittest
 from unittest import mock
 
@@ -60,6 +61,19 @@ class LlmContextOptimizationTests(unittest.TestCase):
             self.assertEqual(context_optimization_mode(), "compact")
             self.assertEqual(evidence_analysis_mode(), "llm_required")
 
+    def test_app_skeleton_env_template_defaults_to_compact_context_optimization(self):
+        env_template = Path(__file__).resolve().parents[1] / ".env.example"
+        env: dict[str, str] = {}
+        for raw_line in env_template.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            env[key.strip()] = value.strip().strip('"').strip("'")
+
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(context_optimization_mode(), "compact")
+
     def test_internal_state_fields_round_trip_with_wire_aliases(self):
         model = GraphStateModel(
             _context_optimization_eligible=True,
@@ -70,6 +84,34 @@ class LlmContextOptimizationTests(unittest.TestCase):
         payload = model.model_dump(by_alias=True)
         self.assertTrue(payload["_context_optimization_eligible"])
         self.assertEqual(payload["_context_optimization_mode"], "diagnostic")
+
+    def test_hybrid_planner_fields_are_declared_in_graph_state_model(self):
+        fields = GraphStateModel.model_fields
+
+        self.assertIn("planner_mode", fields)
+        self.assertIn("llm_planner_hybrid", fields)
+        self.assertEqual(fields["llm_planner_hybrid"].alias, "_llm_planner_hybrid")
+        self.assertIn("hybrid_planner_decision_packet", fields)
+        self.assertIn("hybrid_planner_shadow_output", fields)
+
+    def test_compact_hybrid_packet_preserves_routing_condition_and_target(self):
+        packet = {
+            "routing_rules": [
+                {
+                    "rule_id": "route:idea",
+                    "condition": "Route an unclear application idea to use-case support.",
+                    "target_type": "support_module",
+                    "target_id": "support_module:use-case",
+                    "target_service_block_id": "support_module:use-case",
+                    "target_module_id": "support_module:use-case",
+                    "priority": 1,
+                }
+            ]
+        }
+
+        compact = compact_hybrid_decision_packet(packet)
+
+        self.assertEqual(compact["routing_rules"], packet["routing_rules"])
 
     def test_estimator_uses_same_messages_as_runtime_and_includes_tools(self):
         prompt = "Planner prompt"

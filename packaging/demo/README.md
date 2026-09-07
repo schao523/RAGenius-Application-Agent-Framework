@@ -9,9 +9,18 @@ Expand-Archive RAGenius-Demo-<version>-Windows.zip
 cd RAGenius-Demo
 Copy-Item .env.template .env
 # Edit .env and set DEEPSEEK_API_KEY or another supported LLM key.
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+Get-ChildItem . -Filter *.ps1 -File | Unblock-File
 .\Install.ps1
 .\Setup-Embeddings.ps1
 .\Start.ps1
+```
+
+If you do not want to use process-scoped bypass each time, set the current user
+policy once:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ```
 
 Open:

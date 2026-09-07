@@ -2,6 +2,14 @@
 
 Date: 2026-05-13
 
+> Historical roadmap notice (2026-09-05): planner migration, hybrid state
+> preservation, module orchestration, canonical target normalization, step
+> progression, and narrow resource selection described below have since been
+> substantially implemented. Current normative behavior is defined in
+> `docs/compiled-instruction-understanding-query-planner-runtime-contract.md`.
+> Unchecked items below are historical planning records, not current runtime
+> requirements.
+
 ## Current State
 
 Completed:
