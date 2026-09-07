@@ -193,10 +193,10 @@
       },
       "slug": "prompt-writing",
       "snapshot": {
-        "compiled_at": "2026-05-21T21:49:39.036618+00:00",
+        "compiled_at": "2026-09-06T12:26:48.715245+00:00",
         "compiled_status": "ready",
         "freshness": "fresh",
-        "id": "c417296b-ddc9-418e-80e4-13f7b24d478c",
+        "id": "ef715e37-642b-452f-bdb8-ffc1af0efeda",
         "instruction_source_hash": "672392d4290c587248239132de1cc2468f20ff34cc60aeb6a5ad23c76d5ca1d7",
         "metadata": {
           "preserved_active_record_id": null,
@@ -207,7 +207,7 @@
           "semantic_compile_valid": true,
           "service_block_count": 5
         },
-        "resource_catalog_hash": "a88f436dcb8d37f3460bdaed01ec84286f32888598696eaaee03ca50c13d5235",
+        "resource_catalog_hash": "2dae56c05305aa2822de2bb6598636fc4f36298dd7286196c3d1bdf3f83c26ef",
         "seed_path": "snapshots/053eb2ca-54e0-49bf-b7dd-604c9608489e/understanding.json"
       },
       "starter_questions": [
@@ -450,10 +450,10 @@
       },
       "slug": "education",
       "snapshot": {
-        "compiled_at": "2026-05-21T21:29:05.661312+00:00",
+        "compiled_at": "2026-09-07T11:46:58.651319+00:00",
         "compiled_status": "ready",
         "freshness": "fresh",
-        "id": "a49bb75d-1459-49f0-a399-4e64cd611e87",
+        "id": "21e4cbb5-117d-44b8-b11b-0061e1f2fa56",
         "instruction_source_hash": "7fb9863dbbc4205cc291dd1896e7a7aad9f3c96fe41b68f3b1c55af5a98c7bcf",
         "metadata": {
           "preserved_active_record_id": null,
@@ -464,7 +464,7 @@
           "semantic_compile_valid": true,
           "service_block_count": 3
         },
-        "resource_catalog_hash": "5b91b0982d416e50a7a28061b1ea4e5b59f340dcb93f5a2d88e41591dd1a47be",
+        "resource_catalog_hash": "8ba91e4d1d501a4ad7550d0c9b15b1c88ffa0a3b463e8bf5124319dfffedbb1e",
         "seed_path": "snapshots/2302c77b-3d82-4650-bd15-e0ff9c0faab7/understanding.json"
       },
       "starter_questions": [
@@ -631,7 +631,7 @@
       "id": "dd494ba5-face-4eaf-95d1-a55cb9f80c78",
       "instructions": {
         "seed_path": "instructions/dd494ba5-face-4eaf-95d1-a55cb9f80c78/instructions.md",
-        "sha256": "d667f7f24423a321e2504aa1957ab0527a3c49583400f6b060a64580b4d5e24a",
+        "sha256": "f1d99bae3099dcc7deda37e9b5d85f8d7499d60a79bb95ffcc874248fb6de994",
         "uri": "instructions/dd494ba5-face-4eaf-95d1-a55cb9f80c78/instructions.md",
         "version": "v1"
       },
@@ -727,15 +727,17 @@
       },
       "slug": "gpt-design",
       "snapshot": {
-        "compiled_at": "2026-06-15T09:45:27.822488+00:00",
+        "compiled_at": "2026-09-06T12:13:58.089999+00:00",
         "compiled_status": "ready",
         "freshness": "fresh",
-        "id": "7f565401-60ab-4a4d-9447-7eee46b18371",
-        "instruction_source_hash": "d667f7f24423a321e2504aa1957ab0527a3c49583400f6b060a64580b4d5e24a",
+        "id": "7a9081de-4f8e-46db-aabf-64c24017a1c7",
+        "instruction_source_hash": "f1d99bae3099dcc7deda37e9b5d85f8d7499d60a79bb95ffcc874248fb6de994",
         "metadata": {
           "preserved_active_record_id": null,
-          "procedure_count": 5,
+          "procedure_count": 10,
           "publish_status": "active",
+          "repair_method": "offline replay of preserved provider response through compiler",
+          "repair_source_record_id": "00a0ae5c-7ddb-4349-bbdc-e9166d656a59",
           "semantic_compile_attached": true,
           "semantic_compile_empty": false,
           "semantic_compile_valid": true,
