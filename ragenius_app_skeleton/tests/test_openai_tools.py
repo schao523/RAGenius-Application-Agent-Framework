@@ -27,6 +27,14 @@ class OpenAIToolRegistryTests(unittest.TestCase):
             self.assertIn("name", tool)
             self.assertIn("parameters", tool)
 
+    def test_final_answer_tool_rejects_unknown_public_fields(self):
+        tools = get_openai_tools(include_optional=False)
+        final_answer_tool = next(tool for tool in tools if tool["name"] == "create_final_answer")
+
+        self.assertFalse(final_answer_tool["parameters"]["additionalProperties"])
+        citation_schema = final_answer_tool["parameters"]["properties"]["citations"]["items"]
+        self.assertFalse(citation_schema["additionalProperties"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,10 +19,12 @@
             "score": { "type": "number" },
             "location": { "type": "string" },
             "version": { "type": "string" }
-          }
+          },
+          "additionalProperties": false
         }
       },
       "missing_infoTypes": { "type": "array", "items": { "type": "string" } }
-    }
+    },
+    "additionalProperties": false
   }
 }

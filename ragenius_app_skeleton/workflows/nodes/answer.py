@@ -36,6 +36,14 @@ EVIDENCE_ONLY_POLICY_MARKERS = (
     "不得使用模型知識",
     "不可使用模型知識",
 )
+CITATION_PUBLIC_FIELDS = (
+    "docId",
+    "title",
+    "snippet",
+    "score",
+    "location",
+    "version",
+)
 
 
 def _read_prompt(path: Path) -> str:
@@ -114,6 +122,30 @@ def _ensure_non_empty_content(final_answer: Dict[str, Any]) -> Dict[str, Any]:
     fixed = dict(final_answer)
     fixed["content"] = DEFAULT_EMPTY_ANSWER
     return fixed
+
+
+def _normalize_final_answer_citations(final_answer: Dict[str, Any]) -> Dict[str, Any]:
+    citations = final_answer.get("citations")
+    if not isinstance(citations, list):
+        return final_answer
+
+    normalized_citations = []
+    for citation in citations:
+        if not isinstance(citation, dict):
+            normalized_citations.append(citation)
+            continue
+        normalized = {
+            field: citation[field]
+            for field in CITATION_PUBLIC_FIELDS
+            if field in citation
+        }
+        if "docId" not in normalized and "doc_id" in citation:
+            normalized["docId"] = citation["doc_id"]
+        normalized_citations.append(normalized)
+
+    normalized_answer = dict(final_answer)
+    normalized_answer["citations"] = normalized_citations
+    return normalized_answer
 
 
 def _fallback_final_answer(context: Dict[str, Any]) -> Dict[str, Any]:
@@ -272,6 +304,7 @@ def run(
             answer_source = "fallback_provider_error_general" if provider_failure is not None else "fallback_generic_general"
             final_answer = provider_failure if provider_failure is not None else _fallback_final_answer(context)
         final_answer = _ensure_non_empty_content(final_answer)
+        final_answer = _normalize_final_answer_citations(final_answer)
         validate_final_answer(final_answer)
         state["final_answer"] = final_answer
         state["answer_generation_meta"] = {"source": answer_source, "llm_error": llm_error}
@@ -309,6 +342,7 @@ def run(
             answer_source = "fallback_provider_error" if provider_failure is not None else "fallback_generic"
             final_answer = provider_failure if provider_failure is not None else _fallback_final_answer(context)
     final_answer = _ensure_non_empty_content(final_answer)
+    final_answer = _normalize_final_answer_citations(final_answer)
     validate_final_answer(final_answer)
 
     missing = final_answer.get("missing_infoTypes", [])
@@ -330,6 +364,7 @@ def run(
             answer_source = "fallback_provider_error_safe" if provider_failure is not None else "fallback_generic_safe"
             final_answer = provider_failure if provider_failure is not None else _fallback_final_answer(context)
         final_answer = _ensure_non_empty_content(final_answer)
+        final_answer = _normalize_final_answer_citations(final_answer)
         validate_final_answer(final_answer)
 
     state["final_answer"] = final_answer

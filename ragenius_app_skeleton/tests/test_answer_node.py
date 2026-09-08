@@ -63,6 +63,38 @@ class AnswerNodeTests(unittest.TestCase):
         self.assertEqual(calls["n"], 1)
         self.assertIn("final_answer", out)
 
+    def test_strips_internal_citation_metadata_before_validation(self):
+        def llm(_prompt, _tools, _context):
+            return {
+                "content": "Answer content",
+                "citations": [
+                    {
+                        "doc_id": "d1",
+                        "title": "observation_guide.md",
+                        "snippet": "Evidence",
+                        "score": 1.0,
+                        "location": "/runtime/demo/builder/storage/uploads/d1/observation_guide.md",
+                        "chunk_id": "instruction:observation_guide.md",
+                    }
+                ],
+                "missing_infoTypes": [],
+            }
+
+        out = answer.run(base_state(), llm_answer=llm)
+
+        self.assertEqual(
+            out["final_answer"]["citations"],
+            [
+                {
+                    "docId": "d1",
+                    "title": "observation_guide.md",
+                    "snippet": "Evidence",
+                    "score": 1.0,
+                    "location": "/runtime/demo/builder/storage/uploads/d1/observation_guide.md",
+                }
+            ],
+        )
+
     def test_safe_answer_path_when_missing_info_types(self):
         calls = {"n": 0, "prompts": []}
 
