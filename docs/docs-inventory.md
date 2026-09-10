@@ -125,6 +125,7 @@ Additional scan notes:
 
 ### Spec
 
+- [computer-use-application-approval-inheritance-runtime-test-specification.md](/D:/GitHub/Codex-RAGenius-System/docs/computer-use-application-approval-inheritance-runtime-test-specification.md)
 - [agent-skill-discovery-activation-design.md](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/agent-skill-discovery-activation-design.md)
 - [api-contract.md](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/api-contract.md)
 - [architecture.md](/D:/GitHub/Codex-RAGenius-System/ragenius_execution_subsystem/docs/architecture.md)
