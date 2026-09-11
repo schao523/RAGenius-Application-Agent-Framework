@@ -3,6 +3,24 @@
 Notable changes will be recorded here. This project follows semantic versioning
 once tagged public releases begin.
 
+## [v1.0.3] - 2026-09-11
+
+### Security
+
+- Updated Fastify and the frontend and execution-subsystem Vitest toolchains to
+  patched releases.
+- Pinned patched transitive releases of `fast-uri` and `js-yaml` in the
+  execution subsystem.
+- Resolved the npm dependency vulnerabilities reported for the execution
+  subsystem and application frontend.
+
+### Documentation
+
+- Added a bounded runtime test specification for determining whether Codex
+  Desktop Computer Use application approval is inherited by independent Codex
+  CLI, direct App Server, or RAGenius-launched App Server processes while
+  preserving fail-closed behavior.
+
 ## [v1.0.2] - 2026-09-08
 
 ### Added
