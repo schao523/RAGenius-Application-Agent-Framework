@@ -20,10 +20,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -38,20 +38,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Builder image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/builder.Dockerfile
@@ -61,7 +61,7 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/ragenius-builder:latest
 
       - name: Build and push app backend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/app-backend.Dockerfile
@@ -71,7 +71,7 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/ragenius-app-backend:latest
 
       - name: Build and push app frontend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/app-frontend.Dockerfile
@@ -81,7 +81,7 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/ragenius-app-frontend:latest
 
       - name: Build and push execution subsystem image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/execution-subsystem.Dockerfile
@@ -95,7 +95,7 @@ jobs:
         run: ./scripts/Build-DemoPackage.ps1 -Version $env:GITHUB_REF_NAME
 
       - name: Upload demo package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: RAGenius-Demo-${{ github.ref_name }}-Windows.zip
           path: dist/RAGenius-Demo-${{ github.ref_name }}-Windows.zip

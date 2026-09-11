@@ -138,6 +138,23 @@ def test_github_workflow_builds_and_packages_demo():
     assert "RAGenius-Demo-${{ github.ref_name }}-Windows.zip" in workflow
 
 
+def test_github_workflows_use_node24_action_releases():
+    ci_workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    package_workflow = (ROOT / ".github" / "workflows" / "ghcr-demo-package.yml").read_text(
+        encoding="utf-8"
+    )
+
+    for action in ["actions/checkout@v7", "actions/setup-python@v7"]:
+        assert action in ci_workflow
+        assert action in package_workflow
+
+    assert "actions/setup-node@v7" in ci_workflow
+    assert "actions/upload-artifact@v7" in package_workflow
+    assert "docker/setup-buildx-action@v4" in package_workflow
+    assert "docker/login-action@v4" in package_workflow
+    assert "docker/build-push-action@v7" in package_workflow
+
+
 def test_build_demo_package_includes_seed_documents(scratch_dir):
     output_root = scratch_dir / "dist"
     powershell = shutil.which("powershell") or shutil.which("pwsh") or "powershell"
